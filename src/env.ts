@@ -39,6 +39,8 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
+  CLUSTER_PORT: z.coerce.number().int().positive().default(9090),
+  POD_IP: z.string().min(1).default("127.0.0.1"),
 });
 
 export type Env = z.infer<typeof envSchema>;

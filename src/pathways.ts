@@ -1,6 +1,8 @@
 import {
   PathwayRouter,
   PathwaysBuilder,
+  createNodeTransport,
+  createPostgresPathwayCoordinator,
   createPostgresPumpStateManagerFactory,
 } from "@flowcore/pathways";
 import type { z } from "zod";
@@ -38,6 +40,13 @@ export function createPathwayRuntime(
   repository: GenericEventRepository,
   jmeldingProjector: JMeldingFragmentProjector,
 ): PathwayRuntime {
+  const runtimeEnv =
+    env.NODE_ENV === "production"
+      ? "production"
+      : env.NODE_ENV === "test"
+        ? "test"
+        : "development";
+
   const pathways = new PathwaysBuilder({
     tenant: env.FLOWCORE_TENANT,
     dataCore: env.FLOWCORE_DATA_CORE,
@@ -50,6 +59,8 @@ export function createPathwayRuntime(
     advertisedUrl: env.SERVICE_URL,
     resetSecret: env.PUMP_RESET_SECRET,
     resetPath: "/reset",
+    runtimeEnv,
+    pathwayMode: "virtual",
     pathwayLabels: {
       service: "fishfacts-ai-backend",
       env: env.NODE_ENV,
@@ -127,6 +138,17 @@ export function createPathwayRuntime(
     router,
     async startPump() {
       if (env.DISABLE_EVENT_STREAMING) return;
+      if (runtimeEnv === "production") {
+        const coordinator = await createPostgresPathwayCoordinator({
+          connectionString: env.DATABASE_URL,
+        });
+        await pathways.startCluster({
+          coordinator,
+          advertisedAddress: env.POD_IP,
+          port: env.CLUSTER_PORT,
+          transport: createNodeTransport(),
+        });
+      }
       const stateManagerFactory = await createPostgresPumpStateManagerFactory({
         connectionString: env.DATABASE_URL,
       });
@@ -142,6 +164,9 @@ export function createPathwayRuntime(
     },
     async stopPump() {
       await pathways.stopPump();
+      if (runtimeEnv === "production") {
+        await pathways.stopCluster();
+      }
     },
   };
 }
