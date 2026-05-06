@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.0.0...v1.0.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **pathways:** wire virtual pathway with cluster mode for production ([d2fe3cf](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d2fe3cfea9d85c0cd6a443d05dacf9268143da61))
+
 ## 1.0.0 (2026-05-06)
 
 
