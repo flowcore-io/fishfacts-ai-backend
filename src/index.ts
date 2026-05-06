@@ -1,7 +1,9 @@
 import { createApp } from "./app";
+import { TokenCache } from "./auth/cache";
 import { createDb } from "./db/client";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
+import { FishfactsApiClient } from "./fishfacts/client";
 import { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
 import { createJobDefinitions } from "./jobs/registry";
 import { JobRunner } from "./jobs/runner";
@@ -20,7 +22,16 @@ const jobs = createJobDefinitions(env, pathways.writer, usable);
 const jobStateStore = new JobStateStore(env, usable, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore);
 const jobScheduler = new JobScheduler(env, jobRunner);
-const app = createApp({ repository, pathways, jobRunner, jobStateStore });
+const fishfactsClient = new FishfactsApiClient(env);
+const authCache = new TokenCache(env.AUTH_CACHE_TTL_MS);
+const app = createApp({
+  repository,
+  pathways,
+  jobRunner,
+  jobStateStore,
+  fishfactsClient,
+  authCache,
+});
 
 await pathways.startPump();
 jobScheduler.start();

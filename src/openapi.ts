@@ -33,6 +33,7 @@ export const openApiDocument = {
       post: {
         tags: ["Events"],
         summary: "Emit a generic Flowcore event",
+        security: [{ FishfactsAuthToken: [] }],
         requestBody: {
           required: true,
           content: {
@@ -44,7 +45,10 @@ export const openApiDocument = {
         responses: {
           "202": { description: "Event accepted by Flowcore" },
           "400": { description: "Invalid payload" },
-          "502": { description: "Flowcore write failed" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": {
+            description: "Flowcore write failed or auth upstream unavailable",
+          },
         },
       },
     },
@@ -52,6 +56,7 @@ export const openApiDocument = {
       get: {
         tags: ["Events"],
         summary: "Read a projected generic event",
+        security: [{ FishfactsAuthToken: [] }],
         parameters: [
           {
             name: "id",
@@ -62,7 +67,9 @@ export const openApiDocument = {
         ],
         responses: {
           "200": { description: "Projected event" },
+          "401": { description: "Missing or invalid x-auth-token" },
           "404": { description: "Not found" },
+          "502": { description: "Auth upstream unavailable" },
         },
       },
     },
@@ -81,6 +88,7 @@ export const openApiDocument = {
         tags: ["Jobs"],
         summary: "Run scheduled jobs",
         description: "Starts due scheduled jobs and returns immediately.",
+        security: [{ FishfactsAuthToken: [] }],
         responses: {
           "202": {
             description: "Jobs started",
@@ -90,6 +98,8 @@ export const openApiDocument = {
               },
             },
           },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
         },
       },
     },
@@ -99,6 +109,7 @@ export const openApiDocument = {
         summary: "Run one or all jobs",
         description:
           "Starts a background job run and returns current state without waiting for completion.",
+        security: [{ FishfactsAuthToken: [] }],
         requestBody: {
           required: false,
           content: {
@@ -139,6 +150,8 @@ export const openApiDocument = {
             },
           },
           "400": { description: "Invalid payload" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
         },
       },
     },
@@ -146,6 +159,7 @@ export const openApiDocument = {
       get: {
         tags: ["Jobs"],
         summary: "Read job state",
+        security: [{ FishfactsAuthToken: [] }],
         responses: {
           "200": {
             description: "Job state",
@@ -155,6 +169,8 @@ export const openApiDocument = {
               },
             },
           },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
         },
       },
     },
@@ -162,6 +178,7 @@ export const openApiDocument = {
       post: {
         tags: ["Jobs"],
         summary: "Stop a running job",
+        security: [{ FishfactsAuthToken: [] }],
         requestBody: {
           required: true,
           content: {
@@ -186,6 +203,8 @@ export const openApiDocument = {
             },
           },
           "400": { description: "Invalid payload" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
         },
       },
     },
@@ -201,6 +220,15 @@ export const openApiDocument = {
     },
   },
   components: {
+    securitySchemes: {
+      FishfactsAuthToken: {
+        type: "apiKey",
+        in: "header",
+        name: "x-auth-token",
+        description:
+          "Fishfacts session token issued by POST /api/v3/login on api.fishfacts.fo. The backend revalidates it against /api/v3/user/active on each cache miss.",
+      },
+    },
     schemas: {
       GenericEventInput: {
         type: "object",

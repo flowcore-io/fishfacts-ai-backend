@@ -4,8 +4,12 @@ import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
 import { timing } from "hono/timing";
 import { ZodError } from "zod";
+import type { TokenCache } from "./auth/cache";
+import { createAuthMiddleware } from "./auth/middleware";
+import "./auth/types";
 import { genericEventInputSchema } from "./events/contracts";
 import type { GenericEventRepository } from "./events/repository";
+import type { FishfactsApiClient } from "./fishfacts/client";
 import type { JobRunner } from "./jobs/runner";
 import type { JobStateStore } from "./jobs/state-store";
 import { openApiDocument } from "./openapi";
@@ -16,6 +20,8 @@ export type AppDependencies = {
   pathways: PathwayRuntime;
   jobRunner: JobRunner;
   jobStateStore: JobStateStore;
+  fishfactsClient: FishfactsApiClient;
+  authCache: TokenCache;
 };
 
 export function createApp({
@@ -23,6 +29,8 @@ export function createApp({
   pathways,
   jobRunner,
   jobStateStore,
+  fishfactsClient,
+  authCache,
 }: AppDependencies) {
   const app = new Hono();
 
@@ -37,6 +45,11 @@ export function createApp({
   app.get("/api/docs", (c) => c.json(openApiDocument));
   app.get("/docs", (c) => c.html(renderApiReference()));
   app.get("/swagger", (c) => c.html(renderApiReference()));
+
+  const authMiddleware = createAuthMiddleware(fishfactsClient, authCache);
+  app.use("/api/events", authMiddleware);
+  app.use("/api/events/*", authMiddleware);
+  app.use("/api/jobs/*", authMiddleware);
 
   app.post("/api/events", async (c) => {
     const body = await c.req.json().catch(() => null);

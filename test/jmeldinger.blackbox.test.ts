@@ -7,6 +7,7 @@ import {
   test,
 } from "bun:test";
 import { AppProcess } from "./fixtures/app-process";
+import { FakeFishfactsServer } from "./fixtures/fake-fishfacts";
 import { FakeFiskeridirServer } from "./fixtures/fake-fiskeridir";
 import { FakeUsableServer } from "./fixtures/fake-usable";
 import { WebhookTestFixture } from "./fixtures/webhook.fixture";
@@ -15,9 +16,11 @@ const APP_PORT = 4410;
 const WEBHOOK_PORT = 4411;
 const USABLE_PORT = 4412;
 const FISKERIDIR_PORT = 4413;
+const FISHFACTS_PORT = 4414;
 const TRANSFORMER_SECRET = "test-transformer-secret";
 const FLOW_TYPE = "fishfacts-announcement.0";
 const EVENT_TYPE = "jmelding.announcement.discovered.0";
+const VALID_AUTH_TOKEN = "433069ad-0dd0-46e5-a832-6960cd6690b5";
 
 function fixtureAnnouncementPayload() {
   return {
@@ -38,6 +41,7 @@ function fixtureAnnouncementPayload() {
 
 const usable = new FakeUsableServer(USABLE_PORT);
 const fiskeridir = new FakeFiskeridirServer(FISKERIDIR_PORT);
+const fishfacts = new FakeFishfactsServer(FISHFACTS_PORT);
 const webhook = new WebhookTestFixture({
   port: WEBHOOK_PORT,
   secret: TRANSFORMER_SECRET,
@@ -63,6 +67,8 @@ const app = new AppProcess(APP_PORT, {
   JOB_STATE_FRAGMENT_TYPE_ID: "11da02d0-b033-43a4-acd1-96f9e193cc86",
   JOB_SCHEDULER_ENABLED: "false",
   FISKERIDIR_JMELDINGER_BASE_URL: fiskeridir.baseUrl,
+  FISHFACTS_API_BASE_URL: fishfacts.baseUrl,
+  FISHFACTS_APPLICATION: "FISHFACTS",
 });
 
 async function waitFor<T>(read: () => T | Promise<T>, message: string) {
@@ -80,6 +86,8 @@ describe("J-meldinger jobs black-box", () => {
   beforeAll(async () => {
     await usable.start();
     await fiskeridir.start();
+    await fishfacts.start();
+    fishfacts.addValidToken(VALID_AUTH_TOKEN);
     await webhook.start();
     await app.start();
   });
@@ -91,6 +99,7 @@ describe("J-meldinger jobs black-box", () => {
   afterAll(async () => {
     await app.stop();
     await webhook.stop();
+    await fishfacts.stop();
     await fiskeridir.stop();
     await usable.stop();
   });
@@ -98,6 +107,7 @@ describe("J-meldinger jobs black-box", () => {
   test("job run emits Flowcore announcement event and reconstructs Usable fragment", async () => {
     const response = await app.fetch("/api/jobs/run", {
       method: "POST",
+      headers: { "x-auth-token": VALID_AUTH_TOKEN },
       body: JSON.stringify({
         jobId: "fiskeridir-jmeldinger",
         waitForCompletion: true,
@@ -143,7 +153,9 @@ describe("J-meldinger jobs black-box", () => {
 
     webhook.clear();
     await waitFor(async () => {
-      const stateResponse = await app.fetch("/api/jobs/state");
+      const stateResponse = await app.fetch("/api/jobs/state", {
+        headers: { "x-auth-token": VALID_AUTH_TOKEN },
+      });
       const state = await stateResponse.json();
       return (
         state.state.jobs["fiskeridir-jmeldinger"]?.lastRunStatus === "success"
@@ -154,6 +166,7 @@ describe("J-meldinger jobs black-box", () => {
     }
     const secondResponse = await app.fetch("/api/jobs/run", {
       method: "POST",
+      headers: { "x-auth-token": VALID_AUTH_TOKEN },
       body: JSON.stringify({
         jobId: "fiskeridir-jmeldinger",
         waitForCompletion: true,
@@ -164,7 +177,9 @@ describe("J-meldinger jobs black-box", () => {
     await Bun.sleep(200);
     expect(webhook.last(FLOW_TYPE, EVENT_TYPE)).toBeUndefined();
     await waitFor(async () => {
-      const stateResponse = await app.fetch("/api/jobs/state");
+      const stateResponse = await app.fetch("/api/jobs/state", {
+        headers: { "x-auth-token": VALID_AUTH_TOKEN },
+      });
       const state = await stateResponse.json();
       return state.state.jobs["fiskeridir-jmeldinger"]?.progress
         ?.skippedExisting;
