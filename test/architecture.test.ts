@@ -21,8 +21,8 @@ describe("architecture", () => {
   test("black-box tests do not import application internals", async () => {
     const proc = Bun.spawnSync({
       cmd: [
-        "rg",
-        "-n",
+        "grep",
+        "-rEn",
         "from [\"']@/|from [\"']\\.\\./src|from [\"']src/",
         "test",
       ],
