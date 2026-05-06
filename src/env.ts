@@ -35,6 +35,12 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://www.fiskeridir.no/yrkesfiske/j-meldinger"),
+  FISHFACTS_API_BASE_URL: z
+    .string()
+    .url()
+    .default("https://api-test.fishfacts.fo"),
+  FISHFACTS_APPLICATION: z.string().min(1).default("FISHFACTS"),
+  AUTH_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(60000),
   DISABLE_EVENT_STREAMING: z
     .enum(["true", "false"])
     .default("false")
