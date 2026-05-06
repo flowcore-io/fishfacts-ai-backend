@@ -1,0 +1,96 @@
+name: Build and Deploy to Production
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  extract_info:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract version from package.json
+        uses: sergeysova/jq-action@v2
+        id: version
+        with:
+          cmd: "jq .version package.json -r"
+      - name: Extract package name from package.json
+        uses: sergeysova/jq-action@v2
+        id: package
+        with:
+          cmd: "jq .name package.json -r"
+      - name: Extract deploymentPath from flowcore.deployment.json
+        uses: sergeysova/jq-action@v2
+        id: deploymentPath
+        with:
+          cmd: "jq .deploymentPath flowcore.deployment.json -r"
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      package: ${{ steps.package.outputs.value }}
+      deploymentPath: ${{ steps.deploymentPath.outputs.value }}
+
+  build_docker:
+    needs: extract_info
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.FLOWCORE_MACHINE_GITHUB_TOKEN }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::305363105399:role/ECRGithubManager
+          aws-region: eu-west-1
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - uses: int128/create-ecr-repository-action@v1
+        with:
+          repository: ${{ needs.extract_info.outputs.package }}
+      - name: Build, tag, and push docker image to Amazon ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ needs.extract_info.outputs.package }}
+          IMAGE_TAG: ${{ needs.extract_info.outputs.version }}
+        run: |
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+
+  deploy:
+    needs: [build_docker, extract_info]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Target Repository
+        uses: actions/checkout@v4
+        with:
+          repository: flowcore-io/public-customer-sites-manifests
+          ref: main
+          path: deployment-repo
+          token: ${{ secrets.FLOWCORE_MACHINE_GITHUB_TOKEN }}
+      - name: Setup yq
+        uses: mikefarah/yq@v4.42.1
+      - name: Update Image Version
+        working-directory: deployment-repo
+        env:
+          TAG_PATH: ${{ needs.extract_info.outputs.deploymentPath }}
+          VERSION: ${{ needs.extract_info.outputs.version }}
+        run: |
+          echo "Updating tag path: $TAG_PATH"
+          echo "New tag: $VERSION"
+          yq eval ".$TAG_PATH = \"$VERSION\"" -i configuration/azure-eu.yaml
+      - name: Commit and push
+        working-directory: deployment-repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update ${{ needs.extract_info.outputs.package }} to ${{ needs.extract_info.outputs.version }}"
+          git push

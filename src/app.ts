@@ -1,0 +1,187 @@
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import { secureHeaders } from "hono/secure-headers";
+import { timing } from "hono/timing";
+import { ZodError } from "zod";
+import { genericEventInputSchema } from "./events/contracts";
+import type { GenericEventRepository } from "./events/repository";
+import type { JobRunner } from "./jobs/runner";
+import type { JobStateStore } from "./jobs/state-store";
+import { openApiDocument } from "./openapi";
+import type { PathwayRuntime } from "./pathways";
+
+export type AppDependencies = {
+  repository: GenericEventRepository;
+  pathways: PathwayRuntime;
+  jobRunner: JobRunner;
+  jobStateStore: JobStateStore;
+};
+
+export function createApp({
+  repository,
+  pathways,
+  jobRunner,
+  jobStateStore,
+}: AppDependencies) {
+  const app = new Hono();
+
+  app.use("*", logger());
+  app.use("*", timing());
+  app.use("*", secureHeaders());
+  app.use("*", cors());
+
+  app.get("/", (c) => c.redirect("/docs"));
+  app.get("/health", (c) => c.json({ ok: true }));
+  app.get("/openapi.json", (c) => c.json(openApiDocument));
+  app.get("/api/docs", (c) => c.json(openApiDocument));
+  app.get("/docs", (c) => c.html(renderApiReference()));
+  app.get("/swagger", (c) => c.html(renderApiReference()));
+
+  app.post("/api/events", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = genericEventInputSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        { error: "invalid_payload", issues: parsed.error.issues },
+        400,
+      );
+    }
+
+    try {
+      const eventId = await pathways.writer.writeGeneric(parsed.data);
+      return c.json({ eventId }, 202);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: "flowcore_write_failed", message }, 502);
+    }
+  });
+
+  app.get("/api/events/:id", async (c) => {
+    const event = await repository.findById(c.req.param("id"));
+    if (!event) return c.json({ error: "not_found" }, 404);
+    return c.json(event);
+  });
+
+  app.post("/api/jobs/cron", async (c) => {
+    const results = await jobRunner.runAll("cron");
+    return c.json(
+      {
+        ok: true,
+        trigger: "cron",
+        results,
+        runAt: new Date().toISOString(),
+      },
+      202,
+    );
+  });
+
+  app.post("/api/jobs/run", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const jobId = typeof body.jobId === "string" ? body.jobId : undefined;
+    if (jobId) {
+      const started = await jobRunner.startJob(
+        jobId,
+        "manual",
+        body.args ?? {},
+      );
+      void started.promise.catch((error) => {
+        console.error("[Jobs] Manual run failed", {
+          jobId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return c.json(
+        {
+          ok: true,
+          mode: "single",
+          jobId,
+          runId: started.runId,
+          state: started.state.job,
+          runAt: new Date().toISOString(),
+        },
+        202,
+      );
+    }
+    const results = await jobRunner.runAll("manual");
+    return c.json({ ok: true, mode: "all", results }, 202);
+  });
+
+  app.get("/api/jobs/state", async (c) => {
+    const loaded = await jobStateStore.loadAll();
+    return c.json({
+      ok: true,
+      fragmentIds: loaded.fragmentIds,
+      jobs: jobRunner.definitions().map((job) => ({
+        id: job.id,
+        name: job.name,
+        schedule: job.schedule,
+        defaultArgs: job.inputSchema.parse({}),
+      })),
+      runningJobIds: jobRunner.getRunningJobIds(),
+      state: loaded.state,
+      now: new Date().toISOString(),
+    });
+  });
+
+  app.post("/api/jobs/stop", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    if (typeof body.jobId !== "string" || !body.jobId) {
+      return c.json({ ok: false, error: "jobId is required" }, 400);
+    }
+    const stopped = jobRunner.requestStop(body.jobId);
+    return c.json({
+      ok: true,
+      jobId: body.jobId,
+      message: stopped ? "Stop requested" : "No running job found",
+    });
+  });
+
+  app.post("/api/transformer", async (c) => {
+    const body = await c.req.json();
+    const secret = c.req.header("x-secret") ?? "";
+    const result = await pathways.router.processEvent(body, secret);
+    return c.json(result);
+  });
+
+  app.post("/reset", async (c) => {
+    const body = await c.req.json();
+    const secret = c.req.header("x-pump-reset-secret") ?? null;
+    const result = await pathways.router.processReset(body, secret);
+    return c.json(result);
+  });
+
+  app.onError((error, c) => {
+    if (error instanceof ZodError) {
+      return c.json({ error: "invalid_payload", issues: error.issues }, 400);
+    }
+    console.error(error);
+    return c.json({ error: "internal_server_error" }, 500);
+  });
+
+  return app;
+}
+
+function renderApiReference() {
+  return `<!doctype html>
+<html>
+  <head>
+    <title>Fishfacts AI Backend API</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { margin: 0; }
+    </style>
+  </head>
+  <body>
+    <script
+      id="api-reference"
+      data-url="/openapi.json"
+      data-theme="purple"
+      data-layout="modern"
+      data-hide-dark-mode-toggle="true"
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+  </body>
+</html>`;
+}

@@ -1,0 +1,15 @@
+node_modules
+.git
+.github
+.env
+.env.*
+!.env.example
+*.md
+.claude
+.DS_Store
+dist
+coverage
+test
+drizzle/meta
+docker-compose.yml
+biome.json
