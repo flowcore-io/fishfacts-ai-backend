@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.0.1...v1.1.0) (2026-05-06)
+
+
+### Features
+
+* **auth:** add x-auth-token middleware that validates against fishfacts.fo ([#3](https://github.com/flowcore-io/fishfacts-ai-backend/issues/3)) ([35191a3](https://github.com/flowcore-io/fishfacts-ai-backend/commit/35191a3f7282973fe98aa161cfe453566659071f))
+
 ## [1.0.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.0.0...v1.0.1) (2026-05-06)
 
 
