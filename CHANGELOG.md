@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.0...v1.1.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **jobs:** capture upstream response in job error message ([#5](https://github.com/flowcore-io/fishfacts-ai-backend/issues/5)) ([965fa7e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/965fa7e79ab85019d2bc1222462aed65c3393a64))
+
 ## [1.1.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.0.1...v1.1.0) (2026-05-06)
 
 
