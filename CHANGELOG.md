@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.2.1...v1.2.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* **pathways:** omit chunking metadata for non-chunked j-melding writes ([#17](https://github.com/flowcore-io/fishfacts-ai-backend/issues/17)) ([9898b6b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/9898b6bc7f850d454ed75f40a645484c05966680))
+
 ## [1.2.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.2.0...v1.2.1) (2026-05-07)
 
 
