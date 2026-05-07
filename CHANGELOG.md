@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.2...v1.1.3) (2026-05-07)
+
+
+### Bug Fixes
+
+* **pathways:** write j-melding events fire-and-forget so jobs don't block 10s ([#9](https://github.com/flowcore-io/fishfacts-ai-backend/issues/9)) ([4b81485](https://github.com/flowcore-io/fishfacts-ai-backend/commit/4b814852dfc6c7cfdff087ae3911c0e322e13b66))
+
 ## [1.1.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.1...v1.1.2) (2026-05-07)
 
 
