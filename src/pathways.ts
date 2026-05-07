@@ -124,6 +124,14 @@ export function createPathwayRuntime(
         const chunks = chunkAnnouncement(data);
         const eventIds: string[] = [];
         for (const [index, chunk] of chunks.entries()) {
+          const metadata: Record<string, unknown> = {
+            source: "fiskeridir-jmeldinger-job",
+          };
+          if (chunks.length > 1) {
+            metadata.chunked = true;
+            metadata.partNumber = index + 1;
+            metadata.totalParts = chunks.length;
+          }
           const eventId = await (
             pathways.write as never as (
               path: typeof JMELDING_ANNOUNCEMENT_PATHWAY,
@@ -135,12 +143,7 @@ export function createPathwayRuntime(
             ) => Promise<string | string[]>
           )(JMELDING_ANNOUNCEMENT_PATHWAY, {
             data: chunk,
-            metadata: {
-              source: "fiskeridir-jmeldinger-job",
-              chunked: chunks.length > 1,
-              partNumber: chunks.length > 1 ? index + 1 : undefined,
-              totalParts: chunks.length > 1 ? chunks.length : undefined,
-            },
+            metadata,
             options: { fireAndForget: true },
           });
           eventIds.push(Array.isArray(eventId) ? eventId[0] : eventId);
