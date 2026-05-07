@@ -5,6 +5,15 @@ import { jmeldingFragmentKey } from "./jmelding-fragments";
 import type { JobExecutionResult, JobLatestItem, JobState } from "./types";
 
 const FETCH_CONCURRENCY = 10;
+const MAX_EVENT_BODY_MARKDOWN_CHARS = 30000;
+const TRUNCATION_MARKER =
+  "\n\n_Body truncated to fit Flowcore event size limit._";
+
+function capBodyMarkdown(value: string) {
+  if (value.length <= MAX_EVENT_BODY_MARKDOWN_CHARS) return value;
+  const budget = MAX_EVENT_BODY_MARKDOWN_CHARS - TRUNCATION_MARKER.length;
+  return `${value.slice(0, Math.max(0, budget)).trimEnd()}${TRUNCATION_MARKER}`;
+}
 
 type CandidateItem = {
   title: string;
@@ -270,7 +279,7 @@ async function fetchDetail(
   if (response?.ok) {
     const mainHtml = extractMainHtml(await response.text());
     const bodyText = decodeEntities(stripTags(mainHtml));
-    bodyMarkdown = htmlToMarkdown(mainHtml);
+    bodyMarkdown = capBodyMarkdown(htmlToMarkdown(mainHtml));
     contentHash = createHash("sha256")
       .update(bodyText.slice(0, 6000))
       .digest("hex");
