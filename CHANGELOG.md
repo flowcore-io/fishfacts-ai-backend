@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.2.0...v1.2.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **jobs:** restore 30000-char bodyMarkdown cap to keep events well under 64KB ([#15](https://github.com/flowcore-io/fishfacts-ai-backend/issues/15)) ([bdc992b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/bdc992b1230fd4f2e30f52c099f2ba504ea1b158))
+
 ## [1.2.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.3...v1.2.0) (2026-05-07)
 
 
