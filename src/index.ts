@@ -4,6 +4,7 @@ import { createDb } from "./db/client";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
+import { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
 import { createJobDefinitions } from "./jobs/registry";
 import { JobRunner } from "./jobs/runner";
@@ -17,7 +18,8 @@ const { db, client } = createDb(env.DATABASE_URL);
 const repository = new PostgresGenericEventRepository(db);
 const usable = new UsableApiClient(env);
 const jmeldingProjector = new JMeldingFragmentProjector(env, usable);
-const pathways = createPathwayRuntime(env, repository, jmeldingProjector);
+const chunkAssembler = new JMeldingChunkAssembler(db, jmeldingProjector);
+const pathways = createPathwayRuntime(env, repository, chunkAssembler);
 const jobs = createJobDefinitions(env, pathways.writer, usable);
 const jobStateStore = new JobStateStore(env, usable, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore);
@@ -36,8 +38,27 @@ const app = createApp({
 await pathways.startPump();
 jobScheduler.start();
 
+const chunkCleanupInterval = setInterval(
+  () => {
+    chunkAssembler
+      .cleanupExpired()
+      .then((count) => {
+        if (count > 0) {
+          console.log("[Chunks] cleaned up expired queue rows", { count });
+        }
+      })
+      .catch((error) => {
+        console.error("[Chunks] cleanup failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+  },
+  5 * 60 * 1000,
+);
+
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {
+    clearInterval(chunkCleanupInterval);
     jobScheduler.stop();
     await pathways.stopPump();
     await client.end();

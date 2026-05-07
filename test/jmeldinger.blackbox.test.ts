@@ -215,6 +215,66 @@ describe("J-meldinger jobs black-box", () => {
     expect(patchCountAfter).toBeGreaterThan(patchCountBefore);
   });
 
+  test("chunks oversize body across multiple events and reassembles into one fragment", async () => {
+    fishfacts.addValidToken(VALID_AUTH_TOKEN);
+    fiskeridir.setLargeDetailBody(180_000, "L");
+    try {
+      for (const [id, fragment] of usable.fragments) {
+        if (fragment.tags?.includes("job-system")) usable.fragments.delete(id);
+        if (fragment.key === "fishfacts-jmelding-j-1-2026") {
+          usable.fragments.delete(id);
+        }
+      }
+      webhook.clear();
+      const response = await app.fetch("/api/jobs/run", {
+        method: "POST",
+        headers: { "x-auth-token": VALID_AUTH_TOKEN },
+        body: JSON.stringify({
+          jobId: "fiskeridir-jmeldinger",
+          waitForCompletion: true,
+          args: { maxItems: 1, maxPages: 1, includeArchived: true },
+        }),
+      });
+      expect(response.status).toBe(202);
+
+      await waitFor(async () => {
+        const stateResponse = await app.fetch("/api/jobs/state", {
+          headers: { "x-auth-token": VALID_AUTH_TOKEN },
+        });
+        const state = await stateResponse.json();
+        return (
+          state.state.jobs["fiskeridir-jmeldinger"]?.lastRunStatus === "success"
+        );
+      }, "Chunked j-melding job did not finish");
+
+      const announcementEvents = webhook.events.filter(
+        (event) => event.eventType === EVENT_TYPE,
+      );
+      expect(announcementEvents.length).toBeGreaterThan(1);
+      const partsSeen = announcementEvents.map(
+        (event) => (event.payload as { partNumber?: number })?.partNumber,
+      );
+      expect(new Set(partsSeen).size).toBe(announcementEvents.length);
+      const totalParts = (
+        announcementEvents[0].payload as { totalParts?: number }
+      ).totalParts;
+      expect(totalParts).toBe(announcementEvents.length);
+      for (const event of announcementEvents) {
+        const size = Buffer.byteLength(JSON.stringify(event.payload), "utf8");
+        expect(size).toBeLessThanOrEqual(64_000);
+      }
+
+      const projected = Array.from(usable.fragments.values()).find(
+        (fragment) => fragment.key === "fishfacts-jmelding-j-1-2026",
+      );
+      expect(projected).toBeDefined();
+      expect(projected?.content?.length ?? 0).toBeGreaterThan(50_000);
+      expect(projected?.content).toContain("LLLLL");
+    } finally {
+      fiskeridir.clearLargeDetailBody();
+    }
+  });
+
   test("invalid transformer secret is rejected", async () => {
     const response = await app.fetch("/api/transformer", {
       method: "POST",

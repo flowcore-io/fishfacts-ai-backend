@@ -18,8 +18,9 @@ import {
   genericEventInputSchema,
   jmeldingAnnouncementDiscoveredSchema,
 } from "./events/contracts";
+import { chunkAnnouncement } from "./events/jmelding-chunking";
 import type { GenericEventRepository } from "./events/repository";
-import type { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
+import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 
 export interface PathwayWriter {
   writeGeneric(data: z.infer<typeof genericEventInputSchema>): Promise<string>;
@@ -38,7 +39,7 @@ export type PathwayRuntime = {
 export function createPathwayRuntime(
   env: Env,
   repository: GenericEventRepository,
-  jmeldingProjector: JMeldingFragmentProjector,
+  chunkAssembler: JMeldingChunkAssembler,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -97,7 +98,7 @@ export function createPathwayRuntime(
       const parsed = jmeldingAnnouncementDiscoveredSchema.parse(
         (event as { payload: unknown }).payload,
       );
-      await jmeldingProjector.project(parsed);
+      await chunkAssembler.handle(parsed);
     });
 
   const router = new PathwayRouter(pathways, env.FLOWCORE_TRANSFORMER_SECRET);
@@ -120,21 +121,31 @@ export function createPathwayRuntime(
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeJMeldingAnnouncement(data) {
-        const eventId = await (
-          pathways.write as never as (
-            path: typeof JMELDING_ANNOUNCEMENT_PATHWAY,
-            input: {
-              data: JMeldingAnnouncementDiscovered;
-              metadata: Record<string, unknown>;
-              options?: { fireAndForget?: boolean };
+        const chunks = chunkAnnouncement(data);
+        const eventIds: string[] = [];
+        for (const [index, chunk] of chunks.entries()) {
+          const eventId = await (
+            pathways.write as never as (
+              path: typeof JMELDING_ANNOUNCEMENT_PATHWAY,
+              input: {
+                data: JMeldingAnnouncementDiscovered;
+                metadata: Record<string, unknown>;
+                options?: { fireAndForget?: boolean };
+              },
+            ) => Promise<string | string[]>
+          )(JMELDING_ANNOUNCEMENT_PATHWAY, {
+            data: chunk,
+            metadata: {
+              source: "fiskeridir-jmeldinger-job",
+              chunked: chunks.length > 1,
+              partNumber: chunks.length > 1 ? index + 1 : undefined,
+              totalParts: chunks.length > 1 ? chunks.length : undefined,
             },
-          ) => Promise<string | string[]>
-        )(JMELDING_ANNOUNCEMENT_PATHWAY, {
-          data,
-          metadata: { source: "fiskeridir-jmeldinger-job" },
-          options: { fireAndForget: true },
-        });
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+            options: { fireAndForget: true },
+          });
+          eventIds.push(Array.isArray(eventId) ? eventId[0] : eventId);
+        }
+        return eventIds[0];
       },
     },
     router,

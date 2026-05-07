@@ -8,6 +8,13 @@
       "when": 1777909110520,
       "tag": "0000_tricky_gravity",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778161031784,
+      "tag": "0001_burly_tombstone",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,12 @@
-import { jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 export const genericEvents = pgTable("generic_events", {
   id: text("id").primaryKey(),
@@ -14,3 +22,22 @@ export const genericEvents = pgTable("generic_events", {
     .defaultNow()
     .notNull(),
 });
+
+export const jmeldingChunkQueue = pgTable(
+  "jmelding_chunk_queue",
+  {
+    signature: text("signature").notNull(),
+    partNumber: integer("part_number").notNull(),
+    totalParts: integer("total_parts").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.signature, table.partNumber] }),
+    createdAtIdx: index("jmelding_chunk_queue_created_at_idx").on(
+      table.createdAt,
+    ),
+  }),
+);
