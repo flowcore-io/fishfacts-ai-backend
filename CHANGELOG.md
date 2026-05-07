@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.1...v1.1.2) (2026-05-07)
+
+
+### Bug Fixes
+
+* **jobs:** cap j-melding bodyMarkdown so events fit Flowcore 64KB limit ([#7](https://github.com/flowcore-io/fishfacts-ai-backend/issues/7)) ([2fe5494](https://github.com/flowcore-io/fishfacts-ai-backend/commit/2fe5494b5e66214a092a31b9c557e1f56d20f260))
+
 ## [1.1.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.0...v1.1.1) (2026-05-07)
 
 
