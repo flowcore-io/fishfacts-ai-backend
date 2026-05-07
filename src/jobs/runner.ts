@@ -6,6 +6,27 @@ type RunningJobHandle = {
   stopRequested: boolean;
 };
 
+function describeError(error: unknown): string {
+  const base = error instanceof Error ? error.message : String(error);
+  if (!error || typeof error !== "object") return base;
+  const parts: string[] = [base];
+  const response = (error as { response?: unknown }).response;
+  if (response !== undefined) {
+    try {
+      parts.push(`response=${JSON.stringify(response)}`);
+    } catch {
+      parts.push(`response=${String(response)}`);
+    }
+  }
+  const exception = (error as { exception?: unknown }).exception;
+  if (exception !== undefined && exception !== error) {
+    parts.push(
+      `cause=${exception instanceof Error ? exception.message : String(exception)}`,
+    );
+  }
+  return parts.join(" | ");
+}
+
 function normalizeProgress<
   T extends NonNullable<PersistedJobState["job"]["progress"]>,
 >(progress: T): T {
@@ -205,7 +226,15 @@ export class JobRunner {
         };
       } catch (error) {
         const finishedAt = new Date().toISOString();
-        const message = error instanceof Error ? error.message : String(error);
+        const message = describeError(error);
+        console.error("[Jobs] run failed", {
+          jobId,
+          runId,
+          message,
+          name: error instanceof Error ? error.name : undefined,
+          response: (error as { response?: unknown })?.response,
+          stack: error instanceof Error ? error.stack : undefined,
+        });
         await progressSaveChain.catch(() => undefined);
         const nextState = persisted.state;
         nextState.updatedAt = finishedAt;
