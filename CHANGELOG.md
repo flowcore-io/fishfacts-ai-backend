@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.3...v1.2.0) (2026-05-07)
+
+
+### Features
+
+* **events:** chunk j-melding announcements over 60KB and reassemble in handler ([#11](https://github.com/flowcore-io/fishfacts-ai-backend/issues/11)) ([d452b2e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d452b2eed87e467cfa728c29bcd3368ad7695416))
+
 ## [1.1.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.1.2...v1.1.3) (2026-05-07)
 
 
