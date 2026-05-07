@@ -1,10 +1,19 @@
 export class FakeFiskeridirServer {
   private server?: Bun.Server<unknown>;
+  private extraDetailParagraph = "";
 
   constructor(private readonly port: number) {}
 
   get baseUrl() {
     return `http://127.0.0.1:${this.port}/yrkesfiske/j-meldinger`;
+  }
+
+  setLargeDetailBody(charCount: number, marker = "X") {
+    this.extraDetailParagraph = `<p>${marker.repeat(charCount)}</p>`;
+  }
+
+  clearLargeDetailBody() {
+    this.extraDetailParagraph = "";
   }
 
   async start(statusText = "current") {
@@ -32,6 +41,7 @@ export class FakeFiskeridirServer {
               <p>Gjeldende J-melding.</p>
               <p>Gyldig fra 01.01.2026</p>
               <p>Dette er en testkunngjøring for fisket etter sild.</p>
+              ${this.extraDetailParagraph}
             </main></body></html>`,
             { headers: { "content-type": "text/html" } },
           );

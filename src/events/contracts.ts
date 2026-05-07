@@ -36,6 +36,8 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
   bodyMarkdown: z.string().default(""),
   contentHash: z.string().optional(),
   checkedAt: z.string().datetime(),
+  partNumber: z.number().int().min(1).optional(),
+  totalParts: z.number().int().min(1).optional(),
 });
 
 export type JMeldingAnnouncementDiscovered = z.infer<
