@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.2.2...v1.3.0) (2026-05-07)
+
+
+### Features
+
+* **events:** activate j-melding chunking for events over 60KB ([#19](https://github.com/flowcore-io/fishfacts-ai-backend/issues/19)) ([476468d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/476468dcb137c6acfc88793193edffda23426ec8))
+
 ## [1.2.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.2.1...v1.2.2) (2026-05-07)
 
 
