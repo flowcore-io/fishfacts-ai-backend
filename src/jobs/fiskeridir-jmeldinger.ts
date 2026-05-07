@@ -393,6 +393,7 @@ export function createFiskeridirJMeldingerJob(
       };
     }
     if (
+      !args.refreshExisting &&
       previous?.lastRunStatus === "success" &&
       previous.listingFingerprint === listingFingerprint
     ) {
