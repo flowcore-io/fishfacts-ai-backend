@@ -126,11 +126,13 @@ export function createPathwayRuntime(
             input: {
               data: JMeldingAnnouncementDiscovered;
               metadata: Record<string, unknown>;
+              options?: { fireAndForget?: boolean };
             },
           ) => Promise<string | string[]>
         )(JMELDING_ANNOUNCEMENT_PATHWAY, {
           data,
           metadata: { source: "fiskeridir-jmeldinger-job" },
+          options: { fireAndForget: true },
         });
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
