@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.3.0...v1.3.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* **jobs:** refreshExisting=true bypasses listing-fingerprint short-circuit ([#21](https://github.com/flowcore-io/fishfacts-ai-backend/issues/21)) ([9887002](https://github.com/flowcore-io/fishfacts-ai-backend/commit/988700221f120b0127c14b36860156cb45644faf))
+
 ## [1.3.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.2.2...v1.3.0) (2026-05-07)
 
 
