@@ -1,6 +1,7 @@
 import { createApp } from "./app";
 import { TokenCache } from "./auth/cache";
 import { createDb } from "./db/client";
+import { runMigrations } from "./db/migrate";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
@@ -15,6 +16,7 @@ import { UsableApiClient } from "./usable/client";
 
 const env = loadEnv();
 const { db, client } = createDb(env.DATABASE_URL);
+await runMigrations(db, client);
 const repository = new PostgresGenericEventRepository(db);
 const usable = new UsableApiClient(env);
 const jmeldingProjector = new JMeldingFragmentProjector(env, usable);

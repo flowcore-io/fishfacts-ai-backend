@@ -318,6 +318,122 @@ describe("J-meldinger jobs black-box", () => {
     expect(projected?.content).toContain("MMMMM");
   });
 
+  test("oversize body chunks across multiple events and reassembles into one fragment", async () => {
+    fiskeridir.setLargeDetailBody(180_000, "L");
+    try {
+      for (const [id, fragment] of usable.fragments) {
+        if (fragment.tags?.includes("job-system")) usable.fragments.delete(id);
+        if (fragment.key === "fishfacts-jmelding-j-1-2026") {
+          usable.fragments.delete(id);
+        }
+      }
+      webhook.clear();
+
+      const response = await app.fetch("/api/jobs/run", {
+        method: "POST",
+        headers: { "x-auth-token": VALID_AUTH_TOKEN },
+        body: JSON.stringify({
+          jobId: "fiskeridir-jmeldinger",
+          waitForCompletion: true,
+          args: { maxItems: 1, maxPages: 1, includeArchived: true },
+        }),
+      });
+      expect(response.status).toBe(202);
+
+      await waitFor(async () => {
+        const stateResponse = await app.fetch("/api/jobs/state", {
+          headers: { "x-auth-token": VALID_AUTH_TOKEN },
+        });
+        const state = await stateResponse.json();
+        return (
+          state.state.jobs["fiskeridir-jmeldinger"]?.lastRunStatus === "success"
+        );
+      }, "Chunked j-melding job did not finish");
+
+      const announcementEvents = webhook.events.filter(
+        (event) => event.eventType === EVENT_TYPE,
+      );
+      expect(announcementEvents.length).toBeGreaterThan(1);
+
+      const partNumbers = announcementEvents.map(
+        (event) => (event.payload as { partNumber?: number })?.partNumber,
+      );
+      expect(new Set(partNumbers).size).toBe(announcementEvents.length);
+      const totalParts = (
+        announcementEvents[0].payload as { totalParts?: number }
+      ).totalParts;
+      expect(totalParts).toBe(announcementEvents.length);
+
+      for (const event of announcementEvents) {
+        const size = Buffer.byteLength(JSON.stringify(event.payload), "utf8");
+        expect(size).toBeLessThanOrEqual(64_000);
+        expect(event.metadata).toEqual({
+          source: "fiskeridir-jmeldinger-job",
+        });
+      }
+
+      const projected = Array.from(usable.fragments.values()).find(
+        (fragment) => fragment.key === "fishfacts-jmelding-j-1-2026",
+      );
+      expect(projected).toBeDefined();
+      expect(projected?.content).toContain("LLLLL");
+    } finally {
+      fiskeridir.clearLargeDetailBody();
+    }
+  });
+
+  test("redelivered chunk after assembly does not crash or re-project", async () => {
+    const chunkedKey = "fishfacts-jmelding-j-9997-redeliver";
+    const chunkedUrl = `http://127.0.0.1:${FISKERIDIR_PORT}/yrkesfiske/j-meldinger/j-9997-redeliver`;
+    const chunkedSignature = `signature-redeliver-${Date.now()}`;
+    for (const [id, fragment] of usable.fragments) {
+      if (fragment.key === chunkedKey) usable.fragments.delete(id);
+    }
+
+    const sendChunk = async (partNumber: number) =>
+      app.fetch("/api/transformer", {
+        method: "POST",
+        headers: { "x-secret": TRANSFORMER_SECRET },
+        body: JSON.stringify({
+          eventId: `redeliver-${partNumber}-${chunkedSignature}`,
+          timeBucket: "20260101000000",
+          tenant: "jbiskur",
+          dataCoreId: "fishfacts-ai-backend",
+          flowType: FLOW_TYPE,
+          eventType: EVENT_TYPE,
+          validTime: new Date().toISOString(),
+          metadata: {},
+          payload: {
+            signature: chunkedSignature,
+            title: "J-9997-Redeliver Test announcement",
+            url: chunkedUrl,
+            status: "current",
+            jmNumber: "j-9997-redeliver",
+            bodyMarkdown: "R".repeat(15_000),
+            checkedAt: new Date().toISOString(),
+            partNumber,
+            totalParts: 2,
+          },
+        }),
+      });
+
+    expect((await sendChunk(1)).status).toBe(200);
+    expect((await sendChunk(2)).status).toBe(200);
+    const projected = Array.from(usable.fragments.values()).find(
+      (fragment) => fragment.key === chunkedKey,
+    );
+    expect(projected).toBeDefined();
+    const callsAfterAssembly = usable.calls.length;
+
+    const replay = await sendChunk(1);
+    expect(replay.status).toBe(200);
+    const stillOne = Array.from(usable.fragments.values()).filter(
+      (fragment) => fragment.key === chunkedKey,
+    );
+    expect(stillOne.length).toBe(1);
+    expect(usable.calls.length).toBe(callsAfterAssembly);
+  });
+
   test("invalid transformer secret is rejected", async () => {
     const response = await app.fetch("/api/transformer", {
       method: "POST",
