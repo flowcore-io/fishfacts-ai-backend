@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.3.1...v1.4.0) (2026-05-12)
+
+
+### Features
+
+* jmelding geo API + switch prod to dedicated fishfacts tenant ([#23](https://github.com/flowcore-io/fishfacts-ai-backend/issues/23)) ([606a062](https://github.com/flowcore-io/fishfacts-ai-backend/commit/606a06284cd6a39abf51959bfcc707e5896ee4ea))
+
 ## [1.3.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.3.0...v1.3.1) (2026-05-07)
 
 
