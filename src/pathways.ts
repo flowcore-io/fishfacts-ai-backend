@@ -63,6 +63,8 @@ export function createPathwayRuntime(
     runtimeEnv,
     pathwayMode: "virtual",
     pathwayLabels: {
+      name: "fishfacts-ai-backend",
+      description: "FishFacts AI backend — j-melding ingestion + API events",
       service: "fishfacts-ai-backend",
       env: env.NODE_ENV,
     },
@@ -70,7 +72,7 @@ export function createPathwayRuntime(
       dataCore: true,
       flowType: true,
       eventType: true,
-      pathway: false,
+      pathway: true,
     },
   } as ConstructorParameters<typeof PathwaysBuilder>[0]);
 
@@ -166,7 +168,7 @@ export function createPathwayRuntime(
           dataCore: true,
           flowType: true,
           eventType: true,
-          pathway: false,
+          pathway: true,
         },
       });
     },

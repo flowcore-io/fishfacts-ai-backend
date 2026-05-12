@@ -52,7 +52,7 @@ Deployed service uses this tenant. API key value lives in 1Password ("Flowcore -
 - Announcement event type: `jmelding.announcement.discovered.0`
 - Announcement event type id: `80b9d5c6-7e2a-4cba-bf91-eb980c2915b6`
 
-PROD pathway is pre-created in the Flowcore UI; the SDK runs with `autoProvision.pathway: false` and looks up by name (`fishfacts-ai-backend`). Pump reset is triggered from the UI; the SDK polls for commands.
+PROD pathway is upserted by the SDK on startup via `PUT /api/v1/pathways/by-name/fishfacts-ai-backend` (`autoProvision.pathway: true`). The upsert is idempotent on `(tenant, name)` — it returns the existing `pathwayId`, which the SDK then uses to auto-configure pulse reporting and the restart-command poller. Labels are overwritten from `pathwayLabels` on every boot, so the builder config is the source of truth.
 
 ### Shared
 
