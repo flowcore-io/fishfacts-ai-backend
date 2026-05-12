@@ -4,6 +4,7 @@ import {
   jmeldingAnnouncementDiscoveredSchema,
 } from "@/events/contracts";
 import { isChunked, reassembleAnnouncement } from "@/events/jmelding-chunking";
+import type { JMeldingGeoProjector } from "@/jmelding/geo-projector";
 import { eq, lt } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/postgres-js";
 import type { JMeldingFragmentProjector } from "./jmelding-fragments";
@@ -16,11 +17,12 @@ export class JMeldingChunkAssembler {
   constructor(
     private readonly db: Database,
     private readonly projector: JMeldingFragmentProjector,
+    private readonly geoProjector?: JMeldingGeoProjector,
   ) {}
 
   async handle(item: JMeldingAnnouncementDiscovered) {
     if (!isChunked(item)) {
-      await this.projector.project(stripPartFields(item));
+      await this.runProjectors(stripPartFields(item));
       return;
     }
 
@@ -53,11 +55,35 @@ export class JMeldingChunkAssembler {
       jmeldingAnnouncementDiscoveredSchema.parse(row.payload),
     );
     const reassembled = reassembleAnnouncement(parts);
-    await this.projector.project(reassembled);
+    await this.runProjectors(reassembled);
 
     await this.db
       .delete(schema.jmeldingChunkQueue)
       .where(eq(schema.jmeldingChunkQueue.signature, item.signature));
+  }
+
+  private async runProjectors(item: JMeldingAnnouncementDiscovered) {
+    let fragmentId: string | null = null;
+    try {
+      const result = await this.projector.project(item);
+      fragmentId = result?.fragmentId ?? null;
+    } catch (error) {
+      console.error("[JMeldingFragment] projection failed", {
+        jmNumber: item.jmNumber,
+        url: item.url,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!this.geoProjector) return;
+    try {
+      await this.geoProjector.project(item, fragmentId);
+    } catch (error) {
+      console.error("[JMeldingGeo] projection failed", {
+        jmNumber: item.jmNumber,
+        url: item.url,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async cleanupExpired(now: Date = new Date()) {

@@ -70,7 +70,7 @@ export function createPathwayRuntime(
       dataCore: true,
       flowType: true,
       eventType: true,
-      pathway: true,
+      pathway: false,
     },
   } as ConstructorParameters<typeof PathwaysBuilder>[0]);
 
@@ -166,7 +166,7 @@ export function createPathwayRuntime(
           dataCore: true,
           flowType: true,
           eventType: true,
-          pathway: true,
+          pathway: false,
         },
       });
     },
