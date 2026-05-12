@@ -10,6 +10,5 @@ node_modules
 dist
 coverage
 test
-drizzle/meta
 docker-compose.yml
 biome.json
