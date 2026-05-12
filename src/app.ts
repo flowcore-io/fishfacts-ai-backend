@@ -10,6 +10,7 @@ import "./auth/types";
 import { genericEventInputSchema } from "./events/contracts";
 import type { GenericEventRepository } from "./events/repository";
 import type { FishfactsApiClient } from "./fishfacts/client";
+import type { JMeldingGeoRepository } from "./jmelding/geo-repository";
 import type { JobRunner } from "./jobs/runner";
 import type { JobStateStore } from "./jobs/state-store";
 import { openApiDocument } from "./openapi";
@@ -22,6 +23,7 @@ export type AppDependencies = {
   jobStateStore: JobStateStore;
   fishfactsClient: FishfactsApiClient;
   authCache: TokenCache;
+  geoRepository: JMeldingGeoRepository;
 };
 
 export function createApp({
@@ -31,6 +33,7 @@ export function createApp({
   jobStateStore,
   fishfactsClient,
   authCache,
+  geoRepository,
 }: AppDependencies) {
   const app = new Hono();
 
@@ -50,6 +53,8 @@ export function createApp({
   app.use("/api/events", authMiddleware);
   app.use("/api/events/*", authMiddleware);
   app.use("/api/jobs/*", authMiddleware);
+  app.use("/api/jmeldinger", authMiddleware);
+  app.use("/api/jmeldinger/*", authMiddleware);
 
   app.post("/api/events", async (c) => {
     const body = await c.req.json().catch(() => null);
@@ -74,6 +79,80 @@ export function createApp({
     const event = await repository.findById(c.req.param("id"));
     if (!event) return c.json({ error: "not_found" }, 404);
     return c.json(event);
+  });
+
+  app.get("/api/jmeldinger", async (c) => {
+    const url = new URL(c.req.url);
+    const params = url.searchParams;
+    const bboxParam = params.get("bbox");
+    const nearParam = params.get("near");
+    if (bboxParam && nearParam) {
+      return c.json(
+        {
+          error: "invalid_query",
+          message: "bbox and near are mutually exclusive",
+        },
+        400,
+      );
+    }
+    const limit = parseLimit(params.get("limit"));
+    const cursor = params.get("cursor");
+
+    if (bboxParam) {
+      const bbox = parseBbox(bboxParam);
+      if (!bbox)
+        return c.json(
+          {
+            error: "invalid_bbox",
+            message:
+              "bbox must be minLon,minLat,maxLon,maxLat in [-180..180,-90..90]",
+          },
+          400,
+        );
+      const page = await geoRepository.findInBbox({ ...bbox, limit, cursor });
+      return c.json(page);
+    }
+
+    if (nearParam) {
+      const near = parseNear(nearParam, params.get("radiusKm"));
+      if (!near)
+        return c.json(
+          {
+            error: "invalid_near",
+            message:
+              "near must be lon,lat with optional radiusKm 0..5000 (default 50)",
+          },
+          400,
+        );
+      const page = await geoRepository.findNear({ ...near, limit, cursor });
+      return c.json(page);
+    }
+
+    const status = params.get("status") ?? undefined;
+    const hasGeoRaw = params.get("hasGeo");
+    const hasGeo =
+      hasGeoRaw === null
+        ? undefined
+        : hasGeoRaw === "true"
+          ? true
+          : hasGeoRaw === "false"
+            ? false
+            : undefined;
+    const q = params.get("q") ?? undefined;
+    const page = await geoRepository.list({
+      status,
+      hasGeo,
+      q,
+      limit,
+      cursor,
+    });
+    return c.json(page);
+  });
+
+  app.get("/api/jmeldinger/:jmNumber", async (c) => {
+    const record = await geoRepository.findByJmNumber(c.req.param("jmNumber"));
+    if (!record) return c.json({ error: "not_found" }, 404);
+    return c.json(record);
   });
 
   app.post("/api/jobs/cron", async (c) => {
@@ -173,6 +252,55 @@ export function createApp({
   });
 
   return app;
+}
+
+function parseLimit(raw: string | null): number {
+  if (!raw) return 50;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return 50;
+  return Math.min(Math.max(parsed, 1), 200);
+}
+
+function parseBbox(
+  raw: string,
+): { minLon: number; minLat: number; maxLon: number; maxLat: number } | null {
+  const parts = raw.split(",").map((s) => Number.parseFloat(s.trim()));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
+  const [minLon, minLat, maxLon, maxLat] = parts as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  if (
+    minLon < -180 ||
+    minLon > 180 ||
+    maxLon < -180 ||
+    maxLon > 180 ||
+    minLat < -90 ||
+    minLat > 90 ||
+    maxLat < -90 ||
+    maxLat > 90 ||
+    minLon > maxLon ||
+    minLat > maxLat
+  ) {
+    return null;
+  }
+  return { minLon, minLat, maxLon, maxLat };
+}
+
+function parseNear(
+  raw: string,
+  radiusRaw: string | null,
+): { lon: number; lat: number; radiusKm: number } | null {
+  const parts = raw.split(",").map((s) => Number.parseFloat(s.trim()));
+  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) return null;
+  const [lon, lat] = parts as [number, number];
+  if (lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
+  const radiusKm = radiusRaw === null ? 50 : Number.parseFloat(radiusRaw);
+  if (!Number.isFinite(radiusKm) || radiusKm <= 0 || radiusKm > 5000)
+    return null;
+  return { lon, lat, radiusKm };
 }
 
 function renderApiReference() {

@@ -9,6 +9,11 @@ export const openApiDocument = {
     { name: "Events", description: "Generic Flowcore event ingestion" },
     { name: "Jobs", description: "Background jobs and state" },
     { name: "Flowcore", description: "Virtual pathway callbacks" },
+    {
+      name: "J-meldinger",
+      description:
+        "Read-only geo queries over Fiskeridir J-melding announcements (jmNumber, fragment key, GeoJSON, bbox)",
+    },
   ],
   paths: {
     "/": {
@@ -215,6 +220,108 @@ export const openApiDocument = {
         responses: {
           "200": { description: "Pump reset processed" },
           "401": { description: "Invalid reset secret" },
+        },
+      },
+    },
+    "/api/jmeldinger": {
+      get: {
+        tags: ["J-meldinger"],
+        summary: "List J-melding geo records (or query by bbox / near)",
+        description:
+          "When `bbox` is provided, returns records whose extracted points intersect the bounding box. When `near` is provided, returns records within `radiusKm` of the point. Otherwise lists records with optional `status`, `hasGeo`, and `q` (jmNumber prefix) filters. `bbox` and `near` are mutually exclusive.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "status",
+            in: "query",
+            schema: {
+              type: "string",
+              enum: ["current", "archived", "unknown"],
+            },
+          },
+          {
+            name: "hasGeo",
+            in: "query",
+            schema: { type: "boolean" },
+          },
+          {
+            name: "q",
+            in: "query",
+            description: "Case-insensitive prefix match against `jmNumber`.",
+            schema: { type: "string" },
+          },
+          {
+            name: "bbox",
+            in: "query",
+            description: "Bounding box `minLon,minLat,maxLon,maxLat` in WGS84.",
+            schema: { type: "string", example: "24,70,32,72" },
+          },
+          {
+            name: "near",
+            in: "query",
+            description: "Center point `lon,lat` in WGS84.",
+            schema: { type: "string", example: "24.93,71.18" },
+          },
+          {
+            name: "radiusKm",
+            in: "query",
+            description:
+              "Radius in kilometers (used with `near`). Default 50, max 5000.",
+            schema: { type: "number", minimum: 0, maximum: 5000, default: 50 },
+          },
+          {
+            name: "limit",
+            in: "query",
+            schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+          },
+          {
+            name: "cursor",
+            in: "query",
+            description:
+              "Opaque pagination cursor returned by the previous page.",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Page of J-melding geo summaries",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JMeldingGeoPage" },
+              },
+            },
+          },
+          "400": { description: "Invalid query parameters" },
+          "401": { description: "Missing or invalid x-auth-token" },
+        },
+      },
+    },
+    "/api/jmeldinger/{jmNumber}": {
+      get: {
+        tags: ["J-meldinger"],
+        summary: "Fetch a single J-melding geo record",
+        description:
+          "Accepts either the `jmNumber` (e.g. `j-67-2026`) or the Usable `fragmentKey` (e.g. `fishfacts-jmelding-j-67-2026`).",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "jmNumber",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Full J-melding geo record",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/JMeldingGeoRecord" },
+              },
+            },
+          },
+          "404": { description: "Not found" },
+          "401": { description: "Missing or invalid x-auth-token" },
         },
       },
     },
@@ -427,6 +534,100 @@ export const openApiDocument = {
           jobId: { type: "string" },
           message: { type: "string" },
         },
+      },
+      JMeldingGeoListRow: {
+        type: "object",
+        required: [
+          "jmNumber",
+          "fragmentKey",
+          "title",
+          "status",
+          "url",
+          "hasGeo",
+        ],
+        properties: {
+          jmNumber: { type: "string", example: "j-67-2026" },
+          fragmentKey: {
+            type: "string",
+            example: "fishfacts-jmelding-j-67-2026",
+          },
+          fragmentId: {
+            type: "string",
+            format: "uuid",
+            nullable: true,
+            description: "Usable fragment id, when known.",
+          },
+          title: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["current", "archived", "unknown"],
+          },
+          url: { type: "string", format: "uri" },
+          hasGeo: { type: "boolean" },
+          bbox: {
+            type: "array",
+            nullable: true,
+            description: "[minLon, minLat, maxLon, maxLat] in WGS84.",
+            items: { type: "number" },
+            minItems: 4,
+            maxItems: 4,
+          },
+        },
+      },
+      JMeldingGeoPage: {
+        type: "object",
+        required: ["rows", "nextCursor"],
+        properties: {
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/JMeldingGeoListRow" },
+          },
+          nextCursor: { type: "string", nullable: true },
+        },
+      },
+      JMeldingGeoRecord: {
+        allOf: [
+          { $ref: "#/components/schemas/JMeldingGeoListRow" },
+          {
+            type: "object",
+            required: ["signature", "areas", "createdAt", "updatedAt"],
+            properties: {
+              signature: { type: "string" },
+              areas: {
+                type: "array",
+                description:
+                  "Named sub-areas, each with raw points. `name` may be null when no preceding heading was detected.",
+                items: {
+                  type: "object",
+                  required: ["points"],
+                  properties: {
+                    name: { type: "string", nullable: true },
+                    points: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        required: ["lat", "lon"],
+                        properties: {
+                          lat: { type: "number" },
+                          lon: { type: "number" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              geojson: {
+                type: "object",
+                nullable: true,
+                description:
+                  "GeoJSON FeatureCollection rendered from extracted points (one Feature per area). May be the stored projector output or computed via PostGIS ST_AsGeoJSON.",
+                additionalProperties: true,
+              },
+              createdAt: { type: "string", format: "date-time" },
+              updatedAt: { type: "string", format: "date-time" },
+            },
+          },
+        ],
       },
     },
   },

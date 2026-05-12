@@ -5,6 +5,8 @@ import { runMigrations } from "./db/migrate";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
+import { JMeldingGeoProjector } from "./jmelding/geo-projector";
+import { JMeldingGeoRepository } from "./jmelding/geo-repository";
 import { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
 import { createJobDefinitions } from "./jobs/registry";
@@ -20,7 +22,13 @@ await runMigrations(db, client);
 const repository = new PostgresGenericEventRepository(db);
 const usable = new UsableApiClient(env);
 const jmeldingProjector = new JMeldingFragmentProjector(env, usable);
-const chunkAssembler = new JMeldingChunkAssembler(db, jmeldingProjector);
+const geoProjector = new JMeldingGeoProjector(db);
+const geoRepository = new JMeldingGeoRepository(db);
+const chunkAssembler = new JMeldingChunkAssembler(
+  db,
+  jmeldingProjector,
+  geoProjector,
+);
 const pathways = createPathwayRuntime(env, repository, chunkAssembler);
 const jobs = createJobDefinitions(env, pathways.writer, usable);
 const jobStateStore = new JobStateStore(env, usable, jobs);
@@ -35,6 +43,7 @@ const app = createApp({
   jobStateStore,
   fishfactsClient,
   authCache,
+  geoRepository,
 });
 
 await pathways.startPump();
