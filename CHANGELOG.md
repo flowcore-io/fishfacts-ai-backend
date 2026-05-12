@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.1...v1.4.2) (2026-05-12)
+
+
+### Bug Fixes
+
+* **pathways:** re-enable autoProvision.pathway for pulses + restart commands ([#27](https://github.com/flowcore-io/fishfacts-ai-backend/issues/27)) ([472d243](https://github.com/flowcore-io/fishfacts-ai-backend/commit/472d243431a45520aba5d54bd6f49c48013606b3))
+
 ## [1.4.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.0...v1.4.1) (2026-05-12)
 
 
