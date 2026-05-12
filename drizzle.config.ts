@@ -9,4 +9,6 @@ export default defineConfig({
       process.env.DATABASE_URL ??
       "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend",
   },
+  extensionsFilters: ["postgis"],
+  tablesFilter: ["generic_events", "jmelding_*", "!pathway_*"],
 });
