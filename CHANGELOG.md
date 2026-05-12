@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.0...v1.4.1) (2026-05-12)
+
+
+### Bug Fixes
+
+* include drizzle/meta in Docker image for migrations ([#25](https://github.com/flowcore-io/fishfacts-ai-backend/issues/25)) ([b440826](https://github.com/flowcore-io/fishfacts-ai-backend/commit/b440826a6000af8579f32c208edc66b1fe7edac6))
+
 ## [1.4.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.3.1...v1.4.0) (2026-05-12)
 
 
