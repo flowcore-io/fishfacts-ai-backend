@@ -186,7 +186,19 @@ export class JobRunner {
           },
         });
         const finishedAt = new Date().toISOString();
-        await progressSaveChain.catch(() => undefined);
+        await progressSaveChain.catch((drainError) => {
+          console.error(
+            "[Jobs] Progress save chain drained with error before terminal save",
+            {
+              jobId,
+              runId,
+              message:
+                drainError instanceof Error
+                  ? drainError.message
+                  : String(drainError),
+            },
+          );
+        });
         const nextState = persisted.state;
         nextState.updatedAt = finishedAt;
         nextState.job.lastRunStatus = "success";
@@ -214,11 +226,27 @@ export class JobRunner {
           Date.now() - startedMs,
           result.changed,
         );
-        persisted = await this.stateStore.save({
-          jobId,
-          fragmentId: persisted.fragmentId,
-          state: nextState,
-        });
+        try {
+          persisted = await this.stateStore.save({
+            jobId,
+            fragmentId: persisted.fragmentId,
+            state: nextState,
+          });
+        } catch (saveError) {
+          console.error(
+            "[Jobs] CRITICAL: failed to persist success terminal status",
+            {
+              jobId,
+              runId,
+              message:
+                saveError instanceof Error
+                  ? saveError.message
+                  : String(saveError),
+              stack: saveError instanceof Error ? saveError.stack : undefined,
+            },
+          );
+          throw saveError;
+        }
         completed = {
           fragmentId: persisted.fragmentId,
           state: persisted.state,
@@ -235,7 +263,19 @@ export class JobRunner {
           response: (error as { response?: unknown })?.response,
           stack: error instanceof Error ? error.stack : undefined,
         });
-        await progressSaveChain.catch(() => undefined);
+        await progressSaveChain.catch((drainError) => {
+          console.error(
+            "[Jobs] Progress save chain drained with error after run failure",
+            {
+              jobId,
+              runId,
+              message:
+                drainError instanceof Error
+                  ? drainError.message
+                  : String(drainError),
+            },
+          );
+        });
         const nextState = persisted.state;
         nextState.updatedAt = finishedAt;
         nextState.job.lastRunStatus = abortController.signal.aborted
@@ -271,14 +311,72 @@ export class JobRunner {
           undefined,
           message,
         );
-        await this.stateStore.save({
-          jobId,
-          fragmentId: persisted.fragmentId,
-          state: nextState,
-        });
+        try {
+          await this.stateStore.save({
+            jobId,
+            fragmentId: persisted.fragmentId,
+            state: nextState,
+          });
+        } catch (saveError) {
+          console.error(
+            "[Jobs] CRITICAL: failed to persist error terminal status",
+            {
+              jobId,
+              runId,
+              message:
+                saveError instanceof Error
+                  ? saveError.message
+                  : String(saveError),
+              stack: saveError instanceof Error ? saveError.stack : undefined,
+            },
+          );
+        }
         throw new Error(message);
       } finally {
         this.runningJobs.delete(jobId);
+        // Safety net: if neither the success nor error save path managed to
+        // persist a terminal status (silent save failure, swallowed rejection,
+        // etc.), force-write a fallback so the runner state cannot stay stuck
+        // at "running" — that confuses the next manual /api/jobs/run with a
+        // false "already running" error and hides the bug from anyone reading
+        // /api/jobs/state.
+        if (persisted.state.job.lastRunStatus === "running") {
+          const finishedAt = new Date().toISOString();
+          const fallbackStatus = abortController.signal.aborted
+            ? "cancelled"
+            : "error";
+          persisted.state.updatedAt = finishedAt;
+          persisted.state.job.lastRunStatus = fallbackStatus;
+          persisted.state.job.lastDurationMs = Date.now() - startedMs;
+          if (fallbackStatus === "error") {
+            persisted.state.job.lastError =
+              "Run ended without persisting terminal status (runner bug — check earlier CRITICAL logs)";
+            persisted.state.job.lastErrorAt = finishedAt;
+          }
+          try {
+            await this.stateStore.save({
+              jobId,
+              fragmentId: persisted.fragmentId,
+              state: persisted.state,
+            });
+            console.error(
+              "[Jobs] CRITICAL: terminal status was missing in finally; wrote fallback",
+              { jobId, runId, fallbackStatus },
+            );
+          } catch (fallbackError) {
+            console.error(
+              "[Jobs] CRITICAL: fallback terminal status save also failed",
+              {
+                jobId,
+                runId,
+                message:
+                  fallbackError instanceof Error
+                    ? fallbackError.message
+                    : String(fallbackError),
+              },
+            );
+          }
+        }
       }
     })();
     return {
