@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.3...v1.5.0) (2026-05-13)
+
+
+### Features
+
+* **jobs:** add diagnostic logging to scraper + runner ([#31](https://github.com/flowcore-io/fishfacts-ai-backend/issues/31)) ([a8ab3ef](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a8ab3efb94e6a187c58df1b14fab66eb115edeaf))
+
 ## [1.4.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.2...v1.4.3) (2026-05-13)
 
 
