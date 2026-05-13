@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.2...v1.4.3) (2026-05-13)
+
+
+### Bug Fixes
+
+* **jobs:** runner never leaves lastRunStatus stuck at running + CLAUDE.md runbook ([#29](https://github.com/flowcore-io/fishfacts-ai-backend/issues/29)) ([ca759d3](https://github.com/flowcore-io/fishfacts-ai-backend/commit/ca759d330842a216df941354bbcd21ec174b9783))
+
 ## [1.4.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.1...v1.4.2) (2026-05-12)
 
 
