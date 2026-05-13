@@ -149,8 +149,13 @@ export class JobRunner {
         });
       });
     };
+    console.log(
+      `[JobRunner] starting job ${jobId} (runId=${runId}, trigger=${trigger}, args=${JSON.stringify(args)})`,
+    );
     const promise = (async () => {
       try {
+        const executeStart = Date.now();
+        console.log(`[JobRunner] ${jobId} execute() awaiting (runId=${runId})`);
         const result = await definition.execute(previousJobState, args, {
           signal: abortController.signal,
           isStopRequested: () =>
@@ -185,6 +190,9 @@ export class JobRunner {
             });
           },
         });
+        console.log(
+          `[JobRunner] ${jobId} execute() returned after ${Date.now() - executeStart}ms (runId=${runId}, changed=${result.changed})`,
+        );
         const finishedAt = new Date().toISOString();
         await progressSaveChain.catch((drainError) => {
           console.error(
