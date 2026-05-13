@@ -209,16 +209,26 @@ async function collectListing(input: {
   reportProgress: Context["reportProgress"];
 }) {
   const candidates = new Map<string, CandidateItem>();
+  console.log(
+    `[FiskeridirJob] collectListing: fetching page 1 ${input.baseUrl}`,
+  );
+  const firstStart = Date.now();
   const first = await fetch(input.baseUrl, {
     headers: { "user-agent": "FishFactsJobs/1.0", accept: "text/html" },
     signal: input.signal,
   });
+  console.log(
+    `[FiskeridirJob] collectListing: page 1 done in ${Date.now() - firstStart}ms (status ${first.status})`,
+  );
   if (!first.ok) throw new Error(`Fiskeridir listing HTTP ${first.status}`);
   const firstHtml = await first.text();
   const maxPage = Math.min(input.maxPages, parseMaxPage(firstHtml));
   for (const item of parseLinks(firstHtml, input.baseUrl, "unknown")) {
     candidates.set(item.url, item);
   }
+  console.log(
+    `[FiskeridirJob] collectListing: maxPage=${maxPage}, items after page 1: ${candidates.size}`,
+  );
   input.reportProgress({
     phase: "crawling-listings",
     message: `Crawled 1/${maxPage} pages (${candidates.size} items found)`,
@@ -228,17 +238,37 @@ async function collectListing(input: {
   });
   for (let page = 2; page <= maxPage; page += 1) {
     const pageUrl = `${input.baseUrl}${input.baseUrl.includes("?") ? "&" : "?"}page=${page}`;
+    const pageStart = Date.now();
+    console.log(
+      `[FiskeridirJob] collectListing: fetching page ${page}/${maxPage}`,
+    );
     const response = await fetch(pageUrl, {
       headers: { "user-agent": "FishFactsJobs/1.0", accept: "text/html" },
       signal: input.signal,
     });
-    if (!response.ok) continue;
+    const pageMs = Date.now() - pageStart;
+    if (!response.ok) {
+      console.warn(
+        `[FiskeridirJob] collectListing: page ${page} HTTP ${response.status} in ${pageMs}ms — skipping`,
+      );
+      continue;
+    }
+    if (pageMs > 5000) {
+      console.warn(
+        `[FiskeridirJob] collectListing: page ${page} SLOW ${pageMs}ms (>5s)`,
+      );
+    }
     for (const item of parseLinks(
       await response.text(),
       input.baseUrl,
       "unknown",
     )) {
       candidates.set(item.url, item);
+    }
+    if (page % 25 === 0 || page === maxPage) {
+      console.log(
+        `[FiskeridirJob] collectListing: page ${page}/${maxPage} done in ${pageMs}ms, ${candidates.size} items so far`,
+      );
     }
     input.reportProgress({
       phase: "crawling-listings",
@@ -248,6 +278,9 @@ async function collectListing(input: {
       itemsDiscovered: candidates.size,
     });
   }
+  console.log(
+    `[FiskeridirJob] collectListing: done, ${candidates.size} unique items from ${maxPage} pages`,
+  );
   return Array.from(candidates.values());
 }
 
@@ -330,13 +363,21 @@ export function createFiskeridirJMeldingerJob(
     },
     context: Context,
   ): Promise<JobExecutionResult> {
+    const jobStart = Date.now();
     const checkedAt = new Date().toISOString();
+    console.log(
+      `[FiskeridirJob] starting run: maxItems=${args.maxItems}, maxPages=${args.maxPages}, includeArchived=${args.includeArchived}, refreshExisting=${args.refreshExisting ?? false}, baseUrl=${env.FISKERIDIR_JMELDINGER_BASE_URL}`,
+    );
+    const listingStart = Date.now();
     const candidates = await collectListing({
       baseUrl: env.FISKERIDIR_JMELDINGER_BASE_URL,
       maxPages: args.maxPages,
       signal: context.signal,
       reportProgress: context.reportProgress,
     });
+    console.log(
+      `[FiskeridirJob] listing collected: ${candidates.length} candidates in ${Date.now() - listingStart}ms`,
+    );
     const ranked = (
       args.includeArchived
         ? candidates
@@ -354,13 +395,20 @@ export function createFiskeridirJMeldingerJob(
       pagesTotal: args.maxPages,
       itemsDiscovered: ranked.length,
     });
+    const knownKeysStart = Date.now();
     const knownKeys = args.refreshExisting
       ? new Set<string>()
       : await (options?.loadKnownKeys?.() ?? Promise.resolve(new Set()));
+    console.log(
+      `[FiskeridirJob] knownKeys: ${knownKeys.size} loaded in ${Date.now() - knownKeysStart}ms (refreshExisting=${args.refreshExisting ?? false})`,
+    );
     const unseenRanked = ranked.filter(
       (item) => !knownKeys.has(jmeldingFragmentKey(item.url)),
     );
     const skippedExisting = ranked.length - unseenRanked.length;
+    console.log(
+      `[FiskeridirJob] filtered: ${unseenRanked.length} unseen / ${ranked.length} ranked (skippedExisting=${skippedExisting})`,
+    );
     context.reportProgress({
       phase: "filtering-known-fragments",
       message: `Found ${knownKeys.size} existing fragments; ${unseenRanked.length}/${ranked.length} announcements need events`,
@@ -422,6 +470,9 @@ export function createFiskeridirJMeldingerJob(
     }
     const toProcess = unseenRanked.slice(startIndex);
     const resumeItems = startIndex > 0 ? previousLatestItems : [];
+    console.log(
+      `[FiskeridirJob] emit phase: ${toProcess.length} items to process (startIndex=${startIndex}, concurrency=${FETCH_CONCURRENCY})`,
+    );
     await context.checkpoint?.((state) => {
       state.job.cursor = {
         mode: "announcement",
@@ -434,18 +485,25 @@ export function createFiskeridirJMeldingerJob(
       state.job.listingFingerprint = listingFingerprint;
     });
     const latestItems: JobLatestItem[] = [];
+    const emitPhaseStart = Date.now();
     for (
       let chunkStart = 0;
       chunkStart < toProcess.length;
       chunkStart += FETCH_CONCURRENCY
     ) {
       if (context.signal.aborted || context.isStopRequested()) {
+        console.warn(
+          `[FiskeridirJob] stop requested at chunkStart=${chunkStart}/${toProcess.length}`,
+        );
         throw new Error("Job stopped by request");
       }
       const chunk = toProcess.slice(chunkStart, chunkStart + FETCH_CONCURRENCY);
+      const batchStart = Date.now();
       const enriched = await Promise.all(
         chunk.map((item) => fetchDetail(item, context.signal)),
       );
+      const fetchMs = Date.now() - batchStart;
+      const writeStart = Date.now();
       for (const item of enriched) {
         await writer.writeJMeldingAnnouncement({
           ...item,
@@ -475,6 +533,15 @@ export function createFiskeridirJMeldingerJob(
           };
         });
       }
+      const writeMs = Date.now() - writeStart;
+      const absoluteDone = startIndex + latestItems.length;
+      const elapsedSec = Math.max(1, (Date.now() - emitPhaseStart) / 1000);
+      const rate = (absoluteDone - startIndex) / elapsedSec;
+      const remaining = unseenRanked.length - absoluteDone;
+      const etaSec = rate > 0 ? Math.round(remaining / rate) : 0;
+      console.log(
+        `[FiskeridirJob] batch ${Math.floor(chunkStart / FETCH_CONCURRENCY) + 1}: fetched ${chunk.length} in ${fetchMs}ms, wrote in ${writeMs}ms → ${absoluteDone}/${unseenRanked.length} (${rate.toFixed(1)}/s, ETA ${etaSec}s)`,
+      );
       context.reportProgress({
         phase: "emitting-events",
         message: `Emitted ${startIndex + latestItems.length}/${unseenRanked.length} new announcements (${skippedExisting} skipped existing)`,
@@ -484,6 +551,9 @@ export function createFiskeridirJMeldingerJob(
         skippedExisting,
       });
     }
+    console.log(
+      `[FiskeridirJob] run complete: ${latestItems.length} announcements emitted in ${Date.now() - jobStart}ms total`,
+    );
     await context.checkpoint?.((state) => {
       state.job.cursor = undefined;
       state.job.listingFingerprint = listingFingerprint;
