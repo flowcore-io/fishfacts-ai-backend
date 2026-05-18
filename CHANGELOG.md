@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.5.0...v1.5.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **jobs:** release runner lock when initial state-store save fails ([#33](https://github.com/flowcore-io/fishfacts-ai-backend/issues/33)) ([a640ec3](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a640ec305fc9b992c1f8813c4de427e651a0d3e5))
+
 ## [1.5.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.4.3...v1.5.0) (2026-05-13)
 
 
