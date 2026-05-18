@@ -94,35 +94,46 @@ export class JobRunner {
     const startedAt = new Date().toISOString();
     const startedMs = Date.now();
     const runId = createRunId();
-    const loaded = await this.stateStore.load(jobId);
-    const state = loaded.state;
-    const previousJobState = structuredClone(state.job);
-    state.job.lastRunStatus = "running";
-    state.job.lastRunAt = startedAt;
-    state.job.lastError = undefined;
-    state.job.metrics.runs += 1;
-    state.job.progress = {
-      phase: "starting",
-      message: "Starting run",
-      percent: 0,
-      updatedAt: startedAt,
-    };
-    state.runs = [
-      {
-        runId,
+    // Release the in-memory lock if any pre-IIFE step throws — otherwise a
+    // transient failure here (e.g. Usable HTTP 5xx on the initial save) would
+    // leak the runningJobs entry forever, because the IIFE's finally never
+    // runs and every subsequent cron tick would fail with "already running".
+    let persisted: Awaited<ReturnType<JobStateStore["save"]>>;
+    let previousJobState: PersistedJobState["job"];
+    try {
+      const loaded = await this.stateStore.load(jobId);
+      const state = loaded.state;
+      previousJobState = structuredClone(state.job);
+      state.job.lastRunStatus = "running";
+      state.job.lastRunAt = startedAt;
+      state.job.lastError = undefined;
+      state.job.metrics.runs += 1;
+      state.job.progress = {
+        phase: "starting",
+        message: "Starting run",
+        percent: 0,
+        updatedAt: startedAt,
+      };
+      state.runs = [
+        {
+          runId,
+          jobId,
+          startedAt,
+          status: "running",
+          trigger,
+          args: args as Record<string, unknown>,
+        },
+        ...state.runs,
+      ];
+      persisted = await this.stateStore.save({
         jobId,
-        startedAt,
-        status: "running",
-        trigger,
-        args: args as Record<string, unknown>,
-      },
-      ...state.runs,
-    ];
-    let persisted = await this.stateStore.save({
-      jobId,
-      fragmentId: loaded.fragmentId,
-      state,
-    });
+        fragmentId: loaded.fragmentId,
+        state,
+      });
+    } catch (preIifeError) {
+      this.runningJobs.delete(jobId);
+      throw preIifeError;
+    }
     let completed:
       | {
           fragmentId: string | null;
