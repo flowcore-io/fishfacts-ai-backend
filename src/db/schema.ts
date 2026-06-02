@@ -51,6 +51,33 @@ export const jmeldingChunkQueue = pgTable(
   }),
 );
 
+export const areas = pgTable(
+  "areas",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    groupName: text("group_name"),
+    geometryType: text("geometry_type").notNull(),
+    geometry: jsonb("geometry").notNull(),
+    color: text("color"),
+    notes: text("notes"),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    sourceEventId: text("source_event_id"),
+  },
+  (table) => ({
+    deletedAtIdx: index("admin_areas_deleted_at_idx").on(table.deletedAt),
+    nameIdx: index("admin_areas_name_idx").on(table.name),
+    groupNameIdx: index("admin_areas_group_name_idx").on(table.groupName),
+  }),
+);
+
 export const jmeldingGeo = pgTable(
   "jmelding_geo",
   {

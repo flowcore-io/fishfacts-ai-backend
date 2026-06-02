@@ -55,3 +55,72 @@ export type FlowcoreEventEnvelope<TPayload = unknown> = {
   payload: TPayload;
   validTime: string;
 };
+
+export const AREA_FLOW_TYPE = "fishfacts-areas.0" as const;
+export const AREA_CREATED_EVENT_TYPE = "area.created.0" as const;
+export const AREA_UPDATED_EVENT_TYPE = "area.updated.0" as const;
+export const AREA_DELETED_EVENT_TYPE = "area.deleted.0" as const;
+export const AREA_CREATED_PATHWAY =
+  `${AREA_FLOW_TYPE}/${AREA_CREATED_EVENT_TYPE}` as const;
+export const AREA_UPDATED_PATHWAY =
+  `${AREA_FLOW_TYPE}/${AREA_UPDATED_EVENT_TYPE}` as const;
+export const AREA_DELETED_PATHWAY =
+  `${AREA_FLOW_TYPE}/${AREA_DELETED_EVENT_TYPE}` as const;
+
+export const areaGeometryTypeSchema = z.enum(["polygon", "polyline"]);
+export type AreaGeometryType = z.infer<typeof areaGeometryTypeSchema>;
+
+const geoJsonPolygon = z.object({
+  type: z.literal("Polygon"),
+  coordinates: z.array(z.array(z.tuple([z.number(), z.number()]))),
+});
+
+const geoJsonLineString = z.object({
+  type: z.literal("LineString"),
+  coordinates: z.array(z.tuple([z.number(), z.number()])),
+});
+
+export const areaGeometrySchema = z.discriminatedUnion("type", [
+  geoJsonPolygon,
+  geoJsonLineString,
+]);
+export type AreaGeometry = z.infer<typeof areaGeometrySchema>;
+
+export const areaCreatedSchema = z.object({
+  areaId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  groupName: z.string().min(1).max(80),
+  geometryType: areaGeometryTypeSchema,
+  geometry: areaGeometrySchema,
+  color: z.string().min(1).max(32).optional(),
+  notes: z.string().max(2000).optional(),
+  createdBy: z.string().min(1).max(120),
+  createdAt: z.string().datetime(),
+});
+export type AreaCreated = z.infer<typeof areaCreatedSchema>;
+
+export const areaUpdatedSchema = z.object({
+  areaId: z.string().uuid(),
+  patch: z
+    .object({
+      name: z.string().min(1).max(120).optional(),
+      groupName: z.string().min(1).max(80).optional(),
+      geometryType: areaGeometryTypeSchema.optional(),
+      geometry: areaGeometrySchema.optional(),
+      color: z.string().min(1).max(32).nullable().optional(),
+      notes: z.string().max(2000).nullable().optional(),
+    })
+    .refine((p) => Object.keys(p).length > 0, {
+      message: "patch must include at least one field",
+    }),
+  updatedBy: z.string().min(1).max(120),
+  updatedAt: z.string().datetime(),
+});
+export type AreaUpdated = z.infer<typeof areaUpdatedSchema>;
+
+export const areaDeletedSchema = z.object({
+  areaId: z.string().uuid(),
+  deletedBy: z.string().min(1).max(120),
+  deletedAt: z.string().datetime(),
+});
+export type AreaDeleted = z.infer<typeof areaDeletedSchema>;

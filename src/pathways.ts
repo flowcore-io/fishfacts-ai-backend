@@ -6,15 +6,29 @@ import {
   createPostgresPumpStateManagerFactory,
 } from "@flowcore/pathways";
 import type { z } from "zod";
+import type { AreasProjector } from "./areas/projector";
 import type { Env } from "./env";
 import {
   ANNOUNCEMENT_FLOW_TYPE,
+  AREA_CREATED_EVENT_TYPE,
+  AREA_CREATED_PATHWAY,
+  AREA_DELETED_EVENT_TYPE,
+  AREA_DELETED_PATHWAY,
+  AREA_FLOW_TYPE,
+  AREA_UPDATED_EVENT_TYPE,
+  AREA_UPDATED_PATHWAY,
+  type AreaCreated,
+  type AreaDeleted,
+  type AreaUpdated,
   GENERIC_EVENT_TYPE,
   GENERIC_FLOW_TYPE,
   GENERIC_PATHWAY,
   JMELDING_ANNOUNCEMENT_DISCOVERED_EVENT_TYPE,
   JMELDING_ANNOUNCEMENT_PATHWAY,
   type JMeldingAnnouncementDiscovered,
+  areaCreatedSchema,
+  areaDeletedSchema,
+  areaUpdatedSchema,
   genericEventInputSchema,
   jmeldingAnnouncementDiscoveredSchema,
 } from "./events/contracts";
@@ -27,6 +41,9 @@ export interface PathwayWriter {
   writeJMeldingAnnouncement(
     data: JMeldingAnnouncementDiscovered,
   ): Promise<string>;
+  writeAreaCreated(data: AreaCreated): Promise<string>;
+  writeAreaUpdated(data: AreaUpdated): Promise<string>;
+  writeAreaDeleted(data: AreaDeleted): Promise<string>;
 }
 
 export type PathwayRuntime = {
@@ -40,6 +57,7 @@ export function createPathwayRuntime(
   env: Env,
   repository: GenericEventRepository,
   chunkAssembler: JMeldingChunkAssembler,
+  areasProjector: AreasProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -103,6 +121,48 @@ export function createPathwayRuntime(
       await chunkAssembler.handle(parsed);
     });
 
+  pathways
+    .register({
+      flowType: AREA_FLOW_TYPE,
+      eventType: AREA_CREATED_EVENT_TYPE,
+      schema: areaCreatedSchema,
+      flowTypeDescription: "FishFacts admin-managed global map areas",
+      description: "An admin user created a global map area",
+    })
+    .handle(AREA_CREATED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = areaCreatedSchema.parse(envelope.payload);
+      await areasProjector.handleCreated({ eventId: envelope.eventId }, parsed);
+    });
+
+  pathways
+    .register({
+      flowType: AREA_FLOW_TYPE,
+      eventType: AREA_UPDATED_EVENT_TYPE,
+      schema: areaUpdatedSchema,
+      flowTypeDescription: "FishFacts admin-managed global map areas",
+      description: "An admin user updated a global map area",
+    })
+    .handle(AREA_UPDATED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = areaUpdatedSchema.parse(envelope.payload);
+      await areasProjector.handleUpdated({ eventId: envelope.eventId }, parsed);
+    });
+
+  pathways
+    .register({
+      flowType: AREA_FLOW_TYPE,
+      eventType: AREA_DELETED_EVENT_TYPE,
+      schema: areaDeletedSchema,
+      flowTypeDescription: "FishFacts admin-managed global map areas",
+      description: "An admin user deleted a global map area (soft delete)",
+    })
+    .handle(AREA_DELETED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = areaDeletedSchema.parse(envelope.payload);
+      await areasProjector.handleDeleted({ eventId: envelope.eventId }, parsed);
+    });
+
   const router = new PathwayRouter(pathways, env.FLOWCORE_TRANSFORMER_SECRET);
 
   return {
@@ -143,6 +203,63 @@ export function createPathwayRuntime(
           eventIds.push(Array.isArray(eventId) ? eventId[0] : eventId);
         }
         return eventIds[0];
+      },
+      async writeAreaCreated(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof AREA_CREATED_PATHWAY,
+            input: {
+              data: AreaCreated;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(AREA_CREATED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            areaId: data.areaId,
+            createdBy: data.createdBy,
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeAreaUpdated(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof AREA_UPDATED_PATHWAY,
+            input: {
+              data: AreaUpdated;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(AREA_UPDATED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            areaId: data.areaId,
+            updatedBy: data.updatedBy,
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeAreaDeleted(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof AREA_DELETED_PATHWAY,
+            input: {
+              data: AreaDeleted;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(AREA_DELETED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            areaId: data.areaId,
+            deletedBy: data.deletedBy,
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
       },
     },
     router,

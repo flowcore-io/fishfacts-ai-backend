@@ -7,6 +7,8 @@ import { ZodError } from "zod";
 import type { TokenCache } from "./auth/cache";
 import { createAuthMiddleware } from "./auth/middleware";
 import "./auth/types";
+import type { AreasRepository } from "./areas/repository";
+import { createAreasRouter } from "./areas/routes";
 import { genericEventInputSchema } from "./events/contracts";
 import type { GenericEventRepository } from "./events/repository";
 import type { FishfactsApiClient } from "./fishfacts/client";
@@ -15,6 +17,8 @@ import type { JobRunner } from "./jobs/runner";
 import type { JobStateStore } from "./jobs/state-store";
 import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
+import type { TilesRepository } from "./tiles/repository";
+import { createTilesRouter } from "./tiles/routes";
 
 export type AppDependencies = {
   repository: GenericEventRepository;
@@ -24,6 +28,8 @@ export type AppDependencies = {
   fishfactsClient: FishfactsApiClient;
   authCache: TokenCache;
   geoRepository: JMeldingGeoRepository;
+  tilesRepository: TilesRepository;
+  areasRepository: AreasRepository;
 };
 
 export function createApp({
@@ -34,6 +40,8 @@ export function createApp({
   fishfactsClient,
   authCache,
   geoRepository,
+  tilesRepository,
+  areasRepository,
 }: AppDependencies) {
   const app = new Hono();
 
@@ -55,6 +63,18 @@ export function createApp({
   app.use("/api/jobs/*", authMiddleware);
   app.use("/api/jmeldinger", authMiddleware);
   app.use("/api/jmeldinger/*", authMiddleware);
+  app.use("/api/tiles/*", authMiddleware);
+  app.use("/api/areas", authMiddleware);
+  app.use("/api/areas/*", authMiddleware);
+
+  app.route("/api/tiles", createTilesRouter({ tilesRepository }));
+  app.route(
+    "/api/areas",
+    createAreasRouter({
+      repository: areasRepository,
+      writer: pathways.writer,
+    }),
+  );
 
   app.post("/api/events", async (c) => {
     const body = await c.req.json().catch(() => null);
