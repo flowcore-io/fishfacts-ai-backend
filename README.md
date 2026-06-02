@@ -7,12 +7,14 @@ Bun/Hono backend for Fishfacts AI events and J-meldinger ingestion.
 ```sh
 bun install
 cp .env.example .env
-docker compose up -d postgres
+bun run services:up       # starts postgres on host port 15432
 bun run db:migrate
 bun run dev
 ```
 
-Swagger UI is available at `http://localhost:3001/docs`.
+Other service commands: `services:down` (stop), `services:logs` (follow), `services:reset` (wipe volume + restart).
+
+Swagger UI is available at `http://localhost:3033/docs`.
 
 ## Flowcore Resources
 

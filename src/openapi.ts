@@ -14,6 +14,20 @@ export const openApiDocument = {
       description:
         "Read-only geo queries over Fiskeridir J-melding announcements (jmNumber, fragment key, GeoJSON, bbox)",
     },
+    {
+      name: "Tiles",
+      description:
+        "Mapbox Vector Tile (MVT) endpoints. Tiles are produced server-side from PostGIS; layers are listed via /api/tiles/catalog.",
+    },
+    {
+      name: "Areas",
+      description:
+        "Operator-curated areas (polygons / polylines). Reads are open to authenticated users; writes require the ADMIN authority.",
+    },
+    {
+      name: "Docs",
+      description: "OpenAPI document and rendered API reference",
+    },
   ],
   paths: {
     "/": {
@@ -30,7 +44,62 @@ export const openApiDocument = {
         tags: ["System"],
         summary: "Health check",
         responses: {
-          "200": { description: "Service health" },
+          "200": {
+            description: "Service health",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/HealthResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/openapi.json": {
+      get: {
+        tags: ["Docs"],
+        summary: "OpenAPI 3.0 document",
+        responses: {
+          "200": {
+            description: "OpenAPI document for this service",
+            content: { "application/json": { schema: { type: "object" } } },
+          },
+        },
+      },
+    },
+    "/api/docs": {
+      get: {
+        tags: ["Docs"],
+        summary: "OpenAPI 3.0 document (alias of /openapi.json)",
+        responses: {
+          "200": {
+            description: "OpenAPI document for this service",
+            content: { "application/json": { schema: { type: "object" } } },
+          },
+        },
+      },
+    },
+    "/docs": {
+      get: {
+        tags: ["Docs"],
+        summary: "Rendered API reference (Scalar)",
+        responses: {
+          "200": {
+            description: "HTML page rendering the OpenAPI document",
+            content: { "text/html": {} },
+          },
+        },
+      },
+    },
+    "/swagger": {
+      get: {
+        tags: ["Docs"],
+        summary: "Rendered API reference (alias of /docs)",
+        responses: {
+          "200": {
+            description: "HTML page rendering the OpenAPI document",
+            content: { "text/html": {} },
+          },
         },
       },
     },
@@ -48,11 +117,30 @@ export const openApiDocument = {
           },
         },
         responses: {
-          "202": { description: "Event accepted by Flowcore" },
-          "400": { description: "Invalid payload" },
+          "202": {
+            description: "Event accepted by Flowcore",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/EventAcceptedResponse" },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid payload",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
           "401": { description: "Missing or invalid x-auth-token" },
           "502": {
             description: "Flowcore write failed or auth upstream unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
           },
         },
       },
@@ -71,7 +159,14 @@ export const openApiDocument = {
           },
         ],
         responses: {
-          "200": { description: "Projected event" },
+          "200": {
+            description: "Projected event",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/GenericEventRecord" },
+              },
+            },
+          },
           "401": { description: "Missing or invalid x-auth-token" },
           "404": { description: "Not found" },
           "502": { description: "Auth upstream unavailable" },
@@ -322,6 +417,303 @@ export const openApiDocument = {
           },
           "404": { description: "Not found" },
           "401": { description: "Missing or invalid x-auth-token" },
+        },
+      },
+    },
+    "/api/tiles/catalog": {
+      get: {
+        tags: ["Tiles"],
+        summary: "List available MVT layers",
+        security: [{ FishfactsAuthToken: [] }],
+        responses: {
+          "200": {
+            description: "Tile catalog",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/TileCatalogResponse" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+        },
+      },
+    },
+    "/api/tiles/{layer}/{z}/{x}/{y}.pbf": {
+      get: {
+        tags: ["Tiles"],
+        summary: "Fetch a Mapbox Vector Tile for a layer",
+        description:
+          "Returns a Mapbox Vector Tile (MVT) protobuf for the given layer and XYZ tile coordinates. Returns `204 No Content` when the tile is empty.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "layer",
+            in: "path",
+            required: true,
+            description: "Layer id from /api/tiles/catalog.",
+            schema: { type: "string", example: "jmelding-closures" },
+          },
+          {
+            name: "z",
+            in: "path",
+            required: true,
+            schema: { type: "integer", minimum: 0, maximum: 22 },
+          },
+          {
+            name: "x",
+            in: "path",
+            required: true,
+            schema: { type: "integer", minimum: 0 },
+          },
+          {
+            name: "y",
+            in: "path",
+            required: true,
+            description:
+              "Tile Y coordinate. The `.pbf` extension is part of the URL.",
+            schema: { type: "integer", minimum: 0 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "MVT protobuf",
+            content: {
+              "application/vnd.mapbox-vector-tile": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          "204": { description: "Empty tile" },
+          "400": {
+            description: "Invalid tile coordinates",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "404": {
+            description: "Unknown tile layer",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UnknownLayerError" },
+              },
+            },
+          },
+          "500": {
+            description: "Tile generation failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/areas": {
+      get: {
+        tags: ["Areas"],
+        summary: "List active areas",
+        security: [{ FishfactsAuthToken: [] }],
+        responses: {
+          "200": {
+            description: "Active areas (soft-deleted entries excluded)",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/AreaListResponse",
+                },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+        },
+      },
+      post: {
+        tags: ["Areas"],
+        summary: "Create an area (ADMIN authority required)",
+        description:
+          "Emits a `fishfacts-areas.0/area.created.0` Flowcore event. The projection becomes visible via GET once the pump applies it.",
+        security: [{ FishfactsAuthToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/AreaCreateInput" },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Area creation event accepted by Flowcore",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/AreaWriteResponse",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid payload",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/areas/{id}": {
+      get: {
+        tags: ["Areas"],
+        summary: "Fetch a single area",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Area record",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AreaRecord" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "404": { description: "Not found" },
+        },
+      },
+      put: {
+        tags: ["Areas"],
+        summary: "Update an area (ADMIN authority required)",
+        description:
+          "Emits a `fishfacts-areas.0/area.updated.0` Flowcore event. The patch must include at least one field.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/AreaUpdateInput" },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Area update event accepted by Flowcore",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/AreaWriteResponse",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid payload",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Not found" },
+          "502": {
+            description: "Flowcore write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+      delete: {
+        tags: ["Areas"],
+        summary: "Soft-delete an area (ADMIN authority required)",
+        description:
+          "Emits a `fishfacts-areas.0/area.deleted.0` Flowcore event. The projection marks the row deleted but does not physically remove it.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "202": {
+            description: "Area deletion event accepted by Flowcore",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/AreaWriteResponse",
+                },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Not found" },
+          "502": {
+            description: "Flowcore write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
         },
       },
     },
@@ -628,6 +1020,248 @@ export const openApiDocument = {
             },
           },
         ],
+      },
+      HealthResponse: {
+        type: "object",
+        required: ["ok"],
+        properties: { ok: { type: "boolean", enum: [true] } },
+      },
+      ErrorResponse: {
+        type: "object",
+        required: ["error"],
+        properties: {
+          error: { type: "string" },
+          message: { type: "string" },
+          reason: { type: "string" },
+        },
+        additionalProperties: true,
+      },
+      ValidationError: {
+        type: "object",
+        required: ["error"],
+        properties: {
+          error: { type: "string", enum: ["invalid_payload"] },
+          issues: {
+            type: "array",
+            description: "Zod issue list when validation fails.",
+            items: { type: "object", additionalProperties: true },
+          },
+        },
+      },
+      ForbiddenError: {
+        type: "object",
+        required: ["error"],
+        properties: {
+          error: { type: "string", enum: ["forbidden"] },
+          reason: { type: "string", enum: ["admin_required"] },
+        },
+      },
+      UnknownLayerError: {
+        type: "object",
+        required: ["error", "layer"],
+        properties: {
+          error: { type: "string", enum: ["unknown_layer"] },
+          layer: { type: "string" },
+        },
+      },
+      EventAcceptedResponse: {
+        type: "object",
+        required: ["eventId"],
+        properties: {
+          eventId: {
+            type: "string",
+            description: "Flowcore event id assigned to the ingested event.",
+          },
+        },
+      },
+      GenericEventRecord: {
+        type: "object",
+        required: [
+          "id",
+          "kind",
+          "payload",
+          "metadata",
+          "sourceEventId",
+          "validTime",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          kind: { type: "string" },
+          payload: { type: "object", additionalProperties: true },
+          metadata: { type: "object", additionalProperties: true },
+          sourceEventId: {
+            type: "string",
+            description: "Flowcore event id that produced this projection.",
+          },
+          validTime: { type: "string", format: "date-time" },
+        },
+      },
+      TileLayerKind: {
+        type: "string",
+        enum: ["polygon", "line", "point", "point-heatmap"],
+      },
+      TileLayer: {
+        type: "object",
+        required: ["id", "kind", "description", "attributes"],
+        properties: {
+          id: { type: "string", example: "jmelding-closures" },
+          kind: { $ref: "#/components/schemas/TileLayerKind" },
+          description: { type: "string" },
+          attributes: {
+            type: "array",
+            description:
+              "MVT feature property names emitted by this layer in addition to the geometry.",
+            items: { type: "string" },
+          },
+        },
+      },
+      TileCatalogResponse: {
+        type: "object",
+        required: ["layers"],
+        properties: {
+          layers: {
+            type: "array",
+            items: { $ref: "#/components/schemas/TileLayer" },
+          },
+        },
+      },
+      AreaGeometryType: {
+        type: "string",
+        enum: ["polygon", "polyline"],
+      },
+      AreaGeometryPolygon: {
+        type: "object",
+        required: ["type", "coordinates"],
+        properties: {
+          type: { type: "string", enum: ["Polygon"] },
+          coordinates: {
+            type: "array",
+            description:
+              "GeoJSON Polygon coordinates: array of linear rings, each an array of [lon, lat] pairs.",
+            items: {
+              type: "array",
+              items: {
+                type: "array",
+                items: { type: "number" },
+                minItems: 2,
+                maxItems: 2,
+              },
+            },
+          },
+        },
+      },
+      AreaGeometryLineString: {
+        type: "object",
+        required: ["type", "coordinates"],
+        properties: {
+          type: { type: "string", enum: ["LineString"] },
+          coordinates: {
+            type: "array",
+            description:
+              "GeoJSON LineString coordinates: array of [lon, lat] pairs.",
+            items: {
+              type: "array",
+              items: { type: "number" },
+              minItems: 2,
+              maxItems: 2,
+            },
+          },
+        },
+      },
+      AreaGeometry: {
+        oneOf: [
+          { $ref: "#/components/schemas/AreaGeometryPolygon" },
+          { $ref: "#/components/schemas/AreaGeometryLineString" },
+        ],
+        discriminator: {
+          propertyName: "type",
+          mapping: {
+            Polygon: "#/components/schemas/AreaGeometryPolygon",
+            LineString: "#/components/schemas/AreaGeometryLineString",
+          },
+        },
+      },
+      AreaRecord: {
+        type: "object",
+        required: [
+          "id",
+          "name",
+          "groupName",
+          "geometryType",
+          "geometry",
+          "color",
+          "notes",
+          "createdBy",
+          "createdAt",
+          "updatedAt",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          name: { type: "string" },
+          groupName: { type: "string" },
+          geometryType: { $ref: "#/components/schemas/AreaGeometryType" },
+          geometry: { $ref: "#/components/schemas/AreaGeometry" },
+          color: { type: "string", nullable: true },
+          notes: { type: "string", nullable: true },
+          createdBy: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      AreaListResponse: {
+        type: "object",
+        required: ["rows"],
+        properties: {
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/AreaRecord" },
+          },
+        },
+      },
+      AreaCreateInput: {
+        type: "object",
+        required: ["name", "groupName", "geometryType", "geometry"],
+        additionalProperties: false,
+        properties: {
+          name: { type: "string", minLength: 1, maxLength: 120 },
+          groupName: { type: "string", minLength: 1, maxLength: 80 },
+          geometryType: { $ref: "#/components/schemas/AreaGeometryType" },
+          geometry: { $ref: "#/components/schemas/AreaGeometry" },
+          color: { type: "string", minLength: 1, maxLength: 32 },
+          notes: { type: "string", maxLength: 2000 },
+        },
+      },
+      AreaUpdateInput: {
+        type: "object",
+        minProperties: 1,
+        additionalProperties: false,
+        description:
+          "Partial update. At least one property must be present. `color` and `notes` may be set to null to clear them.",
+        properties: {
+          name: { type: "string", minLength: 1, maxLength: 120 },
+          groupName: { type: "string", minLength: 1, maxLength: 80 },
+          geometryType: { $ref: "#/components/schemas/AreaGeometryType" },
+          geometry: { $ref: "#/components/schemas/AreaGeometry" },
+          color: {
+            type: "string",
+            nullable: true,
+            minLength: 1,
+            maxLength: 32,
+          },
+          notes: { type: "string", nullable: true, maxLength: 2000 },
+        },
+      },
+      AreaWriteResponse: {
+        type: "object",
+        required: ["areaId", "eventId"],
+        properties: {
+          areaId: { type: "string", format: "uuid" },
+          eventId: {
+            type: "string",
+            description:
+              "Flowcore event id for the create/update/delete event emitted by this request.",
+          },
+        },
       },
     },
   },

@@ -1,4 +1,6 @@
 import { createApp } from "./app";
+import { AreasProjector } from "./areas/projector";
+import { AreasRepository } from "./areas/repository";
 import { TokenCache } from "./auth/cache";
 import { createDb } from "./db/client";
 import { runMigrations } from "./db/migrate";
@@ -14,6 +16,7 @@ import { JobRunner } from "./jobs/runner";
 import { JobScheduler } from "./jobs/scheduler";
 import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
+import { TilesRepository } from "./tiles/repository";
 import { UsableApiClient } from "./usable/client";
 
 const env = loadEnv();
@@ -24,12 +27,20 @@ const usable = new UsableApiClient(env);
 const jmeldingProjector = new JMeldingFragmentProjector(env, usable);
 const geoProjector = new JMeldingGeoProjector(db);
 const geoRepository = new JMeldingGeoRepository(db);
+const tilesRepository = new TilesRepository(db);
+const areasRepository = new AreasRepository(db);
+const areasProjector = new AreasProjector(areasRepository);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
   geoProjector,
 );
-const pathways = createPathwayRuntime(env, repository, chunkAssembler);
+const pathways = createPathwayRuntime(
+  env,
+  repository,
+  chunkAssembler,
+  areasProjector,
+);
 const jobs = createJobDefinitions(env, pathways.writer, usable);
 const jobStateStore = new JobStateStore(env, usable, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore);
@@ -44,6 +55,8 @@ const app = createApp({
   fishfactsClient,
   authCache,
   geoRepository,
+  tilesRepository,
+  areasRepository,
 });
 
 await pathways.startPump();

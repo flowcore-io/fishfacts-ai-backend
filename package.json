@@ -15,7 +15,11 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun scripts/db-migrate.ts",
     "db:migrate:kit": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "services:up": "docker compose up -d postgres",
+    "services:down": "docker compose down",
+    "services:logs": "docker compose logs -f postgres",
+    "services:reset": "docker compose down -v && docker compose up -d postgres"
   },
   "dependencies": {
     "@flowcore/pathways": "^2.4.2",

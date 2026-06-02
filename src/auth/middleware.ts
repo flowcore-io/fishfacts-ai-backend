@@ -2,12 +2,19 @@ import type { TokenCache } from "@/auth/cache";
 import type { FishfactsApiClient } from "@/fishfacts/client";
 import type { MiddlewareHandler } from "hono";
 
+const TILE_PATH_RE = /^\/api\/tiles\/.+\.pbf$/;
+
 export function createAuthMiddleware(
   client: FishfactsApiClient,
   cache: TokenCache,
 ): MiddlewareHandler {
   return async (c, next) => {
-    const token = c.req.header("x-auth-token")?.trim();
+    const headerToken = c.req.header("x-auth-token")?.trim();
+    const allowQueryToken = TILE_PATH_RE.test(new URL(c.req.url).pathname);
+    const queryToken = allowQueryToken
+      ? c.req.query("token")?.trim()
+      : undefined;
+    const token = headerToken || queryToken;
     if (!token) {
       return c.json({ error: "missing_auth_token" }, 401);
     }
