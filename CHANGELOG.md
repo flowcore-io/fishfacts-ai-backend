@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.5.1...v1.6.0) (2026-06-02)
+
+
+### Features
+
+* **api:** areas CRUD + MVT tiles + full swagger docs ([#35](https://github.com/flowcore-io/fishfacts-ai-backend/issues/35)) ([e31fcc2](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e31fcc2b306fc2f1eef3d03e43128eca2b9d029b))
+
 ## [1.5.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.5.0...v1.5.1) (2026-05-18)
 
 
