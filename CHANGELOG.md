@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.6.0...v1.7.0) (2026-06-03)
+
+
+### Features
+
+* add sildelaget catch API ([7158c07](https://github.com/flowcore-io/fishfacts-ai-backend/commit/7158c07a6a4a30ca78432093a63dba4eba496597))
+
 ## [1.6.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.5.1...v1.6.0) (2026-06-02)
 
 
