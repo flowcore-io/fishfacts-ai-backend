@@ -26,20 +26,29 @@ import {
   JMELDING_ANNOUNCEMENT_DISCOVERED_EVENT_TYPE,
   JMELDING_ANNOUNCEMENT_PATHWAY,
   type JMeldingAnnouncementDiscovered,
+  SILDELAGET_CATCHJOURNAL_FLOW_TYPE,
+  SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE,
+  SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY,
+  type SildelagetCatchEntryObserved,
   areaCreatedSchema,
   areaDeletedSchema,
   areaUpdatedSchema,
   genericEventInputSchema,
   jmeldingAnnouncementDiscoveredSchema,
+  sildelagetCatchEntryObservedSchema,
 } from "./events/contracts";
 import { chunkAnnouncement } from "./events/jmelding-chunking";
 import type { GenericEventRepository } from "./events/repository";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
+import type { SildelagetCatchProjector } from "./sildelaget/projector";
 
 export interface PathwayWriter {
   writeGeneric(data: z.infer<typeof genericEventInputSchema>): Promise<string>;
   writeJMeldingAnnouncement(
     data: JMeldingAnnouncementDiscovered,
+  ): Promise<string>;
+  writeSildelagetCatchEntryObserved(
+    data: SildelagetCatchEntryObserved,
   ): Promise<string>;
   writeAreaCreated(data: AreaCreated): Promise<string>;
   writeAreaUpdated(data: AreaUpdated): Promise<string>;
@@ -58,6 +67,7 @@ export function createPathwayRuntime(
   repository: GenericEventRepository,
   chunkAssembler: JMeldingChunkAssembler,
   areasProjector: AreasProjector,
+  sildelagetCatchProjector: SildelagetCatchProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -163,6 +173,20 @@ export function createPathwayRuntime(
       await areasProjector.handleDeleted({ eventId: envelope.eventId }, parsed);
     });
 
+  pathways
+    .register({
+      flowType: SILDELAGET_CATCHJOURNAL_FLOW_TYPE,
+      eventType: SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE,
+      schema: sildelagetCatchEntryObservedSchema,
+      flowTypeDescription: "FishFacts Sildelaget catch journal events",
+      description: "A Sildelaget innmeldingsjournal entry was observed",
+    })
+    .handle(SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY, async (event) => {
+      await sildelagetCatchProjector.handleObserved(
+        event as { eventId: string; payload: unknown },
+      );
+    });
+
   const router = new PathwayRouter(pathways, env.FLOWCORE_TRANSFORMER_SECRET);
 
   return {
@@ -203,6 +227,27 @@ export function createPathwayRuntime(
           eventIds.push(Array.isArray(eventId) ? eventId[0] : eventId);
         }
         return eventIds[0];
+      },
+      async writeSildelagetCatchEntryObserved(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY,
+            input: {
+              data: SildelagetCatchEntryObserved;
+              metadata: Record<string, unknown>;
+              options?: { fireAndForget?: boolean };
+            },
+          ) => Promise<string | string[]>
+        )(SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY, {
+          data,
+          metadata: {
+            source: "sildelaget-catchjournal-job",
+            innmeldingId: data.innmeldingId,
+            entryHash: data.entryHash,
+          },
+          options: { fireAndForget: true },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeAreaCreated(data) {
         const eventId = await (

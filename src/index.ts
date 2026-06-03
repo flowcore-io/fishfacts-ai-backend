@@ -16,6 +16,8 @@ import { JobRunner } from "./jobs/runner";
 import { JobScheduler } from "./jobs/scheduler";
 import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
+import { SildelagetCatchProjector } from "./sildelaget/projector";
+import { SildelagetCatchRepository } from "./sildelaget/repository";
 import { TilesRepository } from "./tiles/repository";
 import { UsableApiClient } from "./usable/client";
 
@@ -30,6 +32,10 @@ const geoRepository = new JMeldingGeoRepository(db);
 const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
+const sildelagetCatchRepository = new SildelagetCatchRepository(db);
+const sildelagetCatchProjector = new SildelagetCatchProjector(
+  sildelagetCatchRepository,
+);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
@@ -40,8 +46,14 @@ const pathways = createPathwayRuntime(
   repository,
   chunkAssembler,
   areasProjector,
+  sildelagetCatchProjector,
 );
-const jobs = createJobDefinitions(env, pathways.writer, usable);
+const jobs = createJobDefinitions(
+  env,
+  pathways.writer,
+  usable,
+  sildelagetCatchRepository,
+);
 const jobStateStore = new JobStateStore(env, usable, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore);
 const jobScheduler = new JobScheduler(env, jobRunner);
@@ -57,6 +69,7 @@ const app = createApp({
   geoRepository,
   tilesRepository,
   areasRepository,
+  sildelagetCatchRepository,
 });
 
 await pathways.startPump();

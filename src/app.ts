@@ -17,6 +17,8 @@ import type { JobRunner } from "./jobs/runner";
 import type { JobStateStore } from "./jobs/state-store";
 import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
+import type { SildelagetCatchRepository } from "./sildelaget/repository";
+import { createSildelagetCatchRouter } from "./sildelaget/routes";
 import type { TilesRepository } from "./tiles/repository";
 import { createTilesRouter } from "./tiles/routes";
 
@@ -30,6 +32,7 @@ export type AppDependencies = {
   geoRepository: JMeldingGeoRepository;
   tilesRepository: TilesRepository;
   areasRepository: AreasRepository;
+  sildelagetCatchRepository: SildelagetCatchRepository;
 };
 
 export function createApp({
@@ -42,6 +45,7 @@ export function createApp({
   geoRepository,
   tilesRepository,
   areasRepository,
+  sildelagetCatchRepository,
 }: AppDependencies) {
   const app = new Hono();
 
@@ -66,6 +70,8 @@ export function createApp({
   app.use("/api/tiles/*", authMiddleware);
   app.use("/api/areas", authMiddleware);
   app.use("/api/areas/*", authMiddleware);
+  app.use("/api/catch", authMiddleware);
+  app.use("/api/catch/*", authMiddleware);
 
   app.route("/api/tiles", createTilesRouter({ tilesRepository }));
   app.route(
@@ -74,6 +80,10 @@ export function createApp({
       repository: areasRepository,
       writer: pathways.writer,
     }),
+  );
+  app.route(
+    "/api/catch",
+    createSildelagetCatchRouter({ repository: sildelagetCatchRepository }),
   );
 
   app.post("/api/events", async (c) => {

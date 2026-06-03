@@ -44,6 +44,75 @@ export type JMeldingAnnouncementDiscovered = z.infer<
   typeof jmeldingAnnouncementDiscoveredSchema
 >;
 
+export const SILDELAGET_CATCHJOURNAL_FLOW_TYPE =
+  "fishfacts-sildelaget-catchjournal.0" as const;
+export const SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE =
+  "sildelaget.catchjournal.entry.observed.0" as const;
+export const SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY =
+  `${SILDELAGET_CATCHJOURNAL_FLOW_TYPE}/${SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE}` as const;
+
+const nullableString = z.string().nullable();
+const nullableNumber = z.number().nullable();
+
+export const sildelagetCatchLineSchema = z.object({
+  lineKey: z.string().regex(/^[a-f0-9]{64}$/),
+  lineIndex: z.number().int().min(0),
+  fishingStartDate: nullableString,
+  fishingStartTime: nullableString,
+  species: nullableString,
+  tonnes: nullableNumber,
+  weightKg: nullableNumber,
+  average: nullableNumber,
+  catchType: nullableString,
+  salesType: nullableString,
+  gear: nullableString,
+  route: nullableString,
+  use: nullableString,
+  pct1: nullableNumber,
+  pct2: nullableNumber,
+  pct3: nullableNumber,
+  pct4: nullableNumber,
+  assortment: nullableString,
+  offerEastSouth: nullableString,
+  offerEastSouthDate: nullableString,
+  offerEastSouthTime: nullableString,
+  offerEastNorth: nullableString,
+  offerEastNorthDate: nullableString,
+  offerEastNorthTime: nullableString,
+  offerWestSouth: nullableString,
+  offerWestSouthDate: nullableString,
+  offerWestSouthTime: nullableString,
+  offerWestNorth: nullableString,
+  offerWestNorthDate: nullableString,
+  offerWestNorthTime: nullableString,
+  leasedVessel: nullableString,
+  economicZone: nullableString,
+  municipality: nullableString,
+  coFisher: nullableString,
+  buyer: nullableString,
+  receiver: nullableString,
+  nationality: nullableString,
+  rawRow: z.record(z.unknown()).default({}),
+});
+
+export const sildelagetCatchEntryObservedSchema = z.object({
+  innmeldingId: z.string().min(1),
+  reportedDate: nullableString,
+  reportedTime: nullableString,
+  vesselName: nullableString,
+  registrationMark: nullableString,
+  entryHash: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceUrl: z.string().url(),
+  checkedAt: z.string().datetime(),
+  rawEntry: z.record(z.unknown()).default({}),
+  lines: z.array(sildelagetCatchLineSchema),
+});
+
+export type SildelagetCatchLine = z.infer<typeof sildelagetCatchLineSchema>;
+export type SildelagetCatchEntryObserved = z.infer<
+  typeof sildelagetCatchEntryObservedSchema
+>;
+
 export type FlowcoreEventEnvelope<TPayload = unknown> = {
   eventId: string;
   timeBucket: string;

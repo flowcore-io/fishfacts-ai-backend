@@ -8,6 +8,11 @@ export const openApiDocument = {
     { name: "System", description: "Service metadata and health" },
     { name: "Events", description: "Generic Flowcore event ingestion" },
     { name: "Jobs", description: "Background jobs and state" },
+    {
+      name: "Catch",
+      description:
+        "Read-only Sildelaget catch journal projections and FishFacts-compatible catch aggregates.",
+    },
     { name: "Flowcore", description: "Virtual pathway callbacks" },
     {
       name: "J-meldinger",
@@ -231,6 +236,30 @@ export const openApiDocument = {
                     },
                   },
                 },
+                sildelaget: {
+                  summary: "Run Sildelaget catch journal",
+                  value: {
+                    jobId: "sildelaget-catchjournal",
+                    args: {
+                      selectedTime: 168,
+                      selectedSpecies: "",
+                      selectedCatchType: "",
+                      isNor: true,
+                    },
+                  },
+                },
+                sildelagetBootstrap: {
+                  summary: "Bootstrap Sildelaget catch journal",
+                  value: {
+                    jobId: "sildelaget-catchjournal",
+                    args: {
+                      selectedTime: 8760,
+                      selectedSpecies: "",
+                      selectedCatchType: "",
+                      isNor: true,
+                    },
+                  },
+                },
               },
             },
           },
@@ -289,6 +318,10 @@ export const openApiDocument = {
                   summary: "Stop J-meldinger",
                   value: { jobId: "fiskeridir-jmeldinger" },
                 },
+                sildelaget: {
+                  summary: "Stop Sildelaget catch journal",
+                  value: { jobId: "sildelaget-catchjournal" },
+                },
               },
             },
           },
@@ -315,6 +348,208 @@ export const openApiDocument = {
         responses: {
           "200": { description: "Pump reset processed" },
           "401": { description: "Invalid reset secret" },
+        },
+      },
+    },
+    "/api/catch": {
+      get: {
+        tags: ["Catch"],
+        summary: "List FishFacts-compatible catch aggregates",
+        description:
+          "Aggregates projected Sildelaget catch journal lines by report date and species. Response shape matches the FishFacts vessel catch wrapper.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "from",
+            in: "query",
+            schema: { type: "string", format: "date" },
+            description:
+              "Inclusive report date lower bound. Default today - 365 days.",
+          },
+          {
+            name: "to",
+            in: "query",
+            schema: { type: "string", format: "date" },
+            description: "Inclusive report date upper bound. Default today.",
+          },
+          {
+            name: "species",
+            in: "query",
+            schema: { type: "string" },
+          },
+          {
+            name: "vesselName",
+            in: "query",
+            schema: { type: "string" },
+          },
+          {
+            name: "registrationMark",
+            in: "query",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "FishFacts-compatible catch wrapper",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/FishfactsCatchWrapper" },
+                examples: {
+                  sample: {
+                    value: {
+                      code: 0,
+                      errors: [],
+                      message: "",
+                      data: {
+                        catches: [
+                          {
+                            date: "2026-05-28",
+                            totalFullWeightKg: 12500,
+                            totalGuttedWeightKg: 0,
+                            totalWeightKg: 12500,
+                            catches: [
+                              {
+                                specie: "NVG-sild",
+                                fullWeightKg: 12500,
+                                guttedWeightKg: 0,
+                                weightKg: 12500,
+                              },
+                            ],
+                          },
+                        ],
+                        locations: [],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Invalid query parameters" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
+        },
+      },
+    },
+    "/api/catch/full": {
+      get: {
+        tags: ["Catch"],
+        summary: "List full Sildelaget catch entries",
+        description:
+          "Returns parent innmeldingsjournal entries with complete projected Sildelaget child lines.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "from",
+            in: "query",
+            schema: { type: "string", format: "date" },
+            description:
+              "Inclusive report date lower bound. Default today - 365 days.",
+          },
+          {
+            name: "to",
+            in: "query",
+            schema: { type: "string", format: "date" },
+            description: "Inclusive report date upper bound. Default today.",
+          },
+          {
+            name: "species",
+            in: "query",
+            schema: { type: "string" },
+          },
+          {
+            name: "vesselName",
+            in: "query",
+            schema: { type: "string" },
+          },
+          {
+            name: "registrationMark",
+            in: "query",
+            schema: { type: "string" },
+          },
+          {
+            name: "innmeldingId",
+            in: "query",
+            schema: { type: "string" },
+          },
+          {
+            name: "q",
+            in: "query",
+            description:
+              "Case-insensitive search across innmelding id, vessel, registration mark, species, buyer, and receiver.",
+            schema: { type: "string" },
+          },
+          {
+            name: "limit",
+            in: "query",
+            schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+          },
+          {
+            name: "cursor",
+            in: "query",
+            description:
+              "Opaque pagination cursor returned by the previous page.",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Page of Sildelaget catch entries",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CatchFullPage" },
+                examples: {
+                  sample: {
+                    value: {
+                      rows: [
+                        {
+                          innmeldingId: "123456",
+                          reportedDate: "2026-05-28",
+                          reportedTime: "10:30:00",
+                          vesselName: "Fiskebas",
+                          registrationMark: "FO-123",
+                          entryHash:
+                            "8b1a9953c4611296a827abf8c47804d7f0f9d6f4b4ccf9a1b92d2bda8f6a3a9d",
+                          sourceUrl:
+                            "https://www.sildelaget.no/umbraco/api/catchjournal/ExportCatchJournal?selectedTime=168&selectedSpecies=&selectedCatchType=&isNor=true",
+                          checkedAt: "2026-05-28T10:35:00.000Z",
+                          rawEntry: {},
+                          sourceEventId: "evt_123",
+                          createdAt: "2026-05-28T10:36:00.000Z",
+                          updatedAt: "2026-05-28T10:36:00.000Z",
+                          lines: [
+                            {
+                              lineKey:
+                                "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7c7b3e69b2c5c4b",
+                              innmeldingId: "123456",
+                              lineIndex: 0,
+                              fishingStartDate: "2026-05-27",
+                              fishingStartTime: "22:00:00",
+                              species: "NVG-sild",
+                              tonnes: 12.5,
+                              weightKg: 12500,
+                              average: 325,
+                              catchType: "Direkte",
+                              salesType: "Auksjon",
+                              gear: "Not",
+                              route: "5",
+                              use: "Konsum",
+                              buyer: "Buyer AS",
+                              receiver: "Receiver AS",
+                            },
+                          ],
+                        },
+                      ],
+                      nextCursor: null,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Invalid query parameters" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
         },
       },
     },
@@ -753,10 +988,15 @@ export const openApiDocument = {
         properties: {
           jobId: {
             type: "string",
-            enum: ["fiskeridir-jmeldinger"],
+            enum: ["fiskeridir-jmeldinger", "sildelaget-catchjournal"],
             description: "Omit to start all registered jobs.",
           },
-          args: { $ref: "#/components/schemas/FiskeridirJMeldingerArgs" },
+          args: {
+            oneOf: [
+              { $ref: "#/components/schemas/FiskeridirJMeldingerArgs" },
+              { $ref: "#/components/schemas/SildelagetCatchJournalArgs" },
+            ],
+          },
         },
       },
       FiskeridirJMeldingerArgs: {
@@ -785,6 +1025,31 @@ export const openApiDocument = {
           },
         },
       },
+      SildelagetCatchJournalArgs: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          selectedTime: {
+            type: "integer",
+            minimum: 1,
+            default: 168,
+            description:
+              "Sildelaget export time window in hours. Use 8760 for manual bootstrap.",
+          },
+          selectedSpecies: {
+            type: "string",
+            default: "",
+          },
+          selectedCatchType: {
+            type: "string",
+            default: "",
+          },
+          isNor: {
+            type: "boolean",
+            default: true,
+          },
+        },
+      },
       JobStopRequest: {
         type: "object",
         required: ["jobId"],
@@ -792,7 +1057,7 @@ export const openApiDocument = {
         properties: {
           jobId: {
             type: "string",
-            enum: ["fiskeridir-jmeldinger"],
+            enum: ["fiskeridir-jmeldinger", "sildelaget-catchjournal"],
           },
         },
       },
@@ -873,7 +1138,10 @@ export const openApiDocument = {
           name: { type: "string" },
           schedule: { type: "string" },
           defaultArgs: {
-            $ref: "#/components/schemas/FiskeridirJMeldingerArgs",
+            oneOf: [
+              { $ref: "#/components/schemas/FiskeridirJMeldingerArgs" },
+              { $ref: "#/components/schemas/SildelagetCatchJournalArgs" },
+            ],
           },
         },
       },
@@ -925,6 +1193,190 @@ export const openApiDocument = {
           ok: { type: "boolean", enum: [true] },
           jobId: { type: "string" },
           message: { type: "string" },
+        },
+      },
+      FishfactsCatchWrapper: {
+        type: "object",
+        required: ["code", "errors", "message", "data"],
+        properties: {
+          code: { type: "integer", enum: [0] },
+          errors: {
+            type: "array",
+            items: {},
+            maxItems: 0,
+          },
+          message: { type: "string", enum: [""] },
+          data: {
+            type: "object",
+            required: ["catches", "locations"],
+            properties: {
+              catches: {
+                type: "array",
+                items: { $ref: "#/components/schemas/DayCatchResponse" },
+              },
+              locations: {
+                type: "array",
+                items: {},
+                maxItems: 0,
+              },
+            },
+          },
+        },
+      },
+      DayCatchResponse: {
+        type: "object",
+        required: [
+          "date",
+          "totalFullWeightKg",
+          "totalGuttedWeightKg",
+          "totalWeightKg",
+          "catches",
+        ],
+        properties: {
+          date: { type: "string", format: "date" },
+          totalFullWeightKg: { type: "number" },
+          totalGuttedWeightKg: { type: "number" },
+          totalWeightKg: { type: "number" },
+          catches: {
+            type: "array",
+            items: { $ref: "#/components/schemas/CatchResponse" },
+          },
+        },
+      },
+      CatchResponse: {
+        type: "object",
+        required: ["specie", "fullWeightKg", "guttedWeightKg", "weightKg"],
+        properties: {
+          specie: { type: "string" },
+          fullWeightKg: { type: "number" },
+          guttedWeightKg: { type: "number" },
+          weightKg: { type: "number" },
+        },
+      },
+      SildelagetCatchEntry: {
+        type: "object",
+        required: [
+          "innmeldingId",
+          "reportedDate",
+          "reportedTime",
+          "vesselName",
+          "registrationMark",
+          "entryHash",
+          "sourceUrl",
+          "checkedAt",
+          "rawEntry",
+          "sourceEventId",
+          "createdAt",
+          "updatedAt",
+          "lines",
+        ],
+        properties: {
+          innmeldingId: { type: "string" },
+          reportedDate: { type: "string", format: "date", nullable: true },
+          reportedTime: { type: "string", nullable: true },
+          vesselName: { type: "string", nullable: true },
+          registrationMark: { type: "string", nullable: true },
+          entryHash: {
+            type: "string",
+            pattern: "^[a-f0-9]{64}$",
+          },
+          sourceUrl: { type: "string", format: "uri" },
+          checkedAt: { type: "string", format: "date-time" },
+          rawEntry: { type: "object", additionalProperties: true },
+          sourceEventId: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+          lines: {
+            type: "array",
+            items: { $ref: "#/components/schemas/SildelagetCatchLine" },
+          },
+        },
+      },
+      SildelagetCatchLine: {
+        type: "object",
+        required: [
+          "lineKey",
+          "innmeldingId",
+          "lineIndex",
+          "rawRow",
+          "sourceEventId",
+          "createdAt",
+          "updatedAt",
+        ],
+        properties: {
+          lineKey: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          innmeldingId: { type: "string" },
+          lineIndex: { type: "integer" },
+          fishingStartDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+          },
+          fishingStartTime: { type: "string", nullable: true },
+          species: { type: "string", nullable: true },
+          tonnes: { type: "number", nullable: true },
+          weightKg: { type: "number", nullable: true },
+          average: { type: "number", nullable: true },
+          catchType: { type: "string", nullable: true },
+          salesType: { type: "string", nullable: true },
+          gear: { type: "string", nullable: true },
+          route: { type: "string", nullable: true },
+          use: { type: "string", nullable: true },
+          pct1: { type: "number", nullable: true },
+          pct2: { type: "number", nullable: true },
+          pct3: { type: "number", nullable: true },
+          pct4: { type: "number", nullable: true },
+          assortment: { type: "string", nullable: true },
+          offerEastSouth: { type: "string", nullable: true },
+          offerEastSouthDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+          },
+          offerEastSouthTime: { type: "string", nullable: true },
+          offerEastNorth: { type: "string", nullable: true },
+          offerEastNorthDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+          },
+          offerEastNorthTime: { type: "string", nullable: true },
+          offerWestSouth: { type: "string", nullable: true },
+          offerWestSouthDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+          },
+          offerWestSouthTime: { type: "string", nullable: true },
+          offerWestNorth: { type: "string", nullable: true },
+          offerWestNorthDate: {
+            type: "string",
+            format: "date",
+            nullable: true,
+          },
+          offerWestNorthTime: { type: "string", nullable: true },
+          leasedVessel: { type: "string", nullable: true },
+          economicZone: { type: "string", nullable: true },
+          municipality: { type: "string", nullable: true },
+          coFisher: { type: "string", nullable: true },
+          buyer: { type: "string", nullable: true },
+          receiver: { type: "string", nullable: true },
+          nationality: { type: "string", nullable: true },
+          rawRow: { type: "object", additionalProperties: true },
+          sourceEventId: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      CatchFullPage: {
+        type: "object",
+        required: ["rows", "nextCursor"],
+        properties: {
+          rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/SildelagetCatchEntry" },
+          },
+          nextCursor: { type: "string", nullable: true },
         },
       },
       JMeldingGeoListRow: {

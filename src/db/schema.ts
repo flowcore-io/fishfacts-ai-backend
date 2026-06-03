@@ -112,3 +112,94 @@ export const jmeldingGeo = pgTable(
     ),
   }),
 );
+
+export const sildelagetCatchEntries = pgTable(
+  "sildelaget_catch_entries",
+  {
+    innmeldingId: text("innmelding_id").primaryKey(),
+    reportedDate: text("reported_date"),
+    reportedTime: text("reported_time"),
+    vesselName: text("vessel_name"),
+    registrationMark: text("registration_mark"),
+    entryHash: text("entry_hash").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    rawEntry: jsonb("raw_entry").notNull().default({}),
+    sourceEventId: text("source_event_id").notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    reportedDateIdx: index("sildelaget_catch_entries_reported_date_idx").on(
+      table.reportedDate,
+    ),
+    vesselNameIdx: index("sildelaget_catch_entries_vessel_name_idx").on(
+      table.vesselName,
+    ),
+    registrationMarkIdx: index(
+      "sildelaget_catch_entries_registration_mark_idx",
+    ).on(table.registrationMark),
+  }),
+);
+
+export const sildelagetCatchLines = pgTable(
+  "sildelaget_catch_lines",
+  {
+    lineKey: text("line_key").primaryKey(),
+    innmeldingId: text("innmelding_id").notNull(),
+    lineIndex: integer("line_index").notNull(),
+    fishingStartDate: text("fishing_start_date"),
+    fishingStartTime: text("fishing_start_time"),
+    species: text("species"),
+    tonnes: doublePrecision("tonnes"),
+    weightKg: doublePrecision("weight_kg"),
+    average: doublePrecision("average"),
+    catchType: text("catch_type"),
+    salesType: text("sales_type"),
+    gear: text("gear"),
+    route: text("route"),
+    use: text("use"),
+    pct1: doublePrecision("pct1"),
+    pct2: doublePrecision("pct2"),
+    pct3: doublePrecision("pct3"),
+    pct4: doublePrecision("pct4"),
+    assortment: text("assortment"),
+    offerEastSouth: text("offer_east_south"),
+    offerEastSouthDate: text("offer_east_south_date"),
+    offerEastSouthTime: text("offer_east_south_time"),
+    offerEastNorth: text("offer_east_north"),
+    offerEastNorthDate: text("offer_east_north_date"),
+    offerEastNorthTime: text("offer_east_north_time"),
+    offerWestSouth: text("offer_west_south"),
+    offerWestSouthDate: text("offer_west_south_date"),
+    offerWestSouthTime: text("offer_west_south_time"),
+    offerWestNorth: text("offer_west_north"),
+    offerWestNorthDate: text("offer_west_north_date"),
+    offerWestNorthTime: text("offer_west_north_time"),
+    leasedVessel: text("leased_vessel"),
+    economicZone: text("economic_zone"),
+    municipality: text("municipality"),
+    coFisher: text("co_fisher"),
+    buyer: text("buyer"),
+    receiver: text("receiver"),
+    nationality: text("nationality"),
+    rawRow: jsonb("raw_row").notNull().default({}),
+    sourceEventId: text("source_event_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    innmeldingIdIdx: index("sildelaget_catch_lines_innmelding_id_idx").on(
+      table.innmeldingId,
+    ),
+    speciesIdx: index("sildelaget_catch_lines_species_idx").on(table.species),
+  }),
+);

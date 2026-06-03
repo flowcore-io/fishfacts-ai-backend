@@ -1,14 +1,17 @@
 import type { Env } from "@/env";
 import type { PathwayWriter } from "@/pathways";
+import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
 import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
+import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
 
 export function createJobDefinitions(
   env: Env,
   writer: PathwayWriter,
   usable: UsableApiClient,
+  sildelagetCatchRepository: SildelagetCatchRepository,
 ): JobDefinition[] {
   return [
     {
@@ -29,6 +32,22 @@ export function createJobDefinitions(
             status: "active",
           }),
       }),
+    },
+    {
+      id: "sildelaget-catchjournal",
+      name: "Sildelaget catch journal collector",
+      schedule: "0 * * * *",
+      inputSchema: z.object({
+        selectedTime: z.coerce.number().int().min(1).default(168),
+        selectedSpecies: z.string().default(""),
+        selectedCatchType: z.string().default(""),
+        isNor: z.coerce.boolean().default(true),
+      }),
+      execute: createSildelagetCatchJournalJob(
+        env,
+        writer,
+        sildelagetCatchRepository,
+      ),
     },
   ];
 }

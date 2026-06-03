@@ -35,6 +35,12 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://www.fiskeridir.no/yrkesfiske/j-meldinger"),
+  SILDELAGET_CATCHJOURNAL_EXPORT_URL: z
+    .string()
+    .url()
+    .default(
+      "https://www.sildelaget.no/umbraco/api/catchjournal/ExportCatchJournal",
+    ),
   FISHFACTS_API_BASE_URL: z
     .string()
     .url()
