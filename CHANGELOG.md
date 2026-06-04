@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.4](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.3...v1.7.4) (2026-06-04)
+
+
+### Bug Fixes
+
+* configure pathway timeout and websocket notifier ([ef53c55](https://github.com/flowcore-io/fishfacts-ai-backend/commit/ef53c55ef551febe8236f5ed76d77acbd62c615c))
+
 ## [1.7.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.2...v1.7.3) (2026-06-04)
 
 
