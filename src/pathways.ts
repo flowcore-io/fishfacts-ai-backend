@@ -81,6 +81,7 @@ export function createPathwayRuntime(
     dataCore: env.FLOWCORE_DATA_CORE,
     apiKey: env.FLOWCORE_API_KEY,
     baseUrl: env.FLOWCORE_API_URL,
+    pathwayTimeoutMs: 30000,
     dataCoreDescription: "Fishfacts AI backend event data core",
     dataCoreAccessControl: "private",
     dataCoreDeleteProtection: true,
@@ -326,6 +327,7 @@ export function createPathwayRuntime(
       });
       await pathways.startPump({
         stateManagerFactory,
+        notifier: { type: "websocket" },
         autoProvision: {
           dataCore: true,
           flowType: true,

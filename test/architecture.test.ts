@@ -18,6 +18,13 @@ describe("architecture", () => {
     expect(scraperSource).toContain("writeJMeldingAnnouncement");
   });
 
+  test("pathway runtime uses 30s timeout and websocket notifier", async () => {
+    const pathwaySource = await Bun.file("src/pathways.ts").text();
+    expect(pathwaySource).toContain("pathwayTimeoutMs: 30000");
+    expect(pathwaySource).toContain('notifier: { type: "websocket" }');
+    expect(pathwaySource).not.toContain("pollerIntervalMs");
+  });
+
   test("black-box tests do not import application internals", async () => {
     const proc = Bun.spawnSync({
       cmd: [
