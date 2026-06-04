@@ -115,6 +115,7 @@ describe("Sildelaget catch routes black-box", () => {
 
   beforeEach(() => {
     webhook.clear();
+    sildelaget.calls.length = 0;
   });
 
   test("requires auth", async () => {
@@ -125,7 +126,7 @@ describe("Sildelaget catch routes black-box", () => {
     expect(full.status).toBe(401);
   });
 
-  test("job emits Flowcore webhook event and projects namespaced XLSX export", async () => {
+  test("job accepts manual backfill duration and projects namespaced XLSX export", async () => {
     if (!runBlackbox) return;
     const response = await app.fetch("/api/jobs/run", {
       method: "POST",
@@ -133,7 +134,7 @@ describe("Sildelaget catch routes black-box", () => {
       body: JSON.stringify({
         jobId: "sildelaget-catchjournal",
         args: {
-          selectedTime: 168,
+          selectedTime: 8760,
           selectedSpecies: "",
           selectedCatchType: "",
           isNor: true,
@@ -141,6 +142,14 @@ describe("Sildelaget catch routes black-box", () => {
       }),
     });
     expect(response.status).toBe(202);
+
+    const exportCall = await waitFor(
+      () =>
+        sildelaget.calls.find((call) => call.includes("selectedTime=8760")) ??
+        null,
+      "Sildelaget manual backfill duration was not sent to export",
+    );
+    expect(exportCall).toContain("selectedTime=8760");
 
     const event = await waitFor(
       () => webhook.last(FLOW_TYPE, EVENT_TYPE),
@@ -157,6 +166,9 @@ describe("Sildelaget catch routes black-box", () => {
       vesselName: "Brattskjær",
       registrationMark: "TR-0346-ND",
     });
+    expect((event.payload as { sourceUrl?: string }).sourceUrl).toContain(
+      "selectedTime=8760",
+    );
 
     const projected = await waitFor(async () => {
       const full = await app.fetch(

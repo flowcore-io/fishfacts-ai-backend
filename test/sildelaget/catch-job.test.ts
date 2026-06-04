@@ -65,6 +65,67 @@ describe("sildelaget-catchjournal job", () => {
     expect(result.changed).toBe(true);
     expect(result.message).toContain("emitted 1 changed entries");
   });
+
+  test("uses uncapped selectedTime as export duration", async () => {
+    const buffer = await makeWorkbook();
+    let requestedUrl: string | undefined;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requestedUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      return new Response(new Uint8Array(buffer));
+    }) as unknown as typeof fetch;
+
+    const repository = {
+      getEntryHashes: async () => new Map<string, string>(),
+    } as unknown as SildelagetCatchRepository;
+    const emitted: unknown[] = [];
+    const writer = {
+      writeGeneric: async () => "unused",
+      writeJMeldingAnnouncement: async () => "unused",
+      writeSildelagetCatchEntryObserved: async (entry) => {
+        emitted.push(entry);
+        return "evt-sild";
+      },
+      writeAreaCreated: async () => "unused",
+      writeAreaUpdated: async () => "unused",
+      writeAreaDeleted: async () => "unused",
+    } satisfies PathwayWriter;
+
+    const job = createSildelagetCatchJournalJob(
+      {
+        SILDELAGET_CATCHJOURNAL_EXPORT_URL:
+          "https://example.test/ExportCatchJournal",
+      } as never,
+      writer,
+      repository,
+    );
+
+    const result = await job(
+      undefined,
+      {
+        selectedTime: 87600,
+        selectedSpecies: "",
+        selectedCatchType: "",
+        isNor: true,
+      },
+      {
+        signal: new AbortController().signal,
+        isStopRequested: () => false,
+        reportProgress: () => undefined,
+      },
+    );
+
+    expect(result.changed).toBe(true);
+    expect(emitted).toHaveLength(1);
+    expect(requestedUrl).toBeDefined();
+    expect(
+      new URL(requestedUrl as string).searchParams.get("selectedTime"),
+    ).toBe("87600");
+  });
 });
 
 async function makeWorkbook(): Promise<Buffer> {

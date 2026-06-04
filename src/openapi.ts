@@ -213,7 +213,7 @@ export const openApiDocument = {
         tags: ["Jobs"],
         summary: "Run one or all jobs",
         description:
-          "Starts a background job run and returns current state without waiting for completion.",
+          "Starts a background job run and returns current state without waiting for completion. Manual Sildelaget backfills can set args.selectedTime to any positive hour count.",
         security: [{ FishfactsAuthToken: [] }],
         requestBody: {
           required: false,
@@ -248,8 +248,8 @@ export const openApiDocument = {
                     },
                   },
                 },
-                sildelagetBootstrap: {
-                  summary: "Bootstrap Sildelaget catch journal",
+                sildelagetBackfill: {
+                  summary: "Manual Sildelaget backfill (8760 hours)",
                   value: {
                     jobId: "sildelaget-catchjournal",
                     args: {
@@ -1033,8 +1033,9 @@ export const openApiDocument = {
             type: "integer",
             minimum: 1,
             default: 168,
+            example: 8760,
             description:
-              "Sildelaget export time window in hours. Use 8760 for manual bootstrap.",
+              "Manual backfill duration in hours. Cron default is 168; use any positive integer, e.g. 8760 for one year.",
           },
           selectedSpecies: {
             type: "string",

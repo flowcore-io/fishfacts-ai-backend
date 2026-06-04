@@ -104,6 +104,17 @@ JMELDING_FRAGMENT_TYPE_ID=68505bca-a549-45eb-bca6-965f87195b89
 JOB_STATE_FRAGMENT_TYPE_ID=11da02d0-b033-43a4-acd1-96f9e193cc86
 ```
 
+## Sildelaget catch backfill
+
+`POST /api/jobs/run` with `jobId=sildelaget-catchjournal` fetches the Sildelaget innmeldingsjournal export and writes `fishfacts-sildelaget-catchjournal.0/sildelaget.catchjournal.entry.observed.0` events to Flowcore. Cron uses `selectedTime=168`; manual backfill can set any positive hour duration, e.g. `8760` for one year.
+
+```sh
+curl -s -X POST "$SERVICE_URL/api/jobs/run" \
+  -H "Content-Type: application/json" \
+  -H "x-auth-token: $TOKEN" \
+  -d '{"jobId":"sildelaget-catchjournal","args":{"selectedTime":8760}}'
+```
+
 ## J-meldinger Geo API
 
 A read-model populated by the existing `JMeldingChunkAssembler` pipeline. Each `jmelding.announcement.discovered.0` event is parsed for embedded coordinates (Norwegian DMM long-form, DMM symbol-form, and DMS) and upserted into the `jmelding_geo` PostGIS-backed table. All endpoints require the `x-auth-token` header.
