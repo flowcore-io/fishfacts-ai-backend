@@ -88,7 +88,9 @@ describe("Sildelaget catch routes black-box", () => {
       );
       await usable.start();
       await fishfacts.start();
-      fishfacts.addValidToken(VALID_TOKEN);
+      fishfacts.addValidToken(VALID_TOKEN, {
+        authorities: ["FISHFACTS", "USER", "ADMIN"],
+      });
       await sildelaget.start();
       await webhook.start();
       await app.start();

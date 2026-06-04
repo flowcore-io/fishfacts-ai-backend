@@ -111,7 +111,8 @@ export const openApiDocument = {
     "/api/events": {
       post: {
         tags: ["Events"],
-        summary: "Emit a generic Flowcore event",
+        summary: "Emit a generic Flowcore event (ADMIN authority required)",
+        description: "Requires a valid FishFacts token with ADMIN authority.",
         security: [{ FishfactsAuthToken: [] }],
         requestBody: {
           required: true,
@@ -139,6 +140,14 @@ export const openApiDocument = {
             },
           },
           "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
           "502": {
             description: "Flowcore write failed or auth upstream unavailable",
             content: {
@@ -191,8 +200,9 @@ export const openApiDocument = {
     "/api/jobs/cron": {
       post: {
         tags: ["Jobs"],
-        summary: "Run scheduled jobs",
-        description: "Starts due scheduled jobs and returns immediately.",
+        summary: "Run scheduled jobs (ADMIN authority required)",
+        description:
+          "Starts due scheduled jobs and returns immediately. Requires ADMIN authority.",
         security: [{ FishfactsAuthToken: [] }],
         responses: {
           "202": {
@@ -204,6 +214,14 @@ export const openApiDocument = {
             },
           },
           "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
           "502": { description: "Auth upstream unavailable" },
         },
       },
@@ -211,9 +229,9 @@ export const openApiDocument = {
     "/api/jobs/run": {
       post: {
         tags: ["Jobs"],
-        summary: "Run one or all jobs",
+        summary: "Run one or all jobs (ADMIN authority required)",
         description:
-          "Starts a background job run and returns current state without waiting for completion. Manual Sildelaget backfills can set args.selectedTime to any positive hour count.",
+          "Starts a background job run and returns current state without waiting for completion. Requires ADMIN authority. Manual Sildelaget backfills can set args.selectedTime to any positive hour count.",
         security: [{ FishfactsAuthToken: [] }],
         requestBody: {
           required: false,
@@ -280,6 +298,14 @@ export const openApiDocument = {
           },
           "400": { description: "Invalid payload" },
           "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
           "502": { description: "Auth upstream unavailable" },
         },
       },
@@ -287,7 +313,8 @@ export const openApiDocument = {
     "/api/jobs/state": {
       get: {
         tags: ["Jobs"],
-        summary: "Read job state",
+        summary: "Read job state (ADMIN authority required)",
+        description: "Requires ADMIN authority.",
         security: [{ FishfactsAuthToken: [] }],
         responses: {
           "200": {
@@ -299,6 +326,14 @@ export const openApiDocument = {
             },
           },
           "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
           "502": { description: "Auth upstream unavailable" },
         },
       },
@@ -306,7 +341,8 @@ export const openApiDocument = {
     "/api/jobs/stop": {
       post: {
         tags: ["Jobs"],
-        summary: "Stop a running job",
+        summary: "Stop a running job (ADMIN authority required)",
+        description: "Requires ADMIN authority.",
         security: [{ FishfactsAuthToken: [] }],
         requestBody: {
           required: true,
@@ -337,6 +373,14 @@ export const openApiDocument = {
           },
           "400": { description: "Invalid payload" },
           "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
           "502": { description: "Auth upstream unavailable" },
         },
       },

@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 import { secureHeaders } from "hono/secure-headers";
 import { timing } from "hono/timing";
 import { ZodError } from "zod";
+import { requireAdmin } from "./auth/admin";
 import type { TokenCache } from "./auth/cache";
 import { createAuthMiddleware } from "./auth/middleware";
 import "./auth/types";
@@ -86,7 +87,7 @@ export function createApp({
     createSildelagetCatchRouter({ repository: sildelagetCatchRepository }),
   );
 
-  app.post("/api/events", async (c) => {
+  app.post("/api/events", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => null);
     const parsed = genericEventInputSchema.safeParse(body);
     if (!parsed.success) {
@@ -185,7 +186,7 @@ export function createApp({
     return c.json(record);
   });
 
-  app.post("/api/jobs/cron", async (c) => {
+  app.post("/api/jobs/cron", requireAdmin, async (c) => {
     const results = await jobRunner.runAll("cron");
     return c.json(
       {
@@ -198,7 +199,7 @@ export function createApp({
     );
   });
 
-  app.post("/api/jobs/run", async (c) => {
+  app.post("/api/jobs/run", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const jobId = typeof body.jobId === "string" ? body.jobId : undefined;
     if (jobId) {
@@ -229,7 +230,7 @@ export function createApp({
     return c.json({ ok: true, mode: "all", results }, 202);
   });
 
-  app.get("/api/jobs/state", async (c) => {
+  app.get("/api/jobs/state", requireAdmin, async (c) => {
     const loaded = await jobStateStore.loadAll();
     return c.json({
       ok: true,
@@ -246,7 +247,7 @@ export function createApp({
     });
   });
 
-  app.post("/api/jobs/stop", async (c) => {
+  app.post("/api/jobs/stop", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => ({}));
     if (typeof body.jobId !== "string" || !body.jobId) {
       return c.json({ ok: false, error: "jobId is required" }, 400);

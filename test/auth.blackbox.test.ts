@@ -13,7 +13,8 @@ import { FakeUsableServer } from "./fixtures/fake-usable";
 const APP_PORT = 4420;
 const USABLE_PORT = 4421;
 const FISHFACTS_PORT = 4422;
-const VALID_TOKEN = "433069ad-0dd0-46e5-a832-6960cd6690b5";
+const USER_TOKEN = "433069ad-0dd0-46e5-a832-6960cd6690b5";
+const ADMIN_TOKEN = "c4aabf1e-5d2f-4c9f-9107-6ee95b0b3b72";
 const TRANSFORMER_SECRET = "test-transformer-secret";
 const PUMP_RESET_SECRET = "test-reset-secret";
 const AUTH_TTL_MS = 1000;
@@ -46,7 +47,11 @@ describe("Auth middleware black-box", () => {
   beforeAll(async () => {
     await usable.start();
     await fishfacts.start();
-    fishfacts.addValidToken(VALID_TOKEN);
+    fishfacts.addValidToken(USER_TOKEN);
+    fishfacts.addValidToken(ADMIN_TOKEN, {
+      username: "admin",
+      authorities: ["FISHFACTS", "USER", "ADMIN"],
+    });
     await app.start();
   });
 
@@ -83,16 +88,14 @@ describe("Auth middleware black-box", () => {
     });
   });
 
-  test("valid token passes through to handler with both required headers", async () => {
-    const response = await app.fetch("/api/jobs/state", {
-      headers: { "x-auth-token": VALID_TOKEN },
+  test("valid token passes through to read handler with both required headers", async () => {
+    const response = await app.fetch("/api/jmeldinger", {
+      headers: { "x-auth-token": USER_TOKEN },
     });
     expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body).toMatchObject({ ok: true });
     expect(fishfacts.calls.length).toBe(1);
     expect(fishfacts.calls[0]).toMatchObject({
-      authToken: VALID_TOKEN,
+      authToken: USER_TOKEN,
       application: "FISHFACTS",
     });
   });
@@ -100,10 +103,10 @@ describe("Auth middleware black-box", () => {
   test("cache hit: two valid requests result in exactly one upstream call", async () => {
     const token = "cache-hit-token";
     fishfacts.addValidToken(token);
-    const first = await app.fetch("/api/jobs/state", {
+    const first = await app.fetch("/api/jmeldinger", {
       headers: { "x-auth-token": token },
     });
-    const second = await app.fetch("/api/jobs/state", {
+    const second = await app.fetch("/api/jmeldinger", {
       headers: { "x-auth-token": token },
     });
     expect(first.status).toBe(200);
@@ -114,13 +117,13 @@ describe("Auth middleware black-box", () => {
   test("cache TTL expiry: after sleep > TTL the second request hits upstream again", async () => {
     const token = "ttl-expiry-token";
     fishfacts.addValidToken(token);
-    const first = await app.fetch("/api/jobs/state", {
+    const first = await app.fetch("/api/jmeldinger", {
       headers: { "x-auth-token": token },
     });
     expect(first.status).toBe(200);
     expect(fishfacts.calls.length).toBe(1);
     await Bun.sleep(AUTH_TTL_MS + 200);
-    const second = await app.fetch("/api/jobs/state", {
+    const second = await app.fetch("/api/jmeldinger", {
       headers: { "x-auth-token": token },
     });
     expect(second.status).toBe(200);
@@ -129,7 +132,7 @@ describe("Auth middleware black-box", () => {
 
   test("upstream outage returns 502 auth_upstream_unavailable", async () => {
     fishfacts.simulateOutage();
-    const response = await app.fetch("/api/jobs/state", {
+    const response = await app.fetch("/api/jmeldinger", {
       headers: { "x-auth-token": "fresh-token-not-cached" },
     });
     expect(response.status).toBe(502);
@@ -140,18 +143,89 @@ describe("Auth middleware black-box", () => {
 
   test("invalid tokens are NOT cached: revoked token recovers on next request", async () => {
     const bogus = "revoked-token";
-    const first = await app.fetch("/api/jobs/state", {
+    const first = await app.fetch("/api/jmeldinger", {
       headers: { "x-auth-token": bogus },
     });
     expect(first.status).toBe(401);
     expect(fishfacts.calls.length).toBe(1);
 
     fishfacts.addValidToken(bogus);
-    const second = await app.fetch("/api/jobs/state", {
+    const second = await app.fetch("/api/jmeldinger", {
       headers: { "x-auth-token": bogus },
     });
     expect(second.status).toBe(200);
     expect(fishfacts.calls.length).toBe(2);
+  });
+
+  test("non-admin valid token is forbidden from admin routes", async () => {
+    const headers = { "x-auth-token": USER_TOKEN };
+    const requests = [
+      app.fetch("/api/jobs/state", { headers }),
+      app.fetch("/api/jobs/cron", { method: "POST", headers }),
+      app.fetch("/api/jobs/run", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jobId: "fiskeridir-jmeldinger" }),
+      }),
+      app.fetch("/api/jobs/stop", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jobId: "fiskeridir-jmeldinger" }),
+      }),
+      app.fetch("/api/events", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
+      }),
+      app.fetch("/api/areas", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({}),
+      }),
+    ];
+
+    for (const response of await Promise.all(requests)) {
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: "forbidden",
+        reason: "admin_required",
+      });
+    }
+  });
+
+  test("admin token can access operational handlers", async () => {
+    const headers = { "x-auth-token": ADMIN_TOKEN };
+
+    const state = await app.fetch("/api/jobs/state", { headers });
+    expect(state.status).toBe(200);
+    expect(await state.json()).toMatchObject({ ok: true });
+
+    const stop = await app.fetch("/api/jobs/stop", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ jobId: "fiskeridir-jmeldinger" }),
+    });
+    expect(stop.status).toBe(200);
+    expect(await stop.json()).toMatchObject({
+      ok: true,
+      jobId: "fiskeridir-jmeldinger",
+    });
+
+    const event = await app.fetch("/api/events", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    expect(event.status).toBe(400);
+    expect(await event.json()).toMatchObject({ error: "invalid_payload" });
+
+    const area = await app.fetch("/api/areas", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({}),
+    });
+    expect(area.status).toBe(400);
+    expect(await area.json()).toMatchObject({ error: "invalid_payload" });
   });
 
   test("public routes remain open without x-auth-token", async () => {

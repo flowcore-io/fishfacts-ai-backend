@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
+import { isAdmin, requireAdmin } from "@/auth/admin";
 import { areaGeometrySchema, areaGeometryTypeSchema } from "@/events/contracts";
 import type { PathwayWriter } from "@/pathways";
 import { Hono } from "hono";
 import { ZodError, z } from "zod";
-import { isAdmin, requireAdmin } from "./middleware";
 import type { AreasRepository } from "./repository";
 
 const createInputSchema = z.object({

@@ -87,7 +87,9 @@ describe("J-meldinger jobs black-box", () => {
     await usable.start();
     await fiskeridir.start();
     await fishfacts.start();
-    fishfacts.addValidToken(VALID_AUTH_TOKEN);
+    fishfacts.addValidToken(VALID_AUTH_TOKEN, {
+      authorities: ["FISHFACTS", "USER", "ADMIN"],
+    });
     await webhook.start();
     await app.start();
   });
