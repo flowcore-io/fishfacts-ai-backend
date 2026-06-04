@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { SildelagetCatchEntryObserved } from "@/events/contracts";
-import * as ExcelJS from "exceljs";
+import JSZip from "jszip";
 
 const COLUMNS = {
   innmeldingId: 0,
@@ -68,14 +68,12 @@ export async function parseSildelagetCatchWorkbook(
   input: Buffer | ArrayBuffer | Uint8Array,
   options: ParserOptions,
 ): Promise<SildelagetCatchEntryObserved[]> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(toBuffer(input) as never);
-  const worksheet = workbook.worksheets[0];
-  if (!worksheet) return [];
+  const rows = await readXlsxRows(toBuffer(input));
+  if (rows.length === 0) return [];
 
   const byInnmeldingId = new Map<string, EntryAccumulator>();
 
-  worksheet.eachRow((row) => {
+  rows.forEach((row, rowIndex) => {
     const innmeldingId = textCell(row, COLUMNS.innmeldingId);
     if (!innmeldingId || innmeldingId.toLowerCase() === "innmeldingsid") {
       return;
@@ -103,7 +101,7 @@ export async function parseSildelagetCatchWorkbook(
           reportedTime,
           vesselName,
           registrationMark,
-          firstRowNumber: row.number,
+          firstRowNumber: rowIndex + 1,
         },
         linesByFingerprint: new Map(),
       };
@@ -197,26 +195,120 @@ function toBuffer(input: Buffer | ArrayBuffer | Uint8Array): Buffer {
   return Buffer.from(input.buffer, input.byteOffset, input.byteLength);
 }
 
-function textCell(row: ExcelJS.Row, index: number): string | null {
-  return normalizeText(row.getCell(index + 1).value);
+async function readXlsxRows(buffer: Buffer): Promise<unknown[][]> {
+  const zip = await JSZip.loadAsync(buffer);
+  const sharedStrings = await readSharedStrings(zip);
+  const sheetName =
+    Object.keys(zip.files)
+      .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
+      .sort()[0] ?? null;
+  if (!sheetName) return [];
+  const sheetXml = await zip.file(sheetName)?.async("string");
+  if (!sheetXml) return [];
+  return parseSheetRows(sheetXml, sharedStrings);
 }
 
-function dateCell(row: ExcelJS.Row, index: number): string | null {
-  return normalizeDate(row.getCell(index + 1).value);
+async function readSharedStrings(zip: JSZip): Promise<string[]> {
+  const xml = await zip.file("xl/sharedStrings.xml")?.async("string");
+  if (!xml) return [];
+  const strings: string[] = [];
+  for (const match of xml.matchAll(
+    /<(?:\w+:)?si\b[^>]*>([\s\S]*?)<\/(?:\w+:)?si>/g,
+  )) {
+    const parts = [
+      ...match[1].matchAll(/<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/g),
+    ];
+    strings.push(parts.map((part) => decodeXml(part[1])).join(""));
+  }
+  return strings;
 }
 
-function timeCell(row: ExcelJS.Row, index: number): string | null {
-  return normalizeTime(row.getCell(index + 1).value);
+function parseSheetRows(xml: string, sharedStrings: string[]): unknown[][] {
+  const rows: unknown[][] = [];
+  for (const rowMatch of xml.matchAll(
+    /<(?:\w+:)?row\b[^>]*>([\s\S]*?)<\/(?:\w+:)?row>/g,
+  )) {
+    const row: unknown[] = [];
+    let nextIndex = 0;
+    for (const cellMatch of rowMatch[1].matchAll(
+      /<(?:\w+:)?c\b([^>]*)>([\s\S]*?)<\/(?:\w+:)?c>/g,
+    )) {
+      const attrs = cellMatch[1];
+      const body = cellMatch[2];
+      const explicitIndex = cellIndexFromRef(readXmlAttr(attrs, "r"));
+      const index = explicitIndex ?? nextIndex;
+      row[index] = parseCellValue(attrs, body, sharedStrings);
+      nextIndex = index + 1;
+    }
+    rows.push(row);
+  }
+  return rows;
 }
 
-function numberCell(row: ExcelJS.Row, index: number): number | null {
-  return normalizeNumber(row.getCell(index + 1).value);
+function parseCellValue(
+  attrs: string,
+  body: string,
+  sharedStrings: string[],
+): unknown {
+  const type = readXmlAttr(attrs, "t");
+  const rawValue =
+    body.match(/<(?:\w+:)?v>([\s\S]*?)<\/(?:\w+:)?v>/)?.[1] ??
+    body.match(/<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/)?.[1] ??
+    "";
+  const value = decodeXml(rawValue);
+  if (type === "s") return sharedStrings[Number.parseInt(value, 10)] ?? "";
+  if (type === "str" || type === "inlineStr") return value;
+  const numeric = Number.parseFloat(value);
+  return Number.isFinite(numeric) ? numeric : value;
 }
 
-function rawRowObject(row: ExcelJS.Row): Record<string, unknown> {
+function readXmlAttr(attrs: string, name: string): string | null {
+  return (
+    attrs.match(new RegExp(`(?:^|\\s)${name}="([^"]*)"`))?.[1] ??
+    attrs.match(new RegExp(`(?:^|\\s)${name}='([^']*)'`))?.[1] ??
+    null
+  );
+}
+
+function cellIndexFromRef(ref: string | null): number | null {
+  const letters = ref?.match(/^([A-Z]+)/i)?.[1];
+  if (!letters) return null;
+  let value = 0;
+  for (const char of letters.toUpperCase()) {
+    value = value * 26 + (char.charCodeAt(0) - 64);
+  }
+  return value - 1;
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function textCell(row: unknown[], index: number): string | null {
+  return normalizeText(row[index]);
+}
+
+function dateCell(row: unknown[], index: number): string | null {
+  return normalizeDate(row[index]);
+}
+
+function timeCell(row: unknown[], index: number): string | null {
+  return normalizeTime(row[index]);
+}
+
+function numberCell(row: unknown[], index: number): number | null {
+  return normalizeNumber(row[index]);
+}
+
+function rawRowObject(row: unknown[]): Record<string, unknown> {
   const raw: Record<string, unknown> = {};
   for (const key of RAW_KEYS) {
-    raw[key] = normalizeRaw(row.getCell(COLUMNS[key] + 1).value);
+    raw[key] = normalizeRaw(row[COLUMNS[key]]);
   }
   return raw;
 }

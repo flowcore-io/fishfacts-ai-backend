@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as ExcelJS from "exceljs";
 import { parseSildelagetCatchWorkbook } from "../../src/sildelaget/catch-parser";
+import {
+  makeSildelagetNamespacedWorkbook,
+  sildelagetFixtureRow,
+} from "../fixtures/sildelaget-xlsx.fixture";
 
 const HEADERS = [
   "Innmeldingsid",
@@ -128,6 +132,39 @@ describe("parseSildelagetCatchWorkbook", () => {
     expect(first[0].lines[0].lineKey).toMatch(/^[a-f0-9]{64}$/);
     expect(first[0].entryHash).toBe(second[0].entryHash);
     expect(first[0].lines[0].lineKey).toBe(second[0].lines[0].lineKey);
+  });
+
+  test("parses Sildelaget namespaced XLSX exports", async () => {
+    const buffer = await makeSildelagetNamespacedWorkbook([
+      sildelagetFixtureRow({
+        innmeldingId: "3001",
+        species: "Nordsjøsild",
+        tonnes: 35,
+        vesselName: "Brattskjær",
+        registrationMark: "TR-0346-ND",
+        reportDateSerial: 46174,
+      }),
+    ]);
+
+    const entries = await parseSildelagetCatchWorkbook(buffer, {
+      sourceUrl: "https://example.test/ExportCatchJournal",
+      checkedAt: "2026-06-04T10:00:00.000Z",
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      innmeldingId: "3001",
+      reportedDate: "2026-06-01",
+      reportedTime: "12:00:00",
+      vesselName: "Brattskjær",
+      registrationMark: "TR-0346-ND",
+    });
+    expect(entries[0].lines).toHaveLength(1);
+    expect(entries[0].lines[0]).toMatchObject({
+      species: "Nordsjøsild",
+      tonnes: 35,
+      weightKg: 35000,
+    });
   });
 });
 
