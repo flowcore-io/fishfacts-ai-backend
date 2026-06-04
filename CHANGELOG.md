@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.4...v1.8.0) (2026-06-04)
+
+
+### Features
+
+* enrich sildelaget catches with route areas ([130c8a9](https://github.com/flowcore-io/fishfacts-ai-backend/commit/130c8a92750a7da9c0b8da69230cfd66b974dfcc))
+
 ## [1.7.4](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.3...v1.7.4) (2026-06-04)
 
 
