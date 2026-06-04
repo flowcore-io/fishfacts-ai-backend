@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.2...v1.7.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* require admin for operational routes ([dcf8d7c](https://github.com/flowcore-io/fishfacts-ai-backend/commit/dcf8d7cbf10295187b3303ce3a52688d5d810f40))
+
 ## [1.7.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.1...v1.7.2) (2026-06-04)
 
 
