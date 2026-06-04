@@ -54,6 +54,11 @@ export const SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY =
 const nullableString = z.string().nullable();
 const nullableNumber = z.number().nullable();
 
+export const sildelagetRouteCoordinateSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+});
+
 export const sildelagetCatchLineSchema = z.object({
   lineKey: z.string().regex(/^[a-f0-9]{64}$/),
   lineIndex: z.number().int().min(0),
@@ -67,6 +72,14 @@ export const sildelagetCatchLineSchema = z.object({
   salesType: nullableString,
   gear: nullableString,
   route: nullableString,
+  routeKey: nullableString.default(null),
+  routeFaoArea: nullableString.default(null),
+  routeCenterLatitude: nullableNumber.default(null),
+  routeCenterLongitude: nullableNumber.default(null),
+  routeCoordinates: z
+    .array(sildelagetRouteCoordinateSchema)
+    .nullable()
+    .default(null),
   use: nullableString,
   pct1: nullableNumber,
   pct2: nullableNumber,

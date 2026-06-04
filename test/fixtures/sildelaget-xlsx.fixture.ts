@@ -164,6 +164,7 @@ export function sildelagetFixtureRow(input: {
 export class FakeSildelagetServer {
   private server?: Bun.Server<unknown>;
   private workbook: Uint8Array = new Uint8Array();
+  private routeAreas: Record<string, unknown> = {};
   readonly calls: string[] = [];
 
   constructor(private readonly port: number) {}
@@ -172,12 +173,20 @@ export class FakeSildelagetServer {
     return `${this.baseUrl}/umbraco/api/catchjournal/ExportCatchJournal`;
   }
 
+  get catchAreasUrl() {
+    return `${this.baseUrl}/catchmap/MapService.svc/CatchAreas`;
+  }
+
   private get baseUrl() {
     return `http://127.0.0.1:${this.port}`;
   }
 
   setWorkbook(workbook: Uint8Array) {
     this.workbook = workbook;
+  }
+
+  setRouteAreas(routeAreas: Record<string, unknown>) {
+    this.routeAreas = routeAreas;
   }
 
   async start() {
@@ -189,15 +198,28 @@ export class FakeSildelagetServer {
       fetch: async (request) => {
         const url = new URL(request.url);
         this.calls.push(`${url.pathname}?${url.searchParams.toString()}`);
-        if (url.pathname !== "/umbraco/api/catchjournal/ExportCatchJournal") {
-          return Response.json({ error: "not_found" }, { status: 404 });
+        if (url.pathname === "/catchmap/MapService.svc/CatchAreas") {
+          return Response.json(this.routeAreas);
         }
-        return new Response(this.workbook as unknown as BodyInit, {
-          headers: {
-            "content-type":
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          },
-        });
+        const routeMatch = url.pathname.match(
+          /^\/catchmap\/MapService\.svc\/CatchAreas\/(.+)$/,
+        );
+        if (routeMatch) {
+          const route = routeMatch[1].replace(/^#/, "").padStart(4, "0");
+          const key = `#${route}`;
+          return Response.json(
+            this.routeAreas[key] ? { [key]: this.routeAreas[key] } : {},
+          );
+        }
+        if (url.pathname === "/umbraco/api/catchjournal/ExportCatchJournal") {
+          return new Response(this.workbook as unknown as BodyInit, {
+            headers: {
+              "content-type":
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+          });
+        }
+        return Response.json({ error: "not_found" }, { status: 404 });
       },
     });
   }

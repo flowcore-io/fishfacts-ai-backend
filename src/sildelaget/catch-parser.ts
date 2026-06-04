@@ -119,6 +119,11 @@ export async function parseSildelagetCatchWorkbook(
       salesType: textCell(row, COLUMNS.salesType),
       gear: textCell(row, COLUMNS.gear),
       route: textCell(row, COLUMNS.route),
+      routeKey: null,
+      routeFaoArea: null,
+      routeCenterLatitude: null,
+      routeCenterLongitude: null,
+      routeCoordinates: null,
       use: textCell(row, COLUMNS.use),
       pct1: numberCell(row, COLUMNS.pct1),
       pct2: numberCell(row, COLUMNS.pct2),
@@ -146,7 +151,7 @@ export async function parseSildelagetCatchWorkbook(
       nationality: textCell(row, COLUMNS.nationality),
       rawRow,
     };
-    const fingerprint = stableStringify(line);
+    const fingerprint = stableStringify(journalLineForHash(line));
     if (!entry.linesByFingerprint.has(fingerprint)) {
       entry.linesByFingerprint.set(fingerprint, line);
     }
@@ -157,7 +162,9 @@ export async function parseSildelagetCatchWorkbook(
       ([a], [b]) => a.localeCompare(b),
     );
     const lines = sortedLinePairs.map(([, line], lineIndex) => ({
-      lineKey: sha256(`${entry.innmeldingId}:${stableStringify(line)}`),
+      lineKey: sha256(
+        `${entry.innmeldingId}:${stableStringify(journalLineForHash(line))}`,
+      ),
       lineIndex,
       ...line,
     }));
@@ -167,9 +174,7 @@ export async function parseSildelagetCatchWorkbook(
       reportedTime: entry.reportedTime,
       vesselName: entry.vesselName,
       registrationMark: entry.registrationMark,
-      lines: lines.map(
-        ({ lineIndex: _lineIndex, lineKey: _lineKey, ...line }) => line,
-      ),
+      lines: lines.map((line) => journalLineForHash(line)),
     };
     return {
       innmeldingId: entry.innmeldingId,
@@ -177,7 +182,7 @@ export async function parseSildelagetCatchWorkbook(
       reportedTime: entry.reportedTime,
       vesselName: entry.vesselName,
       registrationMark: entry.registrationMark,
-      entryHash: sha256(stableStringify(entryData)),
+      entryHash: computeSildelagetCatchEntryHash(entryData),
       sourceUrl: entry.sourceUrl,
       checkedAt: entry.checkedAt,
       rawEntry: {
@@ -187,6 +192,38 @@ export async function parseSildelagetCatchWorkbook(
       lines,
     };
   });
+}
+
+export function computeSildelagetCatchEntryHash(
+  entry: Pick<
+    SildelagetCatchEntryObserved,
+    | "innmeldingId"
+    | "reportedDate"
+    | "reportedTime"
+    | "vesselName"
+    | "registrationMark"
+  > & {
+    lines: Array<Record<string, unknown>>;
+  },
+): string {
+  return sha256(stableStringify(entry));
+}
+
+function journalLineForHash(
+  line: Omit<
+    SildelagetCatchEntryObserved["lines"][number],
+    "lineIndex" | "lineKey"
+  >,
+) {
+  const {
+    routeKey: _routeKey,
+    routeFaoArea: _routeFaoArea,
+    routeCenterLatitude: _routeCenterLatitude,
+    routeCenterLongitude: _routeCenterLongitude,
+    routeCoordinates: _routeCoordinates,
+    ...journalLine
+  } = line;
+  return journalLine;
 }
 
 function toBuffer(input: Buffer | ArrayBuffer | Uint8Array): Buffer {

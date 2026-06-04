@@ -106,13 +106,13 @@ JOB_STATE_FRAGMENT_TYPE_ID=11da02d0-b033-43a4-acd1-96f9e193cc86
 
 ## Sildelaget catch backfill
 
-`POST /api/jobs/run` with `jobId=sildelaget-catchjournal` fetches the Sildelaget innmeldingsjournal export and writes `fishfacts-sildelaget-catchjournal.0/sildelaget.catchjournal.entry.observed.0` events to Flowcore. Cron uses `selectedTime=168`; manual backfill can set any positive hour duration, e.g. `8760` for one year.
+`POST /api/jobs/run` with `jobId=sildelaget-catchjournal` fetches the Sildelaget innmeldingsjournal export and writes `fishfacts-sildelaget-catchjournal.0/sildelaget.catchjournal.entry.observed.0` events to Flowcore. Cron uses `selectedTime=168`; manual backfill can set any positive hour duration, e.g. `8760` for one year. Set `backfill=true` to re-emit existing entries, including route metadata imports.
 
 ```sh
 curl -s -X POST "$SERVICE_URL/api/jobs/run" \
   -H "Content-Type: application/json" \
   -H "x-auth-token: $TOKEN" \
-  -d '{"jobId":"sildelaget-catchjournal","args":{"selectedTime":8760}}'
+  -d '{"jobId":"sildelaget-catchjournal","args":{"selectedTime":8760,"backfill":true}}'
 ```
 
 ## J-meldinger Geo API

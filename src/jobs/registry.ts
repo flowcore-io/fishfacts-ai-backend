@@ -42,6 +42,7 @@ export function createJobDefinitions(
         selectedSpecies: z.string().default(""),
         selectedCatchType: z.string().default(""),
         isNor: z.coerce.boolean().default(true),
+        backfill: z.coerce.boolean().default(false),
       }),
       execute: createSildelagetCatchJournalJob(
         env,

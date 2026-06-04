@@ -62,6 +62,12 @@ describe("SildelagetCatchProjector + repository", () => {
       "Makrell",
       "NVG-sild",
     ]);
+    expect(page.rows[0].lines[0]).toMatchObject({
+      routeKey: "#0005",
+      routeFaoArea: "27.4.A",
+      routeCenterLatitude: 60.5,
+      routeCenterLongitude: 2.5,
+    });
   });
 
   test("changed hash replaces all child lines", async () => {
@@ -120,6 +126,17 @@ function makeEntry(
       salesType: "Auksjon",
       gear: "Not",
       route: "5",
+      routeKey: "#0005",
+      routeFaoArea: "27.4.A",
+      routeCenterLatitude: 60.5,
+      routeCenterLongitude: 2.5,
+      routeCoordinates: [
+        { latitude: 60, longitude: 2 },
+        { latitude: 61, longitude: 2 },
+        { latitude: 61, longitude: 3 },
+        { latitude: 60, longitude: 3 },
+        { latitude: 60, longitude: 2 },
+      ],
       use: "Konsum",
       pct1: 10,
       pct2: 20,

@@ -104,7 +104,7 @@ export const jmeldingGeo = pgTable(
       .notNull(),
   },
   (table) => ({
-    geomGistIdx: index("jmelding_geo_geom_gist_idx").on(table.geom),
+    geomGistIdx: index("jmelding_geo_geom_gist_idx").using("gist", table.geom),
     statusIdx: index("jmelding_geo_status_idx").on(table.status),
     hasGeoIdx: index("jmelding_geo_has_geo_idx").on(table.hasGeo),
     fragmentKeyIdx: index("jmelding_geo_fragment_key_idx").on(
@@ -162,6 +162,11 @@ export const sildelagetCatchLines = pgTable(
     salesType: text("sales_type"),
     gear: text("gear"),
     route: text("route"),
+    routeKey: text("route_key"),
+    routeFaoArea: text("route_fao_area"),
+    routeCenterLatitude: doublePrecision("route_center_latitude"),
+    routeCenterLongitude: doublePrecision("route_center_longitude"),
+    routeCoordinates: jsonb("route_coordinates"),
     use: text("use"),
     pct1: doublePrecision("pct1"),
     pct2: doublePrecision("pct2"),
@@ -201,5 +206,8 @@ export const sildelagetCatchLines = pgTable(
       table.innmeldingId,
     ),
     speciesIdx: index("sildelaget_catch_lines_species_idx").on(table.species),
+    routeKeyIdx: index("sildelaget_catch_lines_route_key_idx").on(
+      table.routeKey,
+    ),
   }),
 );

@@ -41,6 +41,10 @@ const envSchema = z.object({
     .default(
       "https://www.sildelaget.no/umbraco/api/catchjournal/ExportCatchJournal",
     ),
+  SILDELAGET_CATCHMAP_AREAS_URL: z
+    .string()
+    .url()
+    .default("https://api.sildelaget.no/catchmap/MapService.svc/CatchAreas"),
   FISHFACTS_API_BASE_URL: z
     .string()
     .url()

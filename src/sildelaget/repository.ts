@@ -25,7 +25,7 @@ export type FishfactsCatchResponse = {
   message: "";
   data: {
     catches: DayCatchResponse[];
-    locations: [];
+    locations: VesselLocationResponse[];
   };
 };
 
@@ -42,6 +42,15 @@ export type CatchResponse = {
   fullWeightKg: number;
   guttedWeightKg: number;
   weightKg: number;
+};
+
+export type VesselLocationResponse = {
+  id: number;
+  latitude: number;
+  longitude: number;
+  speed: number;
+  heading: number;
+  lastUpdate: string;
 };
 
 export type SildelagetCatchLineRecord =
@@ -73,6 +82,14 @@ type AggregateRow = {
   weight_kg: number | string | null;
 };
 
+type LocationRow = {
+  route_key: string | null;
+  route_center_latitude: number | string | null;
+  route_center_longitude: number | string | null;
+  reported_date: string | null;
+  reported_time: string | null;
+};
+
 type EntryDbRow = {
   innmelding_id: string;
   reported_date: string | null;
@@ -102,6 +119,11 @@ type LineDbRow = {
   sales_type: string | null;
   gear: string | null;
   route: string | null;
+  route_key: string | null;
+  route_fao_area: string | null;
+  route_center_latitude: number | string | null;
+  route_center_longitude: number | string | null;
+  route_coordinates: Array<{ latitude: number; longitude: number }> | null;
   use: string | null;
   pct1: number | string | null;
   pct2: number | string | null;
@@ -162,6 +184,11 @@ const LINE_COLUMNS = sql`
   l.sales_type,
   l.gear,
   l.route,
+  l.route_key,
+  l.route_fao_area,
+  l.route_center_latitude,
+  l.route_center_longitude,
+  l.route_coordinates,
   l.use,
   l.pct1,
   l.pct2,
@@ -217,8 +244,26 @@ export class SildelagetCatchRepository {
         .where(eq(sildelagetCatchEntries.innmeldingId, payload.innmeldingId))
         .limit(1);
 
-      if (existing[0]?.entryHash === payload.entryHash) {
-        return false;
+      const sameHash = existing[0]?.entryHash === payload.entryHash;
+      if (sameHash) {
+        if (!payloadIncludesRouteMetadata(payload)) return false;
+        const existingRouteRows = await tx
+          .select({
+            lineKey: sildelagetCatchLines.lineKey,
+            routeKey: sildelagetCatchLines.routeKey,
+            routeFaoArea: sildelagetCatchLines.routeFaoArea,
+            routeCenterLatitude: sildelagetCatchLines.routeCenterLatitude,
+            routeCenterLongitude: sildelagetCatchLines.routeCenterLongitude,
+            routeCoordinates: sildelagetCatchLines.routeCoordinates,
+          })
+          .from(sildelagetCatchLines)
+          .where(eq(sildelagetCatchLines.innmeldingId, payload.innmeldingId));
+        if (
+          routeSignatureFromRows(existingRouteRows) ===
+          routeSignatureFromPayload(payload)
+        ) {
+          return false;
+        }
       }
 
       const now = new Date();
@@ -273,6 +318,11 @@ export class SildelagetCatchRepository {
             salesType: line.salesType,
             gear: line.gear,
             route: line.route,
+            routeKey: line.routeKey,
+            routeFaoArea: line.routeFaoArea,
+            routeCenterLatitude: line.routeCenterLatitude,
+            routeCenterLongitude: line.routeCenterLongitude,
+            routeCoordinates: line.routeCoordinates,
             use: line.use,
             pct1: line.pct1,
             pct2: line.pct2,
@@ -349,13 +399,34 @@ export class SildelagetCatchRepository {
       days.set(row.reported_date, existing);
     }
 
+    const locationRows = await execRows<LocationRow>(
+      this.db,
+      sql`
+        SELECT DISTINCT ON (l.route_key)
+          l.route_key,
+          l.route_center_latitude,
+          l.route_center_longitude,
+          e.reported_date,
+          e.reported_time
+        FROM sildelaget_catch_entries e
+        JOIN sildelaget_catch_lines l ON l.innmelding_id = e.innmelding_id
+        ${whereClause([
+          ...conditions,
+          sql`l.route_key IS NOT NULL`,
+          sql`l.route_center_latitude IS NOT NULL`,
+          sql`l.route_center_longitude IS NOT NULL`,
+        ])}
+        ORDER BY l.route_key, e.reported_date DESC NULLS LAST, e.reported_time DESC NULLS LAST
+      `,
+    );
+
     return {
       code: 0,
       errors: [],
       message: "",
       data: {
         catches: Array.from(days.values()),
-        locations: [],
+        locations: locationRows.map(toVesselLocation).filter(isDefined),
       },
     };
   }
@@ -453,6 +524,9 @@ function fullEntryConditions(
       OR l.species ILIKE ${q}
       OR l.buyer ILIKE ${q}
       OR l.receiver ILIKE ${q}
+      OR l.route ILIKE ${q}
+      OR l.route_key ILIKE ${q}
+      OR l.route_fao_area ILIKE ${q}
     )`);
   }
   if (cursor) {
@@ -535,6 +609,11 @@ function toLineRecord(row: LineDbRow): SildelagetCatchLineRecord {
     salesType: row.sales_type,
     gear: row.gear,
     route: row.route,
+    routeKey: row.route_key,
+    routeFaoArea: row.route_fao_area,
+    routeCenterLatitude: nullableNumberFromDb(row.route_center_latitude),
+    routeCenterLongitude: nullableNumberFromDb(row.route_center_longitude),
+    routeCoordinates: row.route_coordinates,
     use: row.use,
     pct1: nullableNumberFromDb(row.pct1),
     pct2: nullableNumberFromDb(row.pct2),
@@ -565,6 +644,89 @@ function toLineRecord(row: LineDbRow): SildelagetCatchLineRecord {
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
   };
+}
+
+type RouteSignatureRow = {
+  lineKey: string;
+  routeKey: string | null;
+  routeFaoArea: string | null;
+  routeCenterLatitude: number | string | null;
+  routeCenterLongitude: number | string | null;
+  routeCoordinates: unknown;
+};
+
+function payloadIncludesRouteMetadata(
+  payload: SildelagetCatchEntryObserved,
+): boolean {
+  return payload.lines.some(
+    (line) =>
+      line.routeKey !== null ||
+      line.routeFaoArea !== null ||
+      line.routeCenterLatitude !== null ||
+      line.routeCenterLongitude !== null ||
+      line.routeCoordinates !== null,
+  );
+}
+
+function routeSignatureFromPayload(
+  payload: SildelagetCatchEntryObserved,
+): string {
+  return JSON.stringify(
+    payload.lines
+      .map((line) => ({
+        lineKey: line.lineKey,
+        routeKey: line.routeKey,
+        routeFaoArea: line.routeFaoArea,
+        routeCenterLatitude: line.routeCenterLatitude,
+        routeCenterLongitude: line.routeCenterLongitude,
+        routeCoordinates: line.routeCoordinates,
+      }))
+      .sort((a, b) => a.lineKey.localeCompare(b.lineKey)),
+  );
+}
+
+function routeSignatureFromRows(rows: RouteSignatureRow[]): string {
+  return JSON.stringify(
+    rows
+      .map((row) => ({
+        lineKey: row.lineKey,
+        routeKey: row.routeKey,
+        routeFaoArea: row.routeFaoArea,
+        routeCenterLatitude: nullableNumberFromDb(row.routeCenterLatitude),
+        routeCenterLongitude: nullableNumberFromDb(row.routeCenterLongitude),
+        routeCoordinates: row.routeCoordinates,
+      }))
+      .sort((a, b) => a.lineKey.localeCompare(b.lineKey)),
+  );
+}
+
+function toVesselLocation(row: LocationRow): VesselLocationResponse | null {
+  const id = numericRouteId(row.route_key);
+  const latitude = nullableNumberFromDb(row.route_center_latitude);
+  const longitude = nullableNumberFromDb(row.route_center_longitude);
+  if (id === null || latitude === null || longitude === null) return null;
+  return {
+    id,
+    latitude,
+    longitude,
+    speed: 0,
+    heading: 0,
+    lastUpdate: dateTimeToIso(row.reported_date, row.reported_time),
+  };
+}
+
+function numericRouteId(routeKey: string | null): number | null {
+  if (!routeKey) return null;
+  const parsed = Number.parseInt(routeKey.replace(/^#/, ""), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function dateTimeToIso(date: string | null, time: string | null): string {
+  return `${date ?? "1970-01-01"}T${time ?? "00:00:00"}.000Z`;
+}
+
+function isDefined<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
 }
 
 function dateToIso(value: Date | string): string {

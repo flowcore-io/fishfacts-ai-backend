@@ -2,6 +2,11 @@ import type { Env } from "@/env";
 import type { PathwayWriter } from "@/pathways";
 import { parseSildelagetCatchWorkbook } from "@/sildelaget/catch-parser";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
+import {
+  collectSildelagetRouteKeys,
+  enrichSildelagetEntriesWithRouteAreas,
+  fetchSildelagetRouteAreas,
+} from "@/sildelaget/route-areas";
 import type { JobExecutionResult, JobLatestItem, JobState } from "./types";
 
 type Args = {
@@ -9,6 +14,7 @@ type Args = {
   selectedSpecies: string;
   selectedCatchType: string;
   isNor: boolean;
+  backfill?: boolean;
 };
 
 type Context = {
@@ -69,35 +75,49 @@ export function createSildelagetCatchJournalJob(
       await response.arrayBuffer(),
       { sourceUrl, checkedAt },
     );
-    const changedEntries = entries.filter(
-      (entry) => existingHashes.get(entry.innmeldingId) !== entry.entryHash,
-    );
+    const changedEntries = args.backfill
+      ? entries
+      : entries.filter(
+          (entry) => existingHashes.get(entry.innmeldingId) !== entry.entryHash,
+        );
+    const routeKeys = collectSildelagetRouteKeys(changedEntries);
+    const entriesToEmit =
+      routeKeys.size > 0
+        ? enrichSildelagetEntriesWithRouteAreas(
+            changedEntries,
+            await loadRouteAreas(env.SILDELAGET_CATCHMAP_AREAS_URL, context),
+          )
+        : changedEntries;
     const skippedExisting = entries.length - changedEntries.length;
 
     context.reportProgress({
       phase: "emitting-events",
-      message: `Emitting ${changedEntries.length}/${entries.length} changed catch entries`,
+      message: `Emitting ${entriesToEmit.length}/${entries.length} ${
+        args.backfill ? "backfill" : "changed"
+      } catch entries`,
       itemsDiscovered: entries.length,
       detailsProcessed: 0,
-      detailsTotal: changedEntries.length,
+      detailsTotal: entriesToEmit.length,
       skippedExisting,
     });
 
     const latestItems: JobLatestItem[] = [];
-    for (let index = 0; index < changedEntries.length; index += 1) {
+    for (let index = 0; index < entriesToEmit.length; index += 1) {
       if (context.signal.aborted || context.isStopRequested()) {
         throw new Error("Job stopped by request");
       }
-      const entry = changedEntries[index];
+      const entry = entriesToEmit[index];
       await writer.writeSildelagetCatchEntryObserved(entry);
       latestItems.push(toLatestItem(entry));
       await context.checkpoint?.((state) => {
         state.job.progress = {
           phase: "emitting-events",
-          message: `Emitted ${index + 1}/${changedEntries.length} changed catch entries (${skippedExisting} skipped unchanged)`,
+          message: `Emitted ${index + 1}/${entriesToEmit.length} ${
+            args.backfill ? "backfill" : "changed"
+          } catch entries (${skippedExisting} skipped unchanged)`,
           itemsDiscovered: entries.length,
           detailsProcessed: index + 1,
-          detailsTotal: changedEntries.length,
+          detailsTotal: entriesToEmit.length,
           skippedExisting,
           updatedAt: new Date().toISOString(),
         };
@@ -106,17 +126,27 @@ export function createSildelagetCatchJournalJob(
 
     return {
       checkedAt,
-      changed: changedEntries.length > 0,
+      changed: entriesToEmit.length > 0,
       latestItems:
         latestItems.length > 0
           ? latestItems.slice(0, 25)
           : (previous?.latestItems ?? []),
       message:
-        changedEntries.length > 0
-          ? `Parsed ${entries.length} Sildelaget entries; emitted ${changedEntries.length} changed entries`
+        entriesToEmit.length > 0
+          ? `Parsed ${entries.length} Sildelaget entries; emitted ${entriesToEmit.length} ${
+              args.backfill ? "backfill" : "changed"
+            } entries`
           : `Parsed ${entries.length} Sildelaget entries; no changes`,
     };
   };
+}
+
+async function loadRouteAreas(sourceUrl: string, context: Context) {
+  context.reportProgress({
+    phase: "fetching-route-areas",
+    message: "Fetching Sildelaget catch map route areas",
+  });
+  return fetchSildelagetRouteAreas(sourceUrl, context.signal);
 }
 
 function buildExportUrl(baseUrl: string, args: Args): string {

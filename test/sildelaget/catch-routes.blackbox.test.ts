@@ -65,6 +65,7 @@ const app = new AppProcess(APP_PORT, {
   FISHFACTS_API_BASE_URL: fishfacts.baseUrl,
   FISHFACTS_APPLICATION: "FISHFACTS",
   SILDELAGET_CATCHJOURNAL_EXPORT_URL: sildelaget.exportUrl,
+  SILDELAGET_CATCHMAP_AREAS_URL: sildelaget.catchAreasUrl,
 });
 
 describe("Sildelaget catch routes black-box", () => {
@@ -82,6 +83,20 @@ describe("Sildelaget catch routes black-box", () => {
           }),
         ]),
       );
+      sildelaget.setRouteAreas({
+        "#4214": {
+          Rute: "#4214",
+          Center: { Latitude: 61.5, Longitude: 2.25 },
+          FAOArea: "27.4.A",
+          Coordinates: [
+            { Latitude: 61, Longitude: 2 },
+            { Latitude: 62, Longitude: 2 },
+            { Latitude: 62, Longitude: 2.5 },
+            { Latitude: 61, Longitude: 2.5 },
+            { Latitude: 61, Longitude: 2 },
+          ],
+        },
+      });
       cleanupClient = postgres(
         "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test",
         { max: 1 },
@@ -152,6 +167,11 @@ describe("Sildelaget catch routes black-box", () => {
       "Sildelaget manual backfill duration was not sent to export",
     );
     expect(exportCall).toContain("selectedTime=8760");
+    expect(
+      sildelaget.calls.some((call) =>
+        call.startsWith("/catchmap/MapService.svc/CatchAreas"),
+      ),
+    ).toBe(true);
 
     const event = await waitFor(
       () => webhook.last(FLOW_TYPE, EVENT_TYPE),
@@ -167,6 +187,15 @@ describe("Sildelaget catch routes black-box", () => {
       innmeldingId: "api-sild-job-1001",
       vesselName: "Brattskjær",
       registrationMark: "TR-0346-ND",
+      lines: [
+        expect.objectContaining({
+          route: "4214",
+          routeKey: "#4214",
+          routeFaoArea: "27.4.A",
+          routeCenterLatitude: 61.5,
+          routeCenterLongitude: 2.25,
+        }),
+      ],
     });
     expect((event.payload as { sourceUrl?: string }).sourceUrl).toContain(
       "selectedTime=8760",
@@ -181,7 +210,14 @@ describe("Sildelaget catch routes black-box", () => {
         rows: Array<{
           innmeldingId: string;
           vesselName: string;
-          lines: Array<{ species: string; weightKg: number }>;
+          lines: Array<{
+            species: string;
+            weightKg: number;
+            routeKey: string | null;
+            routeFaoArea: string | null;
+            routeCenterLatitude: number | null;
+            routeCenterLongitude: number | null;
+          }>;
         }>;
       };
       return json.rows[0] ?? null;
@@ -190,7 +226,14 @@ describe("Sildelaget catch routes black-box", () => {
       innmeldingId: "api-sild-job-1001",
       vesselName: "Brattskjær",
       lines: [
-        expect.objectContaining({ species: "Nordsjøsild", weightKg: 35000 }),
+        expect.objectContaining({
+          species: "Nordsjøsild",
+          weightKg: 35000,
+          routeKey: "#4214",
+          routeFaoArea: "27.4.A",
+          routeCenterLatitude: 61.5,
+          routeCenterLongitude: 2.25,
+        }),
       ],
     });
   });
@@ -226,11 +269,27 @@ describe("Sildelaget catch routes black-box", () => {
             weightKg: number;
           }>;
         }>;
-        locations: unknown[];
+        locations: Array<{
+          id: number;
+          latitude: number;
+          longitude: number;
+          speed: number;
+          heading: number;
+          lastUpdate: string;
+        }>;
       };
     };
     expect(body).toMatchObject({ code: 0, errors: [], message: "" });
-    expect(body.data.locations).toEqual([]);
+    expect(body.data.locations).toEqual([
+      {
+        id: 5,
+        latitude: 60.5,
+        longitude: 2.5,
+        speed: 0,
+        heading: 0,
+        lastUpdate: "2026-05-28T10:30:00.000Z",
+      },
+    ]);
     expect(body.data.catches).toHaveLength(1);
     expect(body.data.catches[0]).toMatchObject({
       date: "2026-05-28",
@@ -315,6 +374,7 @@ describe("Sildelaget catch routes black-box", () => {
     expect(doc.paths["/api/catch"]).toBeDefined();
     expect(doc.paths["/api/catch/full"]).toBeDefined();
     expect(doc.components.schemas.FishfactsCatchWrapper).toBeDefined();
+    expect(doc.components.schemas.VesselLocationResponse).toBeDefined();
     expect(doc.components.schemas.DayCatchResponse).toBeDefined();
     expect(doc.components.schemas.CatchResponse).toBeDefined();
     expect(doc.components.schemas.SildelagetCatchEntry).toBeDefined();
@@ -384,6 +444,17 @@ function makeEntry(
       salesType: "Auksjon",
       gear: "Not",
       route: "5",
+      routeKey: "#0005",
+      routeFaoArea: "27.4.A",
+      routeCenterLatitude: 60.5,
+      routeCenterLongitude: 2.5,
+      routeCoordinates: [
+        { latitude: 60, longitude: 2 },
+        { latitude: 61, longitude: 2 },
+        { latitude: 61, longitude: 3 },
+        { latitude: 60, longitude: 3 },
+        { latitude: 60, longitude: 2 },
+      ],
       use: "Konsum",
       pct1: null,
       pct2: null,

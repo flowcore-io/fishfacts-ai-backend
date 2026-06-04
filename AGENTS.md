@@ -71,13 +71,13 @@ OpenAPI for the FishFacts login: <https://api-test.fishfacts.fo/v3/api-docs/api-
 
 ## Triggering the Sildelaget catch backfill
 
-The hourly cron uses `selectedTime=168`. For manual backfill, send the duration in hours as `args.selectedTime` (for example `8760` = one year). Body MUST be `{ jobId, args }`.
+The hourly cron uses `selectedTime=168`. For manual backfill, send the duration in hours as `args.selectedTime` (for example `8760` = one year). Set `backfill=true` when existing entries must be re-emitted, e.g. to import route metadata. Body MUST be `{ jobId, args }`.
 
 ```sh
 curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
   -H "Content-Type: application/json" \
   -H "x-auth-token: $TOKEN" \
-  -d '{"jobId":"sildelaget-catchjournal","args":{"selectedTime":8760}}'
+  -d '{"jobId":"sildelaget-catchjournal","args":{"selectedTime":8760,"backfill":true}}'
 ```
 
 Writes still go through Flowcore only; do not add a direct DB fallback.

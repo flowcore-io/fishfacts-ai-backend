@@ -267,7 +267,7 @@ export const openApiDocument = {
                   },
                 },
                 sildelagetBackfill: {
-                  summary: "Manual Sildelaget backfill (8760 hours)",
+                  summary: "Manual Sildelaget backfill and route import",
                   value: {
                     jobId: "sildelaget-catchjournal",
                     args: {
@@ -275,6 +275,7 @@ export const openApiDocument = {
                       selectedSpecies: "",
                       selectedCatchType: "",
                       isNor: true,
+                      backfill: true,
                     },
                   },
                 },
@@ -461,7 +462,16 @@ export const openApiDocument = {
                             ],
                           },
                         ],
-                        locations: [],
+                        locations: [
+                          {
+                            id: 2852,
+                            latitude: 60.7476,
+                            longitude: 2.5143,
+                            speed: 0,
+                            heading: 0,
+                            lastUpdate: "2026-05-28T10:30:00.000Z",
+                          },
+                        ],
                       },
                     },
                   },
@@ -577,6 +587,14 @@ export const openApiDocument = {
                               salesType: "Auksjon",
                               gear: "Not",
                               route: "5",
+                              routeKey: "#0005",
+                              routeFaoArea: "27.4.A",
+                              routeCenterLatitude: 60.5,
+                              routeCenterLongitude: 2.5,
+                              routeCoordinates: [
+                                { latitude: 60, longitude: 2 },
+                                { latitude: 61, longitude: 2 },
+                              ],
                               use: "Konsum",
                               buyer: "Buyer AS",
                               receiver: "Receiver AS",
@@ -1093,6 +1111,12 @@ export const openApiDocument = {
             type: "boolean",
             default: true,
           },
+          backfill: {
+            type: "boolean",
+            default: false,
+            description:
+              "When true, emits all parsed entries for the selected duration so existing rows can be reimported with route metadata.",
+          },
         },
       },
       JobStopRequest: {
@@ -1261,11 +1285,31 @@ export const openApiDocument = {
               },
               locations: {
                 type: "array",
-                items: {},
-                maxItems: 0,
+                items: {
+                  $ref: "#/components/schemas/VesselLocationResponse",
+                },
               },
             },
           },
+        },
+      },
+      VesselLocationResponse: {
+        type: "object",
+        required: [
+          "id",
+          "latitude",
+          "longitude",
+          "speed",
+          "heading",
+          "lastUpdate",
+        ],
+        properties: {
+          id: { type: "integer", format: "int64" },
+          latitude: { type: "number" },
+          longitude: { type: "number" },
+          speed: { type: "number" },
+          heading: { type: "number" },
+          lastUpdate: { type: "string", format: "date-time" },
         },
       },
       DayCatchResponse: {
@@ -1366,6 +1410,27 @@ export const openApiDocument = {
           salesType: { type: "string", nullable: true },
           gear: { type: "string", nullable: true },
           route: { type: "string", nullable: true },
+          routeKey: {
+            type: "string",
+            nullable: true,
+            description:
+              "Normalized Sildelaget catch-map route key, e.g. #0855.",
+          },
+          routeFaoArea: { type: "string", nullable: true },
+          routeCenterLatitude: { type: "number", nullable: true },
+          routeCenterLongitude: { type: "number", nullable: true },
+          routeCoordinates: {
+            type: "array",
+            nullable: true,
+            items: {
+              type: "object",
+              required: ["latitude", "longitude"],
+              properties: {
+                latitude: { type: "number" },
+                longitude: { type: "number" },
+              },
+            },
+          },
           use: { type: "string", nullable: true },
           pct1: { type: "number", nullable: true },
           pct2: { type: "number", nullable: true },
