@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.0...v1.7.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* parse sildelaget namespaced xlsx exports ([8ae9937](https://github.com/flowcore-io/fishfacts-ai-backend/commit/8ae9937fea0203b7a6fb6a04f12f39d648480e88))
+
 ## [1.7.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.6.0...v1.7.0) (2026-06-03)
 
 
