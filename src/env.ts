@@ -98,6 +98,9 @@ const envSchema = z.object({
   CLICKHOUSE_USER: z.string().default("default"),
   CLICKHOUSE_PASSWORD: z.string().default(""),
   CLICKHOUSE_DATABASE: z.string().min(1).default("fishfacts_ais"),
+  // Set to the CH cluster name (Altinity CHI cluster) to enable HA: DDL runs
+  // ON CLUSTER with Replicated*MergeTree engines. Empty ⇒ single-node engines.
+  CLICKHOUSE_CLUSTER: z.string().default(""),
   AIS_CH_BATCH_ROWS: z.coerce.number().int().positive().default(5000),
   AIS_CH_FLUSH_MS: z.coerce.number().int().positive().default(2000),
 });
