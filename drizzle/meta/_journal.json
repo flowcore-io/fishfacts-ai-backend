@@ -57,6 +57,13 @@
       "when": 1781731635012,
       "tag": "0007_worthless_lyja",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781736380036,
+      "tag": "0008_flowery_hairball",
+      "breakpoints": true
     }
   ]
 }

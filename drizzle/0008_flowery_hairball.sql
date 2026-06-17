@@ -1,0 +1,1 @@
+ALTER TABLE "ais_backfill_buckets" ADD COLUMN "projected_cursor" text;

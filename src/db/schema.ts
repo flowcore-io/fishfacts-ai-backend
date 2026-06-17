@@ -256,6 +256,10 @@ export const aisBackfillBuckets = pgTable(
     projectedCount: bigint("projected_count", { mode: "number" })
       .notNull()
       .default(0),
+    // Flowcore pagination cursor of the last page projected to ClickHouse, so the
+    // CH-refill resumes a bucket MID-pagination across retries/restarts instead of
+    // re-fetching from page 1 — a bucket can hold millions of events.
+    projectedCursor: text("projected_cursor"),
     projectedAt: timestamp("projected_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()

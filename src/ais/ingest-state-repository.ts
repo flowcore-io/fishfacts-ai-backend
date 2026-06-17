@@ -252,12 +252,16 @@ export class AisIngestStateRepository {
     bucketHour: string;
     sourceCount: number | null;
     emittedCount: number;
+    projectedCursor: string | null;
+    projectedCount: number;
   } | null> {
     const dir = sql.raw(order === "desc" ? "DESC" : "ASC");
     const result = await this.db.execute<{
       bucket_hour: Date | string;
       source_count: string | number | null;
       emitted_count: string | number;
+      projected_cursor: string | null;
+      projected_count: string | number;
     }>(sql`
       UPDATE ais_backfill_buckets
       SET projection_status = 'in_progress', updated_at = now()
@@ -268,7 +272,7 @@ export class AisIngestStateRepository {
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
-      RETURNING bucket_hour, source_count, emitted_count
+      RETURNING bucket_hour, source_count, emitted_count, projected_cursor, projected_count
     `);
     const rows = (
       Array.isArray(result)
@@ -278,6 +282,8 @@ export class AisIngestStateRepository {
       bucket_hour: Date | string;
       source_count: string | number | null;
       emitted_count: string | number;
+      projected_cursor: string | null;
+      projected_count: string | number;
     }>;
     const row = rows[0];
     if (!row) return null;
@@ -285,7 +291,24 @@ export class AisIngestStateRepository {
       bucketHour: new Date(row.bucket_hour).toISOString(),
       sourceCount: row.source_count === null ? null : Number(row.source_count),
       emittedCount: Number(row.emitted_count),
+      projectedCursor: row.projected_cursor ?? null,
+      projectedCount: Number(row.projected_count),
     };
+  }
+
+  /** Persist mid-bucket projection progress (cursor + count) after each page. */
+  async setProjectionProgress(
+    bucketHour: string,
+    update: { cursor: string | null; projectedCount: number },
+  ): Promise<void> {
+    await this.db
+      .update(aisBackfillBuckets)
+      .set({
+        projectedCursor: update.cursor,
+        projectedCount: update.projectedCount,
+        updatedAt: new Date(),
+      })
+      .where(eq(aisBackfillBuckets.bucketHour, new Date(bucketHour)));
   }
 
   async markProjectionComplete(
