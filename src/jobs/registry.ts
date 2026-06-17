@@ -68,7 +68,9 @@ export function createJobDefinitions(
         batchSize: z.coerce.number().int().min(1).default(1000),
         maxBatches: z.coerce.number().int().min(1).default(50),
         lookbackSeconds: z.coerce.number().int().min(0).default(5),
-        emitConcurrency: z.coerce.number().int().min(1).default(0),
+        // 0 = use env default (AIS_TAIL_EMIT_CONCURRENCY). min(0) so parse({})
+        // — e.g. /api/jobs/state defaultArgs — doesn't reject the sentinel.
+        emitConcurrency: z.coerce.number().int().min(0).default(0),
       }),
       execute: createAisTailJob(env, writer, aisSource, aisIngestState),
     },
@@ -80,9 +82,11 @@ export function createJobDefinitions(
       inputSchema: z.object({
         startAt: z.string().datetime().optional(),
         endAt: z.string().datetime().optional(),
-        bucketConcurrency: z.coerce.number().int().min(1).default(0),
+        // 0 = use env default. min(0) so parse({}) (e.g. /api/jobs/state
+        // defaultArgs) accepts the sentinel instead of throwing on min(1).
+        bucketConcurrency: z.coerce.number().int().min(0).default(0),
         pageSize: z.coerce.number().int().min(1).default(5000),
-        batchSize: z.coerce.number().int().min(1).default(0),
+        batchSize: z.coerce.number().int().min(0).default(0),
         force: z.coerce.boolean().default(false),
         order: z.enum(["asc", "desc"]).default("asc"),
       }),
