@@ -16,19 +16,18 @@ import { EventsFetchCommand, FlowcoreClient } from "@flowcore/sdk";
  * webhook (guards the silent-drop-under-load failure mode).
  */
 export class FlowcoreBucketReader {
-  private readonly fc: FlowcoreClient;
-  private readonly tenant: string;
-  private readonly dataCoreId: string;
+  // Lazily created on first fetch. The SDK validates the API key format in the
+  // FlowcoreClient constructor, so building it at boot would crash the app on a
+  // placeholder/test key — and the reader is only used during a real backfill.
+  private fc: FlowcoreClient | null = null;
 
-  constructor(env: Env) {
-    if (!env.FLOWCORE_DATA_CORE_ID) {
-      throw new Error(
-        "FLOWCORE_DATA_CORE_ID is required for backfill read-back",
-      );
+  constructor(private readonly env: Env) {}
+
+  private client(): FlowcoreClient {
+    if (!this.fc) {
+      this.fc = new FlowcoreClient({ apiKey: this.env.FLOWCORE_API_KEY });
     }
-    this.fc = new FlowcoreClient({ apiKey: env.FLOWCORE_API_KEY });
-    this.tenant = env.FLOWCORE_TENANT;
-    this.dataCoreId = env.FLOWCORE_DATA_CORE_ID;
+    return this.fc;
   }
 
   /**
@@ -44,15 +43,20 @@ export class FlowcoreBucketReader {
     onPage: (payloads: AisPositionFixObserved[]) => Promise<void>,
     stopped?: () => boolean,
   ): Promise<number> {
+    if (!this.env.FLOWCORE_DATA_CORE_ID) {
+      throw new Error(
+        "FLOWCORE_DATA_CORE_ID is required for backfill read-back",
+      );
+    }
     const timeBucket = isoToTimeBucket(bucketHourIso);
     let cursor: string | undefined;
     let total = 0;
     do {
       if (stopped?.()) break;
-      const res = await this.fc.execute(
+      const res = await this.client().execute(
         new EventsFetchCommand({
-          tenant: this.tenant,
-          dataCoreId: this.dataCoreId,
+          tenant: this.env.FLOWCORE_TENANT,
+          dataCoreId: this.env.FLOWCORE_DATA_CORE_ID,
           flowType: AIS_FLOW_TYPE,
           eventTypes: [AIS_POSITION_FIX_OBSERVED_EVENT_TYPE],
           timeBucket,
@@ -72,7 +76,7 @@ export class FlowcoreBucketReader {
   }
 
   close(): void {
-    this.fc.close();
+    this.fc?.close();
   }
 }
 
