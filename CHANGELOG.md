@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.8.0...v1.9.0) (2026-06-17)
+
+
+### Features
+
+* AIS vessel-position pipeline + resilient forward-fill/backfill ([#43](https://github.com/flowcore-io/fishfacts-ai-backend/issues/43)) ([a5e7e22](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a5e7e22f1f598487d646c75f465d2fe22c431d81))
+
 ## [1.8.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.7.4...v1.8.0) (2026-06-04)
 
 
