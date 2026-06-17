@@ -50,6 +50,13 @@
       "when": 1781699354321,
       "tag": "0006_closed_wonder_man",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781731635012,
+      "tag": "0007_worthless_lyja",
+      "breakpoints": true
     }
   ]
 }

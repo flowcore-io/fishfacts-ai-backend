@@ -2,6 +2,7 @@ import type { AisClickhouseRepository } from "@/ais/clickhouse-repository";
 import type { FlowcoreBucketReader } from "@/ais/flowcore-bucket-reader";
 import type { AisIngestStateRepository } from "@/ais/ingest-state-repository";
 import { createAisBackfillJob } from "@/ais/job-backfill";
+import { createAisChRefillJob } from "@/ais/job-ch-refill";
 import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
 import type { Env } from "@/env";
@@ -90,13 +91,24 @@ export function createJobDefinitions(
         force: z.coerce.boolean().default(false),
         order: z.enum(["asc", "desc"]).default("asc"),
       }),
-      execute: createAisBackfillJob(
+      execute: createAisBackfillJob(env, writer, aisSource, aisIngestState),
+    },
+    {
+      id: "ais-position-ch-refill",
+      name: "AIS ClickHouse refill",
+      // Manual/supervisor-driven only (never scheduled). Consumes emitted
+      // buckets and projects them Flowcore → ClickHouse.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        concurrency: z.coerce.number().int().min(0).default(0),
+        pageSize: z.coerce.number().int().min(1).default(5000),
+        order: z.enum(["asc", "desc"]).default("desc"),
+      }),
+      execute: createAisChRefillJob(
         env,
-        writer,
-        aisSource,
-        aisIngestState,
-        aisChRepo,
         aisBucketReader,
+        aisChRepo,
+        aisIngestState,
       ),
     },
   ];

@@ -11,7 +11,6 @@
  *   nohup bun run ais:backfill 365 > backfill.log 2>&1 &
  */
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import type { AisClickhouseRepository } from "../src/ais/clickhouse-repository";
 import { AisIngestStateRepository } from "../src/ais/ingest-state-repository";
 import { createAisBackfillJob } from "../src/ais/job-backfill";
 import { closeAisPool } from "../src/ais/mysql-pool";
@@ -97,12 +96,9 @@ const runtime = createPathwayRuntime(
 );
 const source = createAisSource(env);
 const state = new AisIngestStateRepository(db);
-// ClickHouse skip-check is irrelevant during emit-only (streaming runs later);
-// stub it to 0 so every pending bucket is emitted.
-const chStub = {
-  countBucket: async () => 0,
-} as unknown as AisClickhouseRepository;
-const job = createAisBackfillJob(env, runtime.writer, source, state, chStub);
+// Emit-only: MySQL → Flowcore. ClickHouse projection is the separate CH-refill
+// job (in-app) or scripts/ais-stream.ts for ad-hoc.
+const job = createAisBackfillJob(env, runtime.writer, source, state);
 
 let stop = false;
 let lastEmitted = 0;
