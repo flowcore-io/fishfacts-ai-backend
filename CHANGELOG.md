@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.0...v1.10.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* timeout Flowcore fetch in the CH-refill reader ([#47](https://github.com/flowcore-io/fishfacts-ai-backend/issues/47)) ([d45a497](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d45a4974c67a5d5e74b055f42ad16bf3d80efab5))
+
 ## [1.10.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.9.0...v1.10.0) (2026-06-17)
 
 
