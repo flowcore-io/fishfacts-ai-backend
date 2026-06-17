@@ -1,4 +1,5 @@
 import {
+  bigint,
   boolean,
   customType,
   doublePrecision,
@@ -209,5 +210,47 @@ export const sildelagetCatchLines = pgTable(
     routeKeyIdx: index("sildelaget_catch_lines_route_key_idx").on(
       table.routeKey,
     ),
+  }),
+);
+
+// AIS ingestion control + emission progress (authoritative; run telemetry lives
+// in the Usable job-state fragment). Rows: "config" (control) and "tail" (cursor).
+//
+// "config" row carries the cutover boundary T0 (start_at): the live tail covers
+// [T0, ∞) (forward-fill), the backfill covers [backfill_start_at, T0) order=desc.
+// backfill_enabled is the durable pause/resume switch the supervisor honors.
+export const aisIngestState = pgTable("ais_ingest_state", {
+  id: text("id").primaryKey(), // "config" | "tail"
+  startAt: timestamp("start_at", { withTimezone: true }), // config: cutover T0
+  backfillStartAt: timestamp("backfill_start_at", { withTimezone: true }), // config: oldest bucket (minEventTime)
+  backfillEnabled: boolean("backfill_enabled").notNull().default(false), // config: durable backfill on/off
+  cursor: jsonb("cursor"), // tail: { stampCreated, lastId }
+  emittedCount: bigint("emitted_count", { mode: "number" })
+    .notNull()
+    .default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+// One row per hour-bucket — the unit of backfill resume + parallelism. Each
+// bucket is filled by ONE linear ascending stream to completion (plan §11 #1).
+export const aisBackfillBuckets = pgTable(
+  "ais_backfill_buckets",
+  {
+    bucketHour: timestamp("bucket_hour", { withTimezone: true }).primaryKey(),
+    status: text("status").notNull().default("pending"), // pending|in_progress|complete
+    lastTs: timestamp("last_ts", { withTimezone: true }),
+    lastId: bigint("last_id", { mode: "number" }),
+    sourceCount: bigint("source_count", { mode: "number" }),
+    emittedCount: bigint("emitted_count", { mode: "number" })
+      .notNull()
+      .default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    statusIdx: index("ais_backfill_buckets_status_idx").on(table.status),
   }),
 );

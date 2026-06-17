@@ -206,3 +206,33 @@ export const areaDeletedSchema = z.object({
   deletedAt: z.string().datetime(),
 });
 export type AreaDeleted = z.infer<typeof areaDeletedSchema>;
+
+export const AIS_FLOW_TYPE = "fishfacts-ais.0" as const;
+export const AIS_POSITION_FIX_OBSERVED_EVENT_TYPE =
+  "ais.position.fix.observed.0" as const;
+export const AIS_POSITION_FIX_OBSERVED_PATHWAY =
+  `${AIS_FLOW_TYPE}/${AIS_POSITION_FIX_OBSERVED_EVENT_TYPE}` as const;
+
+/**
+ * A single vessel AIS position fix. Source-agnostic (MySQL replica now, Kafka
+ * later). `sourceId` (= location.id) is the idempotency anchor used as the
+ * ClickHouse ReplacingMergeTree key.
+ */
+export const aisPositionFixObservedSchema = z.object({
+  sourceId: z.number().int().nonnegative(),
+  vesselId: z.number().int(),
+  vesselSourceId: z.number().int().nullable(),
+  latitude: z.number(),
+  longitude: z.number(),
+  speed: z.number().nullable(),
+  heading: z.number().nullable(),
+  course: z.number().nullable(),
+  status: z.string().nullable(),
+  eventTime: z.string().datetime(),
+  ingestTime: z.string().datetime(),
+  observedAt: z.string().datetime(),
+  source: z.string().default("mysql-replica"),
+});
+export type AisPositionFixObserved = z.infer<
+  typeof aisPositionFixObservedSchema
+>;

@@ -1,0 +1,2 @@
+ALTER TABLE "ais_ingest_state" ADD COLUMN "backfill_start_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "ais_ingest_state" ADD COLUMN "backfill_enabled" boolean DEFAULT false NOT NULL;

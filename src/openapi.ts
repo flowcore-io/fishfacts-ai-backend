@@ -30,6 +30,16 @@ export const openApiDocument = {
         "Operator-curated areas (polygons / polylines). Reads are open to authenticated users; writes require the ADMIN authority.",
     },
     {
+      name: "AIS",
+      description:
+        "Read-only AIS vessel position tracks from the ClickHouse read model. Supports multiple vessels and time-window filters (preset window or explicit from/to), server-side downsampled per vessel.",
+    },
+    {
+      name: "AIS control",
+      description:
+        "Admin control of the AIS ingestion pipeline: enable forward-fill (live tail + pump from the cutover hour), start/pause/resume the historical backfill (which self-projects into ClickHouse), and inspect state.",
+    },
+    {
       name: "Docs",
       description: "OpenAPI document and rendered API reference",
     },
@@ -612,6 +622,182 @@ export const openApiDocument = {
           "400": { description: "Invalid query parameters" },
           "401": { description: "Missing or invalid x-auth-token" },
           "502": { description: "Auth upstream unavailable" },
+        },
+      },
+    },
+    "/api/ais/tracks": {
+      get: {
+        tags: ["AIS"],
+        summary: "Vessel position tracks (multi-vessel)",
+        description:
+          "Returns AIS position tracks for one or more vessels over a time window, from the ClickHouse read model. Provide a preset `window` (6h…90d) or explicit `from`/`to`. Each vessel's points are downsampled server-side to ~`maxPointsPerVessel` (latest fix per time bucket) and returned ascending by time; `last` is the most recent fix (heading/speed for the map label).",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "vesselIds",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description:
+              "Comma-separated vessel ids (location.vessel_id). Max 50 per request.",
+            example: "932,6264,1529",
+          },
+          {
+            name: "window",
+            in: "query",
+            schema: {
+              type: "string",
+              enum: ["6h", "24h", "3d", "7d", "14d", "30d", "90d"],
+            },
+            description:
+              "Preset time window ending now. Mutually exclusive with from/to. Defaults to 24h when neither window nor from/to is given.",
+          },
+          {
+            name: "from",
+            in: "query",
+            schema: { type: "string", format: "date-time" },
+            description: "Inclusive lower bound (ISO-8601). Requires `to`.",
+          },
+          {
+            name: "to",
+            in: "query",
+            schema: { type: "string", format: "date-time" },
+            description: "Exclusive upper bound (ISO-8601). Requires `from`.",
+          },
+          {
+            name: "maxPointsPerVessel",
+            in: "query",
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 50000,
+              default: 2000,
+            },
+            description:
+              "Cap on downsampled points returned per vessel (even time-bucket sampling).",
+          },
+          {
+            name: "status",
+            in: "query",
+            schema: { type: "string" },
+            description:
+              "Optional comma-separated AIS status filter (e.g. 'Engaged in Fishing'). Use for the map's fishing-activity filter.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Per-vessel downsampled tracks",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AisTracksResponse" },
+                examples: {
+                  sample: {
+                    value: {
+                      from: "2026-06-13T10:00:00.000Z",
+                      to: "2026-06-16T10:00:00.000Z",
+                      vessels: [
+                        {
+                          vesselId: 932,
+                          pointCount: 2,
+                          last: {
+                            t: "2026-06-16T09:58:18.000Z",
+                            lat: 62.16043,
+                            lon: -6.78112,
+                            speed: 2.6,
+                            heading: 126,
+                            course: null,
+                            status: "Engaged in Fishing",
+                          },
+                          points: [
+                            {
+                              t: "2026-06-16T08:00:00.000Z",
+                              lat: 62.1,
+                              lon: -6.8,
+                              speed: 0,
+                              heading: 90,
+                              course: null,
+                              status: "At anchor",
+                            },
+                            {
+                              t: "2026-06-16T09:58:18.000Z",
+                              lat: 62.16043,
+                              lon: -6.78112,
+                              speed: 2.6,
+                              heading: 126,
+                              course: null,
+                              status: "Engaged in Fishing",
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Invalid query parameters" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
+        },
+      },
+    },
+    "/api/ais/enable": {
+      post: {
+        tags: ["AIS control"],
+        summary: "Enable forward-fill + set the backfill cutover (ADMIN)",
+        description:
+          "Captures the cutover boundary T0 (current hour, floored), records the oldest source event time as the backfill start, and pins the live pump cursor to T0 so it projects live immediately. The live tail (cron) then forward-fills [T0, ∞). Call POST /api/ais/resume to start the historical backfill of [oldest, T0). Requires ADMIN authority.",
+        security: [{ FishfactsAuthToken: [] }],
+        responses: {
+          "200": {
+            description: "Forward-fill enabled; cutover + pump pin set",
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": { description: "Caller lacks the ADMIN authority" },
+        },
+      },
+    },
+    "/api/ais/resume": {
+      post: {
+        tags: ["AIS control"],
+        summary: "Start/resume the historical backfill (ADMIN)",
+        description:
+          "Sets the durable backfill_enabled flag; the in-process supervisor (re)starts the backfill within ~60s, resuming from saved per-bucket state and self-projecting each hour-bucket into ClickHouse newest-first. Requires POST /api/ais/enable first. Requires ADMIN authority.",
+        security: [{ FishfactsAuthToken: [] }],
+        responses: {
+          "200": { description: "Backfill enabled" },
+          "400": { description: "enable not called yet" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": { description: "Caller lacks the ADMIN authority" },
+        },
+      },
+    },
+    "/api/ais/pause": {
+      post: {
+        tags: ["AIS control"],
+        summary: "Pause the historical backfill (ADMIN)",
+        description:
+          "Clears backfill_enabled (durable) and requests stop of any running backfill. Forward-fill (live tail + pump) is unaffected. Resume with POST /api/ais/resume. Requires ADMIN authority.",
+        security: [{ FishfactsAuthToken: [] }],
+        responses: {
+          "200": { description: "Backfill paused" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": { description: "Caller lacks the ADMIN authority" },
+        },
+      },
+    },
+    "/api/ais/state": {
+      get: {
+        tags: ["AIS control"],
+        summary: "AIS pipeline control + progress (ADMIN)",
+        description:
+          "Returns the control config (cutover, backfill start, enabled flag), backfill bucket counts by status, total ClickHouse rows (pre-merge), and whether a backfill run is in flight. Requires ADMIN authority.",
+        security: [{ FishfactsAuthToken: [] }],
+        responses: {
+          "200": { description: "Current AIS pipeline state" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": { description: "Caller lacks the ADMIN authority" },
         },
       },
     },
@@ -1822,6 +2008,58 @@ export const openApiDocument = {
             type: "string",
             description:
               "Flowcore event id for the create/update/delete event emitted by this request.",
+          },
+        },
+      },
+      AisTrackPoint: {
+        type: "object",
+        required: ["t", "lat", "lon", "speed", "heading", "course", "status"],
+        properties: {
+          t: {
+            type: "string",
+            format: "date-time",
+            description: "AIS event time (UTC).",
+          },
+          lat: { type: "number" },
+          lon: { type: "number" },
+          speed: {
+            type: "number",
+            nullable: true,
+            description: "Speed over ground (knots).",
+          },
+          heading: { type: "number", nullable: true },
+          course: { type: "number", nullable: true },
+          status: { type: "string", nullable: true },
+        },
+      },
+      AisVesselTrack: {
+        type: "object",
+        required: ["vesselId", "pointCount", "last", "points"],
+        properties: {
+          vesselId: { type: "integer" },
+          pointCount: { type: "integer" },
+          last: {
+            description: "Most recent fix in the window (null if none).",
+            nullable: true,
+            allOf: [{ $ref: "#/components/schemas/AisTrackPoint" }],
+          },
+          points: {
+            type: "array",
+            description: "Downsampled fixes, ascending by time.",
+            items: { $ref: "#/components/schemas/AisTrackPoint" },
+          },
+        },
+      },
+      AisTracksResponse: {
+        type: "object",
+        required: ["from", "to", "vessels"],
+        properties: {
+          from: { type: "string", format: "date-time" },
+          to: { type: "string", format: "date-time" },
+          vessels: {
+            type: "array",
+            description: "One entry per requested vessel (order preserved).",
+            items: { $ref: "#/components/schemas/AisVesselTrack" },
           },
         },
       },

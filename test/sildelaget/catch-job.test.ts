@@ -34,6 +34,8 @@ describe("sildelaget-catchjournal job", () => {
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",
+      writeAisPositionFixObserved: async () => "unused",
+      writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
 
     const job = createSildelagetCatchJournalJob(
@@ -109,6 +111,8 @@ describe("sildelaget-catchjournal job", () => {
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",
+      writeAisPositionFixObserved: async () => "unused",
+      writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
 
     const job = createSildelagetCatchJournalJob(
@@ -169,6 +173,8 @@ describe("sildelaget-catchjournal job", () => {
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",
+      writeAisPositionFixObserved: async () => "unused",
+      writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
 
     const job = createSildelagetCatchJournalJob(

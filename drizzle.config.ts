@@ -10,5 +10,11 @@ export default defineConfig({
       "postgres://postgres:postgres@127.0.0.1:15432/fishfacts_ai_backend",
   },
   extensionsFilters: ["postgis"],
-  tablesFilter: ["generic_events", "jmelding_*", "sildelaget_*", "!pathway_*"],
+  tablesFilter: [
+    "generic_events",
+    "jmelding_*",
+    "sildelaget_*",
+    "ais_*",
+    "!pathway_*",
+  ],
 });
