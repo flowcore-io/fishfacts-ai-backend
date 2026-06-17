@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.9.0...v1.10.0) (2026-06-17)
+
+
+### Features
+
+* decouple AIS backfill into emit + separate CH-refill jobs ([#45](https://github.com/flowcore-io/fishfacts-ai-backend/issues/45)) ([5caa408](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5caa40859593ade05fcee8883d3fa0089844a66e))
+
 ## [1.9.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.8.0...v1.9.0) (2026-06-17)
 
 
