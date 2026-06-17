@@ -16,17 +16,24 @@
     "db:migrate": "bun scripts/db-migrate.ts",
     "db:migrate:kit": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "services:up": "docker compose up -d postgres",
+    "ch:migrate": "bun scripts/ch-migrate.ts",
+    "ais:backfill": "bun scripts/ais-backfill.ts",
+    "ais:backfill:status": "bun scripts/ais-backfill-status.ts",
+    "ais:stream": "bun scripts/ais-stream.ts",
+    "services:up": "docker compose up -d postgres clickhouse",
     "services:down": "docker compose down",
-    "services:logs": "docker compose logs -f postgres",
-    "services:reset": "docker compose down -v && docker compose up -d postgres"
+    "services:logs": "docker compose logs -f postgres clickhouse",
+    "services:reset": "docker compose down -v && docker compose up -d postgres clickhouse"
   },
   "dependencies": {
+    "@clickhouse/client": "^1.20.0",
     "@flowcore/pathways": "^2.4.2",
+    "@google-cloud/cloud-sql-connector": "^1.11.1",
     "drizzle-orm": "^0.43.1",
     "exceljs": "^4.4.0",
     "hono": "^4.7.8",
     "jszip": "^3.10.1",
+    "mysql2": "^3.22.5",
     "postgres": "^3.4.5",
     "zod": "^3.24.3"
   },

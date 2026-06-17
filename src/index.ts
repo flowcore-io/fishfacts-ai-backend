@@ -1,3 +1,12 @@
+import { AisBackfillSupervisor } from "./ais/backfill-supervisor";
+import { createClickhouseClient } from "./ais/clickhouse-client";
+import { runClickhouseMigrations } from "./ais/clickhouse-migrate";
+import { AisClickhouseRepository } from "./ais/clickhouse-repository";
+import { FlowcoreBucketReader } from "./ais/flowcore-bucket-reader";
+import { AisIngestStateRepository } from "./ais/ingest-state-repository";
+import { closeAisPool } from "./ais/mysql-pool";
+import { AisPositionProjector } from "./ais/projector";
+import { createAisSource } from "./ais/source";
 import { createApp } from "./app";
 import { AreasProjector } from "./areas/projector";
 import { AreasRepository } from "./areas/repository";
@@ -41,22 +50,51 @@ const chunkAssembler = new JMeldingChunkAssembler(
   jmeldingProjector,
   geoProjector,
 );
+
+// AIS read model (ClickHouse). Migration failure is non-fatal so the core
+// service still boots if ClickHouse is down; AIS projection retries via the pump.
+const chClient = createClickhouseClient(env);
+try {
+  await runClickhouseMigrations(env);
+} catch (error) {
+  console.error("[AIS] ClickHouse migration failed (continuing)", {
+    message: error instanceof Error ? error.message : String(error),
+  });
+}
+const aisChRepo = new AisClickhouseRepository(chClient, env);
+const aisProjector = new AisPositionProjector(aisChRepo);
+const aisSource = createAisSource(env);
+const aisIngestState = new AisIngestStateRepository(db);
+// Reads emitted AIS events back from Flowcore (fetch API) so the backfill can
+// project history the forward-only pump cursor will never replay.
+const aisBucketReader = new FlowcoreBucketReader(env);
+
 const pathways = createPathwayRuntime(
   env,
   repository,
   chunkAssembler,
   areasProjector,
   sildelagetCatchProjector,
+  aisProjector,
 );
 const jobs = createJobDefinitions(
   env,
   pathways.writer,
   usable,
   sildelagetCatchRepository,
+  aisSource,
+  aisIngestState,
+  aisChRepo,
+  aisBucketReader,
 );
 const jobStateStore = new JobStateStore(env, usable, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore);
 const jobScheduler = new JobScheduler(env, jobRunner);
+const aisBackfillSupervisor = new AisBackfillSupervisor(
+  env,
+  jobRunner,
+  aisIngestState,
+);
 const fishfactsClient = new FishfactsApiClient(env);
 const authCache = new TokenCache(env.AUTH_CACHE_TTL_MS);
 const app = createApp({
@@ -70,10 +108,15 @@ const app = createApp({
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
+  aisRepository: aisChRepo,
+  aisIngestState,
+  aisSource,
+  db,
 });
 
 await pathways.startPump();
 jobScheduler.start();
+aisBackfillSupervisor.start();
 
 const chunkCleanupInterval = setInterval(
   () => {
@@ -97,7 +140,15 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, async () => {
     clearInterval(chunkCleanupInterval);
     jobScheduler.stop();
+    aisBackfillSupervisor.stop();
     await pathways.stopPump();
+    await aisChRepo.close().catch((error) => {
+      console.error("[AIS] ClickHouse flush/close failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+    aisBucketReader.close();
+    await closeAisPool();
     await client.end();
     process.exit(0);
   });

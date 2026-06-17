@@ -6,9 +6,13 @@ import {
   createPostgresPumpStateManagerFactory,
 } from "@flowcore/pathways";
 import type { z } from "zod";
+import type { AisPositionProjector } from "./ais/projector";
 import type { AreasProjector } from "./areas/projector";
 import type { Env } from "./env";
 import {
+  AIS_FLOW_TYPE,
+  AIS_POSITION_FIX_OBSERVED_EVENT_TYPE,
+  AIS_POSITION_FIX_OBSERVED_PATHWAY,
   ANNOUNCEMENT_FLOW_TYPE,
   AREA_CREATED_EVENT_TYPE,
   AREA_CREATED_PATHWAY,
@@ -17,6 +21,7 @@ import {
   AREA_FLOW_TYPE,
   AREA_UPDATED_EVENT_TYPE,
   AREA_UPDATED_PATHWAY,
+  type AisPositionFixObserved,
   type AreaCreated,
   type AreaDeleted,
   type AreaUpdated,
@@ -30,6 +35,7 @@ import {
   SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE,
   SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY,
   type SildelagetCatchEntryObserved,
+  aisPositionFixObservedSchema,
   areaCreatedSchema,
   areaDeletedSchema,
   areaUpdatedSchema,
@@ -53,6 +59,22 @@ export interface PathwayWriter {
   writeAreaCreated(data: AreaCreated): Promise<string>;
   writeAreaUpdated(data: AreaUpdated): Promise<string>;
   writeAreaDeleted(data: AreaDeleted): Promise<string>;
+  /**
+   * Emit one AIS position fix. `opts.eventTime` is set by the BACKFILL job
+   * (= location.timestamp) so the event lands in its historical hour-bucket and
+   * derives a stable TimeUUID; the live tail omits it (fresh ingest-time id).
+   */
+  writeAisPositionFixObserved(
+    data: AisPositionFixObserved,
+    opts?: { eventTime?: Date },
+  ): Promise<string>;
+  /**
+   * Batch emit (one HTTP request per N fixes; each still a distinct event).
+   * Used by the backfill — webhook latency is per-request, so batching is the
+   * throughput lever. `eventTimeKey: "eventTime"` makes the platform derive each
+   * event's historical TimeUUID + hour-bucket from its own `eventTime` field.
+   */
+  writeAisPositionFixBatch(events: AisPositionFixObserved[]): Promise<string[]>;
 }
 
 export type PathwayRuntime = {
@@ -68,6 +90,7 @@ export function createPathwayRuntime(
   chunkAssembler: JMeldingChunkAssembler,
   areasProjector: AreasProjector,
   sildelagetCatchProjector: SildelagetCatchProjector,
+  aisProjector: AisPositionProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -184,6 +207,24 @@ export function createPathwayRuntime(
     })
     .handle(SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY, async (event) => {
       await sildelagetCatchProjector.handleObserved(
+        event as { eventId: string; payload: unknown },
+      );
+    });
+
+  pathways
+    .register({
+      flowType: AIS_FLOW_TYPE,
+      eventType: AIS_POSITION_FIX_OBSERVED_EVENT_TYPE,
+      schema: aisPositionFixObservedSchema,
+      flowTypeDescription: "FishFacts AIS vessel position events",
+      description: "A vessel AIS position fix was observed",
+      // Projection retry rides the data-pump (reOpen / maxRedeliveryCount /
+      // per-flow-type restart); these cover transient webhook send failures.
+      maxRetries: 4,
+      retryStatusCodes: [500, 502, 503, 504],
+    } as never)
+    .handle(AIS_POSITION_FIX_OBSERVED_PATHWAY, async (event) => {
+      await aisProjector.handleObserved(
         event as { eventId: string; payload: unknown },
       );
     });
@@ -307,6 +348,55 @@ export function createPathwayRuntime(
         });
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
+      async writeAisPositionFixObserved(data, opts) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof AIS_POSITION_FIX_OBSERVED_PATHWAY,
+            input: {
+              data: AisPositionFixObserved;
+              metadata: Record<string, unknown>;
+              options?: { fireAndForget?: boolean; eventTime?: Date };
+            },
+          ) => Promise<string | string[]>
+        )(AIS_POSITION_FIX_OBSERVED_PATHWAY, {
+          data,
+          // Flowcore metadata values must be strings — numeric values make the
+          // webhook return { success: false }.
+          metadata: {
+            source: data.source,
+            vesselId: String(data.vesselId),
+            sourceId: String(data.sourceId),
+          },
+          options: {
+            fireAndForget: true,
+            ...(opts?.eventTime ? { eventTime: opts.eventTime } : {}),
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeAisPositionFixBatch(events) {
+        const ids = await (
+          pathways.write as never as (
+            path: typeof AIS_POSITION_FIX_OBSERVED_PATHWAY,
+            input: {
+              batch: true;
+              data: AisPositionFixObserved[];
+              metadata: Record<string, unknown>;
+              options?: {
+                fireAndForget?: boolean;
+                eventTimeKey?: string;
+              };
+            },
+          ) => Promise<string | string[]>
+        )(AIS_POSITION_FIX_OBSERVED_PATHWAY, {
+          batch: true,
+          data: events,
+          metadata: { source: "mysql-replica" },
+          // Per-event historical time-bucket + TimeUUID from each payload's eventTime.
+          options: { fireAndForget: true, eventTimeKey: "eventTime" },
+        });
+        return Array.isArray(ids) ? ids : [ids];
+      },
     },
     router,
     async startPump() {
@@ -328,13 +418,23 @@ export function createPathwayRuntime(
       await pathways.startPump({
         stateManagerFactory,
         notifier: { type: "websocket" },
+        // The pump reserves `concurrency` events per cycle and pays fixed
+        // per-cycle overhead (ack + setState). AIS is a firehose, so reserve a
+        // large batch to amortize; bufferSize must be >= the largest concurrency
+        // so reserve() can fill. Out-of-order projection is safe (CH orders at
+        // merge/query time). Low-volume flow types stay at default 1.
+        bufferSize: env.AIS_PUMP_BUFFER_SIZE,
+        concurrency: {
+          default: 1,
+          byFlowType: { [AIS_FLOW_TYPE]: env.AIS_PUMP_CONCURRENCY },
+        },
         autoProvision: {
           dataCore: true,
           flowType: true,
           eventType: true,
           pathway: true,
         },
-      });
+      } as never);
     },
     async stopPump() {
       await pathways.stopPump();

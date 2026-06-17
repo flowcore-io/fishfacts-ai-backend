@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -8,8 +9,15 @@ import { requireAdmin } from "./auth/admin";
 import type { TokenCache } from "./auth/cache";
 import { createAuthMiddleware } from "./auth/middleware";
 import "./auth/types";
+import type { AisClickhouseRepository } from "./ais/clickhouse-repository";
+import { isoToTimeBucket } from "./ais/flowcore-bucket-reader";
+import type { AisIngestStateRepository } from "./ais/ingest-state-repository";
+import { createAisRouter } from "./ais/routes";
+import type { AisSource } from "./ais/types";
 import type { AreasRepository } from "./areas/repository";
 import { createAreasRouter } from "./areas/routes";
+import type { Database } from "./db/client";
+import { AIS_FLOW_TYPE } from "./events/contracts";
 import { genericEventInputSchema } from "./events/contracts";
 import type { GenericEventRepository } from "./events/repository";
 import type { FishfactsApiClient } from "./fishfacts/client";
@@ -34,6 +42,10 @@ export type AppDependencies = {
   tilesRepository: TilesRepository;
   areasRepository: AreasRepository;
   sildelagetCatchRepository: SildelagetCatchRepository;
+  aisRepository: AisClickhouseRepository;
+  aisIngestState: AisIngestStateRepository;
+  aisSource: AisSource;
+  db: Database;
 };
 
 export function createApp({
@@ -47,6 +59,10 @@ export function createApp({
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
+  aisRepository,
+  aisIngestState,
+  aisSource,
+  db,
 }: AppDependencies) {
   const app = new Hono();
 
@@ -73,6 +89,7 @@ export function createApp({
   app.use("/api/areas/*", authMiddleware);
   app.use("/api/catch", authMiddleware);
   app.use("/api/catch/*", authMiddleware);
+  app.use("/api/ais/*", authMiddleware);
 
   app.route("/api/tiles", createTilesRouter({ tilesRepository }));
   app.route(
@@ -86,6 +103,7 @@ export function createApp({
     "/api/catch",
     createSildelagetCatchRouter({ repository: sildelagetCatchRepository }),
   );
+  app.route("/api/ais", createAisRouter({ repository: aisRepository }));
 
   app.post("/api/events", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => null);
@@ -257,6 +275,101 @@ export function createApp({
       ok: true,
       jobId: body.jobId,
       message: stopped ? "Stop requested" : "No running job found",
+    });
+  });
+
+  // --- AIS pipeline control ---
+  // enable = start forward-fill (tail+pump from cutover T0) and pin the pump
+  // cursor to T0 so it projects live immediately; resume = start/continue the
+  // historical backfill (the supervisor picks it up within ~60s); pause = durable
+  // stop of the backfill. The backfill self-projects history, so the pump only
+  // ever handles the live tail.
+  app.post("/api/ais/enable", requireAdmin, async (c) => {
+    const now = new Date();
+    const t0 = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        now.getUTCHours(),
+        0,
+        0,
+        0,
+      ),
+    ).toISOString();
+    const minEventTime = await aisSource.minEventTime();
+    await aisIngestState.setControl({
+      startAt: t0,
+      backfillStartAt: minEventTime,
+    });
+    // Best-effort pump-cursor pin. A fresh flow may have no pump_state row yet;
+    // re-run enable once the pump has initialized it (after the first live event).
+    let pumpPinned = 0;
+    try {
+      const res = (await db.execute(
+        sql`UPDATE pathway_pump_state SET time_bucket = ${isoToTimeBucket(t0)}, event_id = NULL WHERE flow_type = ${AIS_FLOW_TYPE}`,
+      )) as unknown as { count?: number };
+      pumpPinned = res?.count ?? 0;
+    } catch (error) {
+      console.error("[AIS] pump cursor pin failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return c.json({
+      ok: true,
+      cutover: t0,
+      backfillStartAt: minEventTime,
+      pumpPinned,
+      message:
+        "Forward-fill enabled (tail+pump from cutover). POST /api/ais/resume to start the historical backfill.",
+    });
+  });
+
+  app.post("/api/ais/pause", requireAdmin, async (c) => {
+    await aisIngestState.setControl({ backfillEnabled: false });
+    const stopped = jobRunner.requestStop("ais-position-backfill");
+    return c.json({
+      ok: true,
+      backfillEnabled: false,
+      stoppedRunning: stopped,
+    });
+  });
+
+  app.post("/api/ais/resume", requireAdmin, async (c) => {
+    const control = await aisIngestState.getControl();
+    if (!control.startAt || !control.backfillStartAt) {
+      return c.json(
+        { ok: false, error: "call POST /api/ais/enable first" },
+        400,
+      );
+    }
+    await aisIngestState.setControl({ backfillEnabled: true });
+    return c.json({
+      ok: true,
+      backfillEnabled: true,
+      message:
+        "Backfill will (re)start within ~60s and resume from saved bucket state.",
+    });
+  });
+
+  app.get("/api/ais/state", requireAdmin, async (c) => {
+    const control = await aisIngestState.getControl();
+    const buckets = await aisIngestState.countByStatus();
+    let clickhouseRows: number | null = null;
+    try {
+      clickhouseRows = await aisRepository.totalRows();
+    } catch {
+      clickhouseRows = null;
+    }
+    return c.json({
+      ok: true,
+      control,
+      buckets,
+      clickhouseRows,
+      backfillRunning: jobRunner
+        .getRunningJobIds()
+        .includes("ais-position-backfill"),
+      now: new Date().toISOString(),
     });
   });
 

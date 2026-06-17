@@ -6,3 +6,8 @@ coverage
 !.env.example
 .DS_Store
 .claude/
+secrets/
+*.log
+backfill.lock
+scripts/.ais-stream-cursor
+.playwright-cli/
