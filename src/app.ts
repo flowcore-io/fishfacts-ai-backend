@@ -355,20 +355,22 @@ export function createApp({
   app.get("/api/ais/state", requireAdmin, async (c) => {
     const control = await aisIngestState.getControl();
     const buckets = await aisIngestState.countByStatus();
+    const projection = await aisIngestState.countByProjectionStatus();
     let clickhouseRows: number | null = null;
     try {
       clickhouseRows = await aisRepository.totalRows();
     } catch {
       clickhouseRows = null;
     }
+    const running = jobRunner.getRunningJobIds();
     return c.json({
       ok: true,
       control,
-      buckets,
+      buckets, // emit: MySQL → Flowcore
+      projection, // CH refill: Flowcore → ClickHouse
       clickhouseRows,
-      backfillRunning: jobRunner
-        .getRunningJobIds()
-        .includes("ais-position-backfill"),
+      backfillRunning: running.includes("ais-position-backfill"),
+      chRefillRunning: running.includes("ais-position-ch-refill"),
       now: new Date().toISOString(),
     });
   });

@@ -219,7 +219,13 @@ export class AisIngestStateRepository {
 
   async markBucketComplete(
     bucketHour: string,
-    update: { sourceCount: number; emittedCount: number },
+    update: {
+      sourceCount: number;
+      emittedCount: number;
+      // Empty buckets (sourceCount 0) have nothing to project — mark projection
+      // complete in the same write so the CH-refill job skips them.
+      projectionComplete?: boolean;
+    },
   ): Promise<void> {
     await this.db
       .update(aisBackfillBuckets)
@@ -228,8 +234,123 @@ export class AisIngestStateRepository {
         sourceCount: update.sourceCount,
         emittedCount: update.emittedCount,
         updatedAt: new Date(),
+        ...(update.projectionComplete
+          ? { projectionStatus: "complete", projectedAt: new Date() }
+          : {}),
       })
       .where(eq(aisBackfillBuckets.bucketHour, new Date(bucketHour)));
+  }
+
+  // --- projection lifecycle (CH-refill job: Flowcore → ClickHouse) ---
+
+  /**
+   * Atomically claim the next bucket that is emitted (status complete) but not
+   * yet projected, marking projection_status in_progress. SKIP LOCKED lets the
+   * refill workers run in parallel and independently of the emit workers.
+   */
+  async claimNextProjectionBucket(order: "asc" | "desc" = "desc"): Promise<{
+    bucketHour: string;
+    sourceCount: number | null;
+    emittedCount: number;
+  } | null> {
+    const dir = sql.raw(order === "desc" ? "DESC" : "ASC");
+    const result = await this.db.execute<{
+      bucket_hour: Date | string;
+      source_count: string | number | null;
+      emitted_count: string | number;
+    }>(sql`
+      UPDATE ais_backfill_buckets
+      SET projection_status = 'in_progress', updated_at = now()
+      WHERE bucket_hour = (
+        SELECT bucket_hour FROM ais_backfill_buckets
+        WHERE status = 'complete' AND projection_status = 'pending'
+        ORDER BY bucket_hour ${dir}
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING bucket_hour, source_count, emitted_count
+    `);
+    const rows = (
+      Array.isArray(result)
+        ? result
+        : ((result as { rows?: unknown[] }).rows ?? [])
+    ) as Array<{
+      bucket_hour: Date | string;
+      source_count: string | number | null;
+      emitted_count: string | number;
+    }>;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      bucketHour: new Date(row.bucket_hour).toISOString(),
+      sourceCount: row.source_count === null ? null : Number(row.source_count),
+      emittedCount: Number(row.emitted_count),
+    };
+  }
+
+  async markProjectionComplete(
+    bucketHour: string,
+    projectedCount: number,
+  ): Promise<void> {
+    await this.db
+      .update(aisBackfillBuckets)
+      .set({
+        projectionStatus: "complete",
+        projectedCount,
+        projectedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(aisBackfillBuckets.bucketHour, new Date(bucketHour)));
+  }
+
+  /** Re-arm a claimed projection that didn't finish (e.g. short read) for retry. */
+  async resetProjectionToPending(bucketHour: string): Promise<void> {
+    await this.db
+      .update(aisBackfillBuckets)
+      .set({ projectionStatus: "pending", updatedAt: new Date() })
+      .where(eq(aisBackfillBuckets.bucketHour, new Date(bucketHour)));
+  }
+
+  /** Re-arm projections left in_progress by a crashed/stopped prior run. */
+  async resetInProgressProjectionsToPending(): Promise<void> {
+    await this.db
+      .update(aisBackfillBuckets)
+      .set({ projectionStatus: "pending", updatedAt: new Date() })
+      .where(eq(aisBackfillBuckets.projectionStatus, "in_progress"));
+  }
+
+  /** Count of buckets emitted-but-not-yet-projected (CH-refill backlog). */
+  async pendingProjectionCount(): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(aisBackfillBuckets)
+      .where(
+        sql`${aisBackfillBuckets.status} = 'complete' AND ${aisBackfillBuckets.projectionStatus} = 'pending'`,
+      );
+    return rows[0]?.count ?? 0;
+  }
+
+  async countByProjectionStatus(): Promise<{
+    pending: number;
+    complete: number;
+    total: number;
+  }> {
+    const rows = await this.db
+      .select({
+        status: aisBackfillBuckets.projectionStatus,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(aisBackfillBuckets)
+      .groupBy(aisBackfillBuckets.projectionStatus);
+    let pending = 0;
+    let complete = 0;
+    let total = 0;
+    for (const r of rows) {
+      total += r.count;
+      if (r.status === "pending") pending = r.count;
+      if (r.status === "complete") complete = r.count;
+    }
+    return { pending, complete, total };
   }
 
   async countByStatus(): Promise<{

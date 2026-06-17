@@ -235,22 +235,36 @@ export const aisIngestState = pgTable("ais_ingest_state", {
 
 // One row per hour-bucket — the unit of backfill resume + parallelism. Each
 // bucket is filled by ONE linear ascending stream to completion (plan §11 #1).
+//
+// TWO independent lifecycles per bucket (decoupled producer/consumer):
+//   status            — EMIT: MySQL → Flowcore (pending|in_progress|complete)
+//   projectionStatus  — PROJECT: Flowcore → ClickHouse (pending|in_progress|complete)
+// The emit (backfill) job drives `status`; the CH-refill job claims buckets where
+// status='complete' AND projection_status='pending' and drives `projectionStatus`.
 export const aisBackfillBuckets = pgTable(
   "ais_backfill_buckets",
   {
     bucketHour: timestamp("bucket_hour", { withTimezone: true }).primaryKey(),
-    status: text("status").notNull().default("pending"), // pending|in_progress|complete
+    status: text("status").notNull().default("pending"), // emit: pending|in_progress|complete
+    projectionStatus: text("projection_status").notNull().default("pending"), // project: pending|in_progress|complete
     lastTs: timestamp("last_ts", { withTimezone: true }),
     lastId: bigint("last_id", { mode: "number" }),
     sourceCount: bigint("source_count", { mode: "number" }),
     emittedCount: bigint("emitted_count", { mode: "number" })
       .notNull()
       .default(0),
+    projectedCount: bigint("projected_count", { mode: "number" })
+      .notNull()
+      .default(0),
+    projectedAt: timestamp("projected_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
   },
   (table) => ({
     statusIdx: index("ais_backfill_buckets_status_idx").on(table.status),
+    projectionStatusIdx: index("ais_backfill_buckets_projection_status_idx").on(
+      table.projectionStatus,
+    ),
   }),
 );

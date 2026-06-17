@@ -79,10 +79,15 @@ const envSchema = z.object({
   // Events per Flowcore batch ingest request. Webhook latency is per-request, so
   // bigger batches dominate throughput (~25/req ≈ 290/s vs ~500/req ≈ 3600/s).
   AIS_BACKFILL_BATCH_SIZE: z.coerce.number().int().positive().default(500),
+  // Concurrent workers for the CH-refill job (Flowcore → ClickHouse projection),
+  // independent of the emit job's bucket concurrency.
+  AIS_CH_REFILL_CONCURRENCY: z.coerce.number().int().positive().default(4),
   // Hard timeout for a single batch emit. The SDK webhook fetch has no timeout,
   // so a hung connection would stall a worker forever; on timeout we throw →
-  // the per-batch retry kicks in instead of wedging.
-  AIS_EMIT_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // the per-batch retry kicks in instead of wedging. The webhook ACKs the AIS
+  // batch path in ~3s p99 (Groundcover), so ~10s is ample; a longer wait just
+  // parks a worker when the client runtime is starved.
+  AIS_EMIT_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   // Data-pump reserves `concurrency` events per process cycle and pays per-cycle
   // overhead (acknowledge + setState Postgres write). Small values throttle hard
   // (~8/cycle ≈ 200/s); reserve thousands to amortize. Must be <= AIS_PUMP_BUFFER_SIZE.

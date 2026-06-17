@@ -1,9 +1,7 @@
 import type { Env } from "@/env";
 import type { JobExecutionResult, JobLatestItem, JobState } from "@/jobs/types";
 import type { PathwayWriter } from "@/pathways";
-import type { AisClickhouseRepository } from "./clickhouse-repository";
 import { toLatestItem, toPayload } from "./emit";
-import type { FlowcoreBucketReader } from "./flowcore-bucket-reader";
 import type { AisIngestStateRepository } from "./ingest-state-repository";
 import type { AisSource } from "./types";
 
@@ -32,24 +30,20 @@ type Context = {
 };
 
 /**
- * Backfill: emit every historical fix through Flowcore, bucketed by hour.
- * Each hour-bucket is filled by ONE linear ascending stream to completion
- * (plan constraint #1 — prevents the consumer cursor from skipping within a
- * bucket); buckets are parallelized across workers. eventTime override =
+ * Backfill — EMIT ONLY: stream every historical fix MySQL → Flowcore, bucketed
+ * by hour. Each hour-bucket is filled by ONE linear ascending stream to
+ * completion (plan constraint #1 — prevents the consumer cursor skipping within
+ * a bucket); buckets are parallelized across workers. eventTime override =
  * location.timestamp ⇒ correct historical bucket + stable TimeUUID (idempotent
- * re-run). A per-bucket source-vs-ClickHouse count skip-check makes re-runs
- * cheap (data is fully additive).
+ * re-run). Projection into ClickHouse is a SEPARATE job (createAisChRefillJob)
+ * that consumes emitted buckets — decoupled so the read-back/CH inserts never
+ * block the emit on the shared runtime.
  */
 export function createAisBackfillJob(
   env: Env,
   writer: PathwayWriter,
   source: AisSource,
   state: AisIngestStateRepository,
-  chRepo: AisClickhouseRepository,
-  // When provided, each bucket is read back from Flowcore and projected to
-  // ClickHouse after emit (the live pump can't replay buckets behind its
-  // cursor). Omitted by the standalone emit-only runner (scripts/ais-backfill.ts).
-  reader?: FlowcoreBucketReader,
 ) {
   return async function runAisBackfillJob(
     _previous: JobState | undefined,
@@ -85,25 +79,14 @@ export function createAisBackfillJob(
 
         const sourceCount = await source.countBucket(bucket.bucketHour);
         if (sourceCount === 0) {
+          // Nothing to emit ⇒ nothing to project either.
           await state.markBucketComplete(bucket.bucketHour, {
             sourceCount: 0,
             emittedCount: 0,
+            projectionComplete: true,
           });
           bucketsDone += 1;
           continue;
-        }
-
-        // Additive skip-check: already fully projected to ClickHouse?
-        if (!args.force) {
-          const chCount = await chRepo.countBucket(bucket.bucketHour);
-          if (chCount >= sourceCount) {
-            await state.markBucketComplete(bucket.bucketHour, {
-              sourceCount,
-              emittedCount: bucket.emittedCount,
-            });
-            bucketsDone += 1;
-            continue;
-          }
         }
 
         // One linear ascending stream for this bucket, to completion.
@@ -158,44 +141,8 @@ export function createAisBackfillJob(
 
         if (stopped()) return;
 
-        // Self-project: read the bucket back from Flowcore → ClickHouse. The live
-        // pump only advances forward, so it never replays this historical bucket;
-        // reading back from Flowcore (not MySQL) keeps the write path
-        // Flowcore-sourced (CQRS) and reconciles against the source count,
-        // catching webhook silent-drops under load. CH dedups via
-        // ReplacingMergeTree, so re-projecting on retry is safe. On a shortfall
-        // (e.g. Flowcore read lag), leave the bucket non-complete: the next
-        // supervisor run re-arms it (resetInProgressToPending) and the skip-check
-        // re-projects only the gap.
-        if (reader) {
-          let projected = 0;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            if (stopped()) return;
-            projected = 0;
-            await reader.fetchBucket(
-              bucket.bucketHour,
-              args.pageSize,
-              async (payloads) => {
-                for (const p of payloads) await chRepo.enqueue(p);
-                projected += payloads.length;
-              },
-              stopped,
-            );
-            await chRepo.flush();
-            if (projected >= sourceCount || stopped()) break;
-            await new Promise((r) => setTimeout(r, 2000)); // Flowcore read lag
-          }
-          if (stopped()) return;
-          if (projected < sourceCount) {
-            context.reportProgress({
-              phase: "backfilling",
-              message: `bucket ${bucket.bucketHour}: projected ${projected}/${sourceCount} — deferring (retry next run)`,
-              detailsProcessed: emittedTotal,
-            });
-            continue; // leave in_progress; re-armed + re-projected next run
-          }
-        }
-
+        // Emit done ⇒ mark the bucket emitted (status complete). projection_status
+        // stays 'pending' for the CH-refill job to pick up.
         await state.markBucketComplete(bucket.bucketHour, {
           sourceCount,
           emittedCount: bucketEmitted,
@@ -203,7 +150,7 @@ export function createAisBackfillJob(
         bucketsDone += 1;
         context.reportProgress({
           phase: "backfilling",
-          message: `completed ${bucketsDone}/${buckets.length} buckets`,
+          message: `emitted ${bucketsDone}/${buckets.length} buckets`,
           detailsProcessed: emittedTotal,
           detailsTotal: buckets.length,
         });
