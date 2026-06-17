@@ -6,6 +6,35 @@ import {
 } from "@/events/contracts";
 import { EventsFetchCommand, FlowcoreClient } from "@flowcore/sdk";
 
+// A Flowcore fetch page should return in a few seconds; the SDK has no timeout,
+// so a stalled connection would block a refill worker forever. Race each page
+// against this deadline → on timeout we throw, the CH-refill retries/defers the
+// bucket, and the worker is freed (the dangling request is abandoned).
+const FETCH_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  what: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${what} timed out after ${ms}ms`)),
+      ms,
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 /**
  * Reads AIS events back from Flowcore by hour-bucket via the fetch API
  * (`EventsFetchCommand`), independent of the data-pump cursor. The backfill job
@@ -53,16 +82,20 @@ export class FlowcoreBucketReader {
     let total = 0;
     do {
       if (stopped?.()) break;
-      const res = await this.client().execute(
-        new EventsFetchCommand({
-          tenant: this.env.FLOWCORE_TENANT,
-          dataCoreId: this.env.FLOWCORE_DATA_CORE_ID,
-          flowType: AIS_FLOW_TYPE,
-          eventTypes: [AIS_POSITION_FIX_OBSERVED_EVENT_TYPE],
-          timeBucket,
-          pageSize,
-          cursor,
-        }),
+      const res = await withTimeout(
+        this.client().execute(
+          new EventsFetchCommand({
+            tenant: this.env.FLOWCORE_TENANT,
+            dataCoreId: this.env.FLOWCORE_DATA_CORE_ID,
+            flowType: AIS_FLOW_TYPE,
+            eventTypes: [AIS_POSITION_FIX_OBSERVED_EVENT_TYPE],
+            timeBucket,
+            pageSize,
+            cursor,
+          }),
+        ),
+        FETCH_TIMEOUT_MS,
+        `flowcore fetch ${timeBucket}`,
       );
       if (res.events.length > 0) {
         await onPage(
