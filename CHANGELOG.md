@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.1...v1.10.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* resume CH-refill mid-bucket via persisted cursor (handle huge buckets) ([#49](https://github.com/flowcore-io/fishfacts-ai-backend/issues/49)) ([7cc0212](https://github.com/flowcore-io/fishfacts-ai-backend/commit/7cc02127f7d08d1fe494b44e6d8609d8a777f496))
+
 ## [1.10.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.0...v1.10.1) (2026-06-17)
 
 
