@@ -55,57 +55,51 @@ export function createAisChRefillJob(
       while (!stopped()) {
         const bucket = await state.claimNextProjectionBucket(order);
         if (!bucket) break;
-        const expected = bucket.sourceCount ?? bucket.emittedCount;
 
-        // Read the bucket back from Flowcore → ClickHouse. Retry transient
-        // fetch/insert errors + Flowcore read-lag (fetched < expected) a few times.
-        let projected = 0;
-        for (let attempt = 1; attempt <= 4; attempt++) {
-          if (stopped()) return;
-          projected = 0;
-          try {
-            await reader.fetchBucket(
-              bucket.bucketHour,
-              args.pageSize,
-              async (payloads) => {
-                for (const p of payloads) await chRepo.enqueue(p);
-                projected += payloads.length;
-              },
-              stopped,
-            );
-            await chRepo.flush();
-          } catch (err) {
-            console.error(
-              `[ais-ch-refill] bucket ${bucket.bucketHour} fetch/insert failed (attempt ${attempt}): ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-            await new Promise((r) => setTimeout(r, 2000));
-            continue;
-          }
-          if (projected >= expected || stopped()) break;
-          await new Promise((r) => setTimeout(r, 2000)); // Flowcore read lag
-        }
-
-        if (stopped()) return;
-        if (projected >= expected) {
-          await state.markProjectionComplete(bucket.bucketHour, projected);
-          projectedTotal += projected;
-          bucketsDone += 1;
+        // Stream the bucket Flowcore → ClickHouse, RESUMING from the persisted
+        // cursor (a bucket can hold millions of events). Each page: insert →
+        // persist the cursor + count, so a deferred bucket continues mid-pagination
+        // next run instead of restarting. The reader retries a stalled page on the
+        // SAME cursor (never restarts the bucket). On a page that exhausts retries,
+        // we leave the bucket in_progress (cursor saved) and move on — the next
+        // run re-arms in_progress → pending and resumes from the cursor.
+        let projected = bucket.projectedCount;
+        try {
+          await reader.fetchBucket(
+            bucket.bucketHour,
+            args.pageSize,
+            bucket.projectedCursor ?? undefined,
+            async (payloads, nextCursor) => {
+              for (const p of payloads) await chRepo.enqueue(p);
+              await chRepo.flush();
+              projected += payloads.length;
+              await state.setProjectionProgress(bucket.bucketHour, {
+                cursor: nextCursor ?? null,
+                projectedCount: projected,
+              });
+            },
+            stopped,
+          );
+        } catch (err) {
           context.reportProgress({
             phase: "projecting",
-            message: `projected ${bucketsDone} buckets (${bucket.bucketHour}: ${projected})`,
+            message: `bucket ${bucket.bucketHour}: deferred at ${projected} rows — ${
+              err instanceof Error ? err.message : String(err)
+            }`,
             detailsProcessed: projectedTotal,
           });
-        } else {
-          // Short read after retries → re-arm for the next run.
-          await state.resetProjectionToPending(bucket.bucketHour);
-          context.reportProgress({
-            phase: "projecting",
-            message: `bucket ${bucket.bucketHour}: projected ${projected}/${expected} — deferring`,
-            detailsProcessed: projectedTotal,
-          });
+          continue; // leave in_progress (cursor saved); re-armed + resumed next run
         }
+
+        if (stopped()) return; // stop mid-bucket — cursor persisted, resumes later
+        await state.markProjectionComplete(bucket.bucketHour, projected);
+        projectedTotal += projected;
+        bucketsDone += 1;
+        context.reportProgress({
+          phase: "projecting",
+          message: `projected ${bucketsDone} buckets (${bucket.bucketHour}: ${projected})`,
+          detailsProcessed: projectedTotal,
+        });
       }
     };
 

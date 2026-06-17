@@ -6,11 +6,15 @@ import {
 } from "@/events/contracts";
 import { EventsFetchCommand, FlowcoreClient } from "@flowcore/sdk";
 
-// A Flowcore fetch page should return in a few seconds; the SDK has no timeout,
-// so a stalled connection would block a refill worker forever. Race each page
-// against this deadline → on timeout we throw, the CH-refill retries/defers the
-// bucket, and the worker is freed (the dangling request is abandoned).
-const FETCH_TIMEOUT_MS = 20_000;
+// A Flowcore fetch page returns in ~0.8s p99 / ~7.5s max (Groundcover). The SDK
+// has no timeout, so an occasional STALLED connection (no response) would block a
+// worker forever — race each page against a generous deadline (well above the
+// 7.5s max) and retry the SAME page (cursor unchanged) on timeout/error, like the
+// local ais-stream script. We never restart the whole bucket: a bucket can hold
+// millions of events, and the caller persists the cursor per page so a deferred
+// bucket resumes mid-pagination across runs.
+const FETCH_TIMEOUT_MS = 30_000;
+const PAGE_MAX_ATTEMPTS = 12;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -60,16 +64,21 @@ export class FlowcoreBucketReader {
   }
 
   /**
-   * Paginate one hour-bucket, invoking `onPage` with each page of payloads.
-   * `bucketHourIso` is the hour-floored ISO timestamp (as enumerated by the
-   * backfill); it is converted to the Flowcore `YYYYMMDDHH0000` time-bucket name.
-   * Returns the total number of events fetched. `stopped` aborts between pages
-   * (the caller keeps the bucket non-complete so it resumes later).
+   * Paginate one hour-bucket from `startCursor`, invoking
+   * `onPage(payloads, nextCursor)` per page so the caller can persist the cursor
+   * after each page is durably handled (resume mid-bucket across runs). Each page
+   * is fetched with a per-page timeout + retry on the SAME cursor (never restart
+   * the bucket). `bucketHourIso` is converted to the `YYYYMMDDHH0000` bucket name.
+   * Returns the number of events fetched this call. `stopped` aborts between pages.
    */
   async fetchBucket(
     bucketHourIso: string,
     pageSize: number,
-    onPage: (payloads: AisPositionFixObserved[]) => Promise<void>,
+    startCursor: string | undefined,
+    onPage: (
+      payloads: AisPositionFixObserved[],
+      nextCursor: string | undefined,
+    ) => Promise<void>,
     stopped?: () => boolean,
   ): Promise<number> {
     if (!this.env.FLOWCORE_DATA_CORE_ID) {
@@ -78,34 +87,58 @@ export class FlowcoreBucketReader {
       );
     }
     const timeBucket = isoToTimeBucket(bucketHourIso);
-    let cursor: string | undefined;
+    let cursor = startCursor;
     let total = 0;
     do {
       if (stopped?.()) break;
-      const res = await withTimeout(
-        this.client().execute(
-          new EventsFetchCommand({
-            tenant: this.env.FLOWCORE_TENANT,
-            dataCoreId: this.env.FLOWCORE_DATA_CORE_ID,
-            flowType: AIS_FLOW_TYPE,
-            eventTypes: [AIS_POSITION_FIX_OBSERVED_EVENT_TYPE],
-            timeBucket,
-            pageSize,
-            cursor,
-          }),
-        ),
-        FETCH_TIMEOUT_MS,
-        `flowcore fetch ${timeBucket}`,
-      );
+      const res = await this.fetchPage(timeBucket, pageSize, cursor, stopped);
       if (res.events.length > 0) {
         await onPage(
           res.events.map((e) => e.payload as unknown as AisPositionFixObserved),
+          res.nextCursor,
         );
         total += res.events.length;
       }
       cursor = res.nextCursor;
     } while (cursor !== undefined && !stopped?.());
     return total;
+  }
+
+  /** Fetch one page, retrying the SAME cursor on timeout/error (exp backoff). */
+  private async fetchPage(
+    timeBucket: string,
+    pageSize: number,
+    cursor: string | undefined,
+    stopped?: () => boolean,
+  ) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await withTimeout(
+          this.client().execute(
+            new EventsFetchCommand({
+              tenant: this.env.FLOWCORE_TENANT,
+              dataCoreId: this.env.FLOWCORE_DATA_CORE_ID as string,
+              flowType: AIS_FLOW_TYPE,
+              eventTypes: [AIS_POSITION_FIX_OBSERVED_EVENT_TYPE],
+              timeBucket,
+              pageSize,
+              cursor,
+            }),
+          ),
+          FETCH_TIMEOUT_MS,
+          `flowcore fetch ${timeBucket}`,
+        );
+      } catch (err) {
+        if (stopped?.() || attempt >= PAGE_MAX_ATTEMPTS) throw err;
+        const delay = Math.min(1000 * 2 ** (attempt - 1), 30_000);
+        console.error(
+          `[ais-ch-refill] fetch ${timeBucket} page failed (attempt ${attempt}/${PAGE_MAX_ATTEMPTS}), retry in ${delay}ms: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
   }
 
   close(): void {
