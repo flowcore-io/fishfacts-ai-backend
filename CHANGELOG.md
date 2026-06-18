@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.2...v1.10.3) (2026-06-18)
+
+
+### Bug Fixes
+
+* **ais:** adaptive page-size shrink for CH refill on dense buckets ([#51](https://github.com/flowcore-io/fishfacts-ai-backend/issues/51)) ([099be06](https://github.com/flowcore-io/fishfacts-ai-backend/commit/099be0619bfdca7e2341774c52ddfea77be167a3))
+
 ## [1.10.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.1...v1.10.2) (2026-06-17)
 
 
