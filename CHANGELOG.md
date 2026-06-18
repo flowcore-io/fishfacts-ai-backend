@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.8](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.7...v1.10.8) (2026-06-18)
+
+
+### Bug Fixes
+
+* **jobs:** stop hammering Usable with job-state writes (PATCH storm) ([#61](https://github.com/flowcore-io/fishfacts-ai-backend/issues/61)) ([0ccbb1e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/0ccbb1ea9ea29a6e0f7d5ed3f5e96b9bad91b37e))
+
 ## [1.10.7](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.6...v1.10.7) (2026-06-18)
 
 
