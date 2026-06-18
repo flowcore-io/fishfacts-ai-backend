@@ -143,7 +143,8 @@ export class FlowcoreBucketReader {
         );
       } catch (err) {
         if (stopped?.() || attempt >= PAGE_MAX_ATTEMPTS) throw err;
-        const timedOut = err instanceof Error && err.message.includes("timed out");
+        const timedOut =
+          err instanceof Error && err.message.includes("timed out");
         if (timedOut && sizeBox.size > MIN_PAGE_SIZE) {
           sizeBox.size = Math.max(MIN_PAGE_SIZE, Math.floor(sizeBox.size / 2));
           console.error(
