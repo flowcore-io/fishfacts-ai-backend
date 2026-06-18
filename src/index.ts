@@ -92,12 +92,13 @@ const jobs = createJobDefinitions(
   aisBucketReader,
 );
 const jobStateStore = new JobStateStore(env, usable, jobs);
-const jobRunner = new JobRunner(jobs, jobStateStore);
+const jobRunner = new JobRunner(jobs, jobStateStore, env);
 const jobScheduler = new JobScheduler(env, jobRunner);
 const aisBackfillSupervisor = new AisBackfillSupervisor(
   env,
   jobRunner,
   aisIngestState,
+  client,
 );
 const fishfactsClient = new FishfactsApiClient(env);
 const authCache = new TokenCache(env.AUTH_CACHE_TTL_MS);

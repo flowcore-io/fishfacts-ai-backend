@@ -4,6 +4,11 @@ import type { UsableApiClient } from "@/usable/client";
 import type { JobDefinition } from "./types";
 import type { JobRunRecord, JobState, PersistedJobState } from "./types";
 
+// Cap retained run history per job-state fragment. Each save rewrites the whole
+// fragment (re-chunked + re-embedded by Usable), so an unbounded runs[] makes
+// every PATCH progressively larger/slower (J-meldinger had grown to ~1.6k lines).
+const MAX_RUNS = 25;
+
 function buildDefaultJobState(job: JobDefinition): JobState {
   return {
     id: job.id,
@@ -52,7 +57,7 @@ function compact(
         bodyMarkdown: undefined,
       })),
     },
-    runs: (state.runs ?? []).slice(0, 100),
+    runs: (state.runs ?? []).slice(0, MAX_RUNS),
   };
 }
 
@@ -165,7 +170,7 @@ export class JobStateStore {
         schemaVersion: 1,
         updatedAt: new Date().toISOString(),
         jobs,
-        runs: runs.slice(0, 100),
+        runs: runs.slice(0, MAX_RUNS),
       },
     };
   }
