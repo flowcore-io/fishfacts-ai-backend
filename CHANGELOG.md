@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.5](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.4...v1.10.5) (2026-06-18)
+
+
+### Bug Fixes
+
+* **ais:** raise CH-refill page deadline 15s -&gt; 120s ([#55](https://github.com/flowcore-io/fishfacts-ai-backend/issues/55)) ([24698af](https://github.com/flowcore-io/fishfacts-ai-backend/commit/24698affebde8715613b7a5219e82369075ed12c))
+
 ## [1.10.4](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.3...v1.10.4) (2026-06-18)
 
 
