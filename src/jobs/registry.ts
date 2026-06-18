@@ -19,7 +19,8 @@ export function createJobDefinitions(
   writer: PathwayWriter,
   usable: UsableApiClient,
   sildelagetCatchRepository: SildelagetCatchRepository,
-  aisSource: AisSource,
+  aisLiveSource: AisSource,
+  aisBackfillSource: AisSource,
   aisIngestState: AisIngestStateRepository,
   aisChRepo: AisClickhouseRepository,
   aisBucketReader: FlowcoreBucketReader,
@@ -73,7 +74,7 @@ export function createJobDefinitions(
         // — e.g. /api/jobs/state defaultArgs — doesn't reject the sentinel.
         emitConcurrency: z.coerce.number().int().min(0).default(0),
       }),
-      execute: createAisTailJob(env, writer, aisSource, aisIngestState),
+      execute: createAisTailJob(env, writer, aisLiveSource, aisIngestState),
     },
     {
       id: "ais-position-backfill",
@@ -91,7 +92,12 @@ export function createJobDefinitions(
         force: z.coerce.boolean().default(false),
         order: z.enum(["asc", "desc"]).default("asc"),
       }),
-      execute: createAisBackfillJob(env, writer, aisSource, aisIngestState),
+      execute: createAisBackfillJob(
+        env,
+        writer,
+        aisBackfillSource,
+        aisIngestState,
+      ),
     },
     {
       id: "ais-position-ch-refill",

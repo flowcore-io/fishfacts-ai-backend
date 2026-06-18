@@ -63,7 +63,10 @@ try {
 }
 const aisChRepo = new AisClickhouseRepository(chClient, env);
 const aisProjector = new AisPositionProjector(aisChRepo);
-const aisSource = createAisSource(env);
+// Two sources, two MySQL pools: the live tail and the historical backfill never
+// share connections, so backfill reads can't starve the live tail.
+const aisLiveSource = createAisSource(env, "live");
+const aisBackfillSource = createAisSource(env, "backfill");
 const aisIngestState = new AisIngestStateRepository(db);
 // Reads emitted AIS events back from Flowcore (fetch API) so the backfill can
 // project history the forward-only pump cursor will never replay.
@@ -82,7 +85,8 @@ const jobs = createJobDefinitions(
   pathways.writer,
   usable,
   sildelagetCatchRepository,
-  aisSource,
+  aisLiveSource,
+  aisBackfillSource,
   aisIngestState,
   aisChRepo,
   aisBucketReader,
@@ -110,7 +114,7 @@ const app = createApp({
   sildelagetCatchRepository,
   aisRepository: aisChRepo,
   aisIngestState,
-  aisSource,
+  aisSource: aisBackfillSource,
   db,
 });
 

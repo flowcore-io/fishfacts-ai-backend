@@ -66,6 +66,10 @@ const envSchema = z.object({
   AIS_DB_PASSWORD: z.string().min(1).optional(),
   AIS_DB_NAME: z.string().min(1).default("fishfacts"),
   AIS_DB_MAX_CONNECTIONS: z.coerce.number().int().positive().default(2),
+  // Dedicated MySQL pool for the LIVE tail, separate from the backfill pool above
+  // so backfill bucket reads can never starve the live tail (mysql-pool.ts). The
+  // tail reads sequentially, so a small pool is plenty.
+  AIS_LIVE_DB_MAX_CONNECTIONS: z.coerce.number().int().positive().default(2),
   AIS_TAIL_LOOKBACK_SECONDS: z.coerce.number().int().nonnegative().default(5),
   AIS_TAIL_EMIT_CONCURRENCY: z.coerce.number().int().positive().default(8),
   // Bucket workers run concurrently; each streams its bucket sequentially and
