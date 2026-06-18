@@ -6,15 +6,20 @@ import {
 } from "@/events/contracts";
 import { EventsFetchCommand, FlowcoreClient } from "@flowcore/sdk";
 
-// A Flowcore fetch page returns in ~0.8s p99 / ~7.5s max (Groundcover). The SDK
-// has no timeout, so an occasional STALLED connection (no response) would block a
-// worker forever — race each page against a generous deadline (well above the
-// 7.5s max) and retry the SAME page (cursor unchanged) on timeout/error, like the
-// local ais-stream script. We never restart the whole bucket: a bucket can hold
-// millions of events, and the caller persists the cursor per page so a deferred
-// bucket resumes mid-pagination across runs.
+// The Flowcore fetch cost grows SUPER-LINEARLY with pageSize on dense buckets: on
+// a recent full-traffic AIS bucket, pageSize 1000 returns in ~2.5s, 2000 in ~7s,
+// 5000 in ~13s, but 10000 never returns within 60s (measured against prod). Sparse
+// historical buckets (2014) are the opposite — large pages are cheap. So no single
+// fixed pageSize fits the whole 2014→now density range. We therefore (a) cap each
+// page with a timeout, and (b) ADAPTIVELY SHRINK the page on timeout and retry the
+// SAME cursor — each bucket auto-tunes to its own density. We never restart the
+// whole bucket: a bucket can hold millions of events, and the caller persists the
+// cursor per page so a deferred bucket resumes mid-pagination across runs.
 const FETCH_TIMEOUT_MS = 30_000;
 const PAGE_MAX_ATTEMPTS = 12;
+// Floor for the adaptive shrink — below this the fixed per-request overhead
+// dominates and shrinking further buys nothing.
+const MIN_PAGE_SIZE = 500;
 
 function withTimeout<T>(
   promise: Promise<T>,
@@ -89,9 +94,12 @@ export class FlowcoreBucketReader {
     const timeBucket = isoToTimeBucket(bucketHourIso);
     let cursor = startCursor;
     let total = 0;
+    // Per-bucket adaptive page size: shrinks on timeout (dense bucket) and stays
+    // shrunk for the rest of this bucket, since density is ~uniform within an hour.
+    const sizeBox = { size: pageSize };
     do {
       if (stopped?.()) break;
-      const res = await this.fetchPage(timeBucket, pageSize, cursor, stopped);
+      const res = await this.fetchPage(timeBucket, sizeBox, cursor, stopped);
       if (res.events.length > 0) {
         await onPage(
           res.events.map((e) => e.payload as unknown as AisPositionFixObserved),
@@ -104,10 +112,15 @@ export class FlowcoreBucketReader {
     return total;
   }
 
-  /** Fetch one page, retrying the SAME cursor on timeout/error (exp backoff). */
+  /**
+   * Fetch one page, retrying the SAME cursor on timeout/error (exp backoff). On a
+   * TIMEOUT (the dense-bucket super-linear cliff) it also HALVES `sizeBox.size`
+   * (down to MIN_PAGE_SIZE) before retrying, so the bucket converges onto a page
+   * size it can actually serve within the deadline instead of looping the timeout.
+   */
   private async fetchPage(
     timeBucket: string,
-    pageSize: number,
+    sizeBox: { size: number },
     cursor: string | undefined,
     stopped?: () => boolean,
   ) {
@@ -121,7 +134,7 @@ export class FlowcoreBucketReader {
               flowType: AIS_FLOW_TYPE,
               eventTypes: [AIS_POSITION_FIX_OBSERVED_EVENT_TYPE],
               timeBucket,
-              pageSize,
+              pageSize: sizeBox.size,
               cursor,
             }),
           ),
@@ -130,6 +143,15 @@ export class FlowcoreBucketReader {
         );
       } catch (err) {
         if (stopped?.() || attempt >= PAGE_MAX_ATTEMPTS) throw err;
+        const timedOut =
+          err instanceof Error && err.message.includes("timed out");
+        if (timedOut && sizeBox.size > MIN_PAGE_SIZE) {
+          sizeBox.size = Math.max(MIN_PAGE_SIZE, Math.floor(sizeBox.size / 2));
+          console.error(
+            `[ais-ch-refill] fetch ${timeBucket} timed out — shrinking pageSize to ${sizeBox.size}, retrying same cursor (attempt ${attempt}/${PAGE_MAX_ATTEMPTS})`,
+          );
+          continue; // retry immediately at the smaller size, same cursor
+        }
         const delay = Math.min(1000 * 2 ** (attempt - 1), 30_000);
         console.error(
           `[ais-ch-refill] fetch ${timeBucket} page failed (attempt ${attempt}/${PAGE_MAX_ATTEMPTS}), retry in ${delay}ms: ${

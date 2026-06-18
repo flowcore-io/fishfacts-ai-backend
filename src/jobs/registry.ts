@@ -101,7 +101,10 @@ export function createJobDefinitions(
       schedule: "0 0 31 2 *",
       inputSchema: z.object({
         concurrency: z.coerce.number().int().min(0).default(0),
-        pageSize: z.coerce.number().int().min(1).default(5000),
+        // Dense recent buckets blow past the fetch deadline at 5k+; 2k stays under
+        // it even with live emit contention. The reader shrinks further per-bucket
+        // if needed (adaptive), and sparse historical buckets are cheap at 2k too.
+        pageSize: z.coerce.number().int().min(1).default(2000),
         order: z.enum(["asc", "desc"]).default("desc"),
       }),
       execute: createAisChRefillJob(
