@@ -1,3 +1,4 @@
+import type { Env } from "@/env";
 import { type JobStateStore, createRunId } from "./state-store";
 import type { JobDefinition, PersistedJobState } from "./types";
 
@@ -61,6 +62,7 @@ export class JobRunner {
   constructor(
     private readonly jobs: JobDefinition[],
     private readonly stateStore: JobStateStore,
+    private readonly env: Env,
   ) {}
 
   definitions() {
@@ -142,7 +144,22 @@ export class JobRunner {
         }
       | undefined;
     let progressSaveChain = Promise.resolve();
-    const persistProgress = () => {
+    // Throttle in-run PROGRESS saves: reportProgress() can fire many times/second
+    // (the AIS backfill emits thousands of rows/s), and each save is a Usable
+    // fragment PATCH. Coalesce them to ≤1 write per JOB_PROGRESS_SAVE_MIN_INTERVAL_MS.
+    // The latest progress is already mutated into persisted.state, so a single
+    // trailing save captures it. Start/terminal/checkpoint saves bypass this.
+    const progressMinIntervalMs = this.env.JOB_PROGRESS_SAVE_MIN_INTERVAL_MS;
+    let lastProgressSaveMs = 0;
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
+    const cancelPendingProgress = () => {
+      if (progressTimer) {
+        clearTimeout(progressTimer);
+        progressTimer = null;
+      }
+    };
+    const flushProgressSave = () => {
+      lastProgressSaveMs = Date.now();
       progressSaveChain = progressSaveChain
         .catch(() => undefined)
         .then(async () => {
@@ -159,6 +176,19 @@ export class JobRunner {
           message: error instanceof Error ? error.message : String(error),
         });
       });
+    };
+    const persistProgress = () => {
+      if (progressTimer) return; // a trailing save is already scheduled
+      const sinceLast = Date.now() - lastProgressSaveMs;
+      if (sinceLast >= progressMinIntervalMs) {
+        flushProgressSave();
+      } else {
+        progressTimer = setTimeout(() => {
+          progressTimer = null;
+          flushProgressSave();
+        }, progressMinIntervalMs - sinceLast);
+        progressTimer.unref?.();
+      }
     };
     console.log(
       `[JobRunner] starting job ${jobId} (runId=${runId}, trigger=${trigger}, args=${JSON.stringify(args)})`,
@@ -186,6 +216,7 @@ export class JobRunner {
             persistProgress();
           },
           checkpoint: async (update) => {
+            cancelPendingProgress();
             await progressSaveChain.catch(() => undefined);
             update(persisted.state);
             if (persisted.state.job.progress) {
@@ -205,6 +236,7 @@ export class JobRunner {
           `[JobRunner] ${jobId} execute() returned after ${Date.now() - executeStart}ms (runId=${runId}, changed=${result.changed})`,
         );
         const finishedAt = new Date().toISOString();
+        cancelPendingProgress();
         await progressSaveChain.catch((drainError) => {
           console.error(
             "[Jobs] Progress save chain drained with error before terminal save",
@@ -282,6 +314,7 @@ export class JobRunner {
           response: (error as { response?: unknown })?.response,
           stack: error instanceof Error ? error.stack : undefined,
         });
+        cancelPendingProgress();
         await progressSaveChain.catch((drainError) => {
           console.error(
             "[Jobs] Progress save chain drained with error after run failure",
@@ -353,6 +386,7 @@ export class JobRunner {
         throw new Error(message);
       } finally {
         this.runningJobs.delete(jobId);
+        cancelPendingProgress();
         // Safety net: if neither the success nor error save path managed to
         // persist a terminal status (silent save failure, swallowed rejection,
         // etc.), force-write a fallback so the runner state cannot stay stuck

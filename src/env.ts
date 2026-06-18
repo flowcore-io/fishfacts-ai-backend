@@ -31,6 +31,16 @@ const envSchema = z.object({
     .transform((value) => value === "true"),
   JOB_SCHEDULER_TICK_MS: z.coerce.number().int().positive().default(30000),
   JOB_LOCK_TTL_SECONDS: z.coerce.number().int().positive().default(900),
+  // Min interval between Usable job-state PATCHes for in-run PROGRESS updates.
+  // Rapid reportProgress() calls (e.g. the AIS backfill emitting thousands of
+  // rows/s) are coalesced to at most one write per this window — the start and
+  // terminal saves always go through. Stops the job-state fragment from being
+  // hammered (was ~6k PATCH/hr to one doc, dragging Usable's P95).
+  JOB_PROGRESS_SAVE_MIN_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60000),
   FISKERIDIR_JMELDINGER_BASE_URL: z
     .string()
     .url()
