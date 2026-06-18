@@ -16,12 +16,13 @@ import { EventsFetchCommand, FlowcoreClient } from "@flowcore/sdk";
 // whole bucket: a bucket can hold millions of events, and the caller persists the
 // cursor per page so a deferred bucket resumes mid-pagination across runs.
 //
-// Deadline is 15s: 2× the ~7.5s Groundcover fetch max, enough headroom for a
-// well-sized page under live-emit contention, while halving the time wasted before
-// the adaptive shrink kicks in on an oversized page (the shrink, not this timeout,
-// is now the primary recovery from the dense-bucket cliff — so a tight deadline is
-// safe).
-const FETCH_TIMEOUT_MS = 15_000;
+// Deadline is 120s: generous so a large page on a dense bucket under live-emit
+// contention is given time to actually COMPLETE rather than being killed and
+// retried. The adaptive shrink remains as a backstop for a genuinely stalled
+// connection (no response within 120s), but in steady state we'd rather a slow
+// page finish than thrash. Cursor + projectedCount persist after each completed
+// page, so progress is durable regardless of how long a page takes.
+const FETCH_TIMEOUT_MS = 120_000;
 const PAGE_MAX_ATTEMPTS = 12;
 // Floor for the adaptive shrink — below this the fixed per-request overhead
 // dominates and shrinking further buys nothing.
