@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.6](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.5...v1.10.6) (2026-06-18)
+
+
+### Bug Fixes
+
+* **ais:** dedicated MySQL pool for the live tail (isolate from backfill) ([#57](https://github.com/flowcore-io/fishfacts-ai-backend/issues/57)) ([b10cf48](https://github.com/flowcore-io/fishfacts-ai-backend/commit/b10cf4890eb3cf05b0e1828d5a74266047c7588a))
+
 ## [1.10.5](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.4...v1.10.5) (2026-06-18)
 
 
