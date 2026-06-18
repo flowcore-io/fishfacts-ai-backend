@@ -1,9 +1,13 @@
 import type { Env } from "@/env";
 import type { JobExecutionResult, JobLatestItem, JobState } from "@/jobs/types";
 import type { PathwayWriter } from "@/pathways";
-import { runPool, toLatestItem, toPayload } from "./emit";
+import { emitBatchWithRetry, runPool, toLatestItem, toPayload } from "./emit";
 import type { AisIngestStateRepository } from "./ingest-state-repository";
 import type { AisSource, AisTailCursor } from "./types";
+
+// Events per Flowcore webhook request (matches the backfill's proven batch size).
+// The DB page (args.batchSize) is split into chunks of this for emission.
+const EMIT_BATCH_SIZE = 500;
 
 type Args = {
   batchSize: number;
@@ -66,8 +70,23 @@ export function createAisTailJob(
       if (fixes.length === 0) break;
 
       const observedAt = new Date().toISOString();
-      await runPool(fixes, emitConcurrency, async (fix) => {
-        await writer.writeAisPositionFixObserved(toPayload(fix, observedAt));
+      // Emit in BATCHES (one webhook request per chunk). Webhook latency is
+      // per-request, so this is the throughput lever: emitting one event per
+      // request (the old path) capped the tail at ~tens/s and let it fall hours
+      // behind. `useEventTime: false` keeps fresh ingest-time TimeUUIDs/buckets
+      // (no eventTime override — live fixes intentionally bucket by ingest time).
+      const payloads = fixes.map((fix) => toPayload(fix, observedAt));
+      const chunks: (typeof payloads)[] = [];
+      for (let i = 0; i < payloads.length; i += EMIT_BATCH_SIZE) {
+        chunks.push(payloads.slice(i, i + EMIT_BATCH_SIZE));
+      }
+      await runPool(chunks, emitConcurrency, async (chunk) => {
+        await emitBatchWithRetry(
+          () => writer.writeAisPositionFixBatch(chunk, { useEventTime: false }),
+          () => context.signal.aborted || context.isStopRequested(),
+          env.AIS_EMIT_TIMEOUT_MS,
+          "ais-tail",
+        );
       });
       emittedTotal += fixes.length;
 

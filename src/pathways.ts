@@ -70,11 +70,16 @@ export interface PathwayWriter {
   ): Promise<string>;
   /**
    * Batch emit (one HTTP request per N fixes; each still a distinct event).
-   * Used by the backfill — webhook latency is per-request, so batching is the
-   * throughput lever. `eventTimeKey: "eventTime"` makes the platform derive each
-   * event's historical TimeUUID + hour-bucket from its own `eventTime` field.
+   * Webhook latency is per-request, so batching is the throughput lever — used by
+   * BOTH the backfill and the live tail. `opts.useEventTime` (default true) makes
+   * the platform derive each event's historical TimeUUID + hour-bucket from its
+   * own `eventTime` field (`eventTimeKey`). The tail passes `false` so live fixes
+   * get fresh ingest-time TimeUUIDs/buckets instead (no eventTime override).
    */
-  writeAisPositionFixBatch(events: AisPositionFixObserved[]): Promise<string[]>;
+  writeAisPositionFixBatch(
+    events: AisPositionFixObserved[],
+    opts?: { useEventTime?: boolean },
+  ): Promise<string[]>;
 }
 
 export type PathwayRuntime = {
@@ -374,7 +379,8 @@ export function createPathwayRuntime(
         });
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
-      async writeAisPositionFixBatch(events) {
+      async writeAisPositionFixBatch(events, opts) {
+        const useEventTime = opts?.useEventTime ?? true;
         const ids = await (
           pathways.write as never as (
             path: typeof AIS_POSITION_FIX_OBSERVED_PATHWAY,
@@ -392,8 +398,12 @@ export function createPathwayRuntime(
           batch: true,
           data: events,
           metadata: { source: "mysql-replica" },
-          // Per-event historical time-bucket + TimeUUID from each payload's eventTime.
-          options: { fireAndForget: true, eventTimeKey: "eventTime" },
+          options: {
+            fireAndForget: true,
+            // Backfill: per-event historical bucket + TimeUUID from each payload's
+            // eventTime. Tail: omit, so events get fresh ingest-time TimeUUIDs.
+            ...(useEventTime ? { eventTimeKey: "eventTime" } : {}),
+          },
         });
         return Array.isArray(ids) ? ids : [ids];
       },

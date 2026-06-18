@@ -1,7 +1,7 @@
 import type { Env } from "@/env";
 import type { JobExecutionResult, JobLatestItem, JobState } from "@/jobs/types";
 import type { PathwayWriter } from "@/pathways";
-import { toLatestItem, toPayload } from "./emit";
+import { emitBatchWithRetry, toLatestItem, toPayload } from "./emit";
 import type { AisIngestStateRepository } from "./ingest-state-repository";
 import type { AisSource } from "./types";
 
@@ -119,6 +119,7 @@ export function createAisBackfillJob(
                 ),
               stopped,
               env.AIS_EMIT_TIMEOUT_MS,
+              "ais-backfill",
             );
             bucketEmitted += ids.length;
             emittedTotal += ids.length;
@@ -169,54 +170,6 @@ export function createAisBackfillJob(
 }
 
 /** Reject if a promise doesn't settle within ms (the hung fetch is abandoned). */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`emit timed out after ${ms}ms`)),
-      ms,
-    );
-    promise.then(
-      (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      },
-      (e) => {
-        clearTimeout(timer);
-        reject(e);
-      },
-    );
-  });
-}
-
-/**
- * Emit a batch, retrying transient failures with exponential backoff (1s→30s).
- * Gives up after maxAttempts so a truly persistent failure (e.g. revoked key)
- * surfaces instead of spinning forever; the runner then resumes from bucket state.
- */
-async function emitBatchWithRetry(
-  fn: () => Promise<string[]>,
-  stopped: () => boolean,
-  timeoutMs: number,
-  maxAttempts = 10,
-): Promise<string[]> {
-  let attempt = 0;
-  for (;;) {
-    try {
-      return await withTimeout(fn(), timeoutMs);
-    } catch (err) {
-      attempt += 1;
-      if (stopped() || attempt >= maxAttempts) throw err;
-      const delayMs = Math.min(1000 * 2 ** (attempt - 1), 30_000);
-      console.error(
-        `[ais-backfill] batch emit failed (attempt ${attempt}/${maxAttempts}), retrying in ${delayMs}ms: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-  }
-}
-
 function enumerateHourBuckets(startAtIso: string, endAtIso: string): string[] {
   const start = floorToHour(startAtIso);
   const end = new Date(endAtIso).getTime();
