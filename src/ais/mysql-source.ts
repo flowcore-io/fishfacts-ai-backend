@@ -1,7 +1,7 @@
 import type { Env } from "@/env";
 import type { RowDataPacket } from "mysql2";
 import type { Pool } from "mysql2/promise";
-import { getAisPool } from "./mysql-pool";
+import { type AisPoolRole, getAisPool } from "./mysql-pool";
 import type {
   AisBucketKeyset,
   AisFix,
@@ -29,10 +29,15 @@ const SELECT_COLS =
   "id, vessel_id, source_id, latitude, longitude, speed, heading, course, status, timestamp, stamp_created";
 
 export class MysqlAisSource implements AisSource {
-  constructor(private readonly env: Env) {}
+  // `role` selects the pool: "live" for the tail, "backfill" for history — so the
+  // two never share connections (see mysql-pool.ts).
+  constructor(
+    private readonly env: Env,
+    private readonly role: AisPoolRole = "backfill",
+  ) {}
 
   private pool(): Promise<Pool> {
-    return getAisPool(this.env);
+    return getAisPool(this.env, this.role);
   }
 
   async fetchFixesAfterIngest(

@@ -1,20 +1,37 @@
 /**
- * Single shared Cloud SQL connection pool for the AIS replica. The 2-connection
- * cap is a GLOBAL read semaphore: tail + backfill both go through this one pool,
- * so at most `AIS_DB_MAX_CONNECTIONS` MySQL reads run at once.
+ * Cloud SQL connection pools for the AIS replica, split by role so the live tail
+ * and the historical backfill NEVER share connections. Previously a single
+ * 2-connection pool was a global read semaphore shared by both: the backfill's
+ * bucket workers monopolised the connections and the live tail starved (falling
+ * hours behind realtime even though the replica was current). Each role now gets
+ * its own pool sized independently — backfill reads can never block live reads.
  */
 import type { Env } from "@/env";
 import { Connector, IpAddressTypes } from "@google-cloud/cloud-sql-connector";
 import mysql, { type Pool } from "mysql2/promise";
 
-let connector: Connector | null = null;
-let pool: Pool | null = null;
-let initPromise: Promise<Pool> | null = null;
+export type AisPoolRole = "live" | "backfill";
 
-export function getAisPool(env: Env): Promise<Pool> {
-  if (pool) return Promise.resolve(pool);
-  if (initPromise) return initPromise;
-  initPromise = (async () => {
+// One shared connector (cheap; just resolves TLS/auth options) feeds both pools.
+let connector: Connector | null = null;
+const pools: Partial<Record<AisPoolRole, Pool>> = {};
+const initPromises: Partial<Record<AisPoolRole, Promise<Pool>>> = {};
+
+function connectionLimit(env: Env, role: AisPoolRole): number {
+  return role === "live"
+    ? env.AIS_LIVE_DB_MAX_CONNECTIONS
+    : env.AIS_DB_MAX_CONNECTIONS;
+}
+
+export function getAisPool(
+  env: Env,
+  role: AisPoolRole = "backfill",
+): Promise<Pool> {
+  const existing = pools[role];
+  if (existing) return Promise.resolve(existing);
+  const pending = initPromises[role];
+  if (pending) return pending;
+  const init = (async () => {
     if (
       !env.AIS_DB_INSTANCE_CONNECTION_NAME ||
       !env.AIS_DB_USER ||
@@ -24,8 +41,8 @@ export function getAisPool(env: Env): Promise<Pool> {
         "AIS MySQL source requires AIS_DB_INSTANCE_CONNECTION_NAME, AIS_DB_USER, AIS_DB_PASSWORD",
       );
     }
-    const c = new Connector();
-    const clientOpts = await c.getOptions({
+    if (!connector) connector = new Connector();
+    const clientOpts = await connector.getOptions({
       instanceConnectionName: env.AIS_DB_INSTANCE_CONNECTION_NAME,
       ipType:
         env.AIS_DB_IP_TYPE === "PRIVATE"
@@ -37,26 +54,27 @@ export function getAisPool(env: Env): Promise<Pool> {
       user: env.AIS_DB_USER,
       password: env.AIS_DB_PASSWORD,
       database: env.AIS_DB_NAME,
-      connectionLimit: env.AIS_DB_MAX_CONNECTIONS,
+      connectionLimit: connectionLimit(env, role),
       waitForConnections: true,
       // Return DATETIME/TIMESTAMP as raw 'YYYY-MM-DD HH:MM:SS' strings (the
       // replica session is UTC) — deterministic, no local-tz interpretation.
       dateStrings: true,
     });
-    connector = c;
-    pool = p;
+    pools[role] = p;
     return p;
   })();
-  return initPromise;
+  initPromises[role] = init;
+  return init;
 }
 
-/** Close pool + connector — required or the Bun process won't exit. */
+/** Close every pool + the connector — required or the Bun process won't exit. */
 export async function closeAisPool(): Promise<void> {
-  const p = pool;
+  const open = Object.values(pools).filter((p): p is Pool => Boolean(p));
   const c = connector;
-  pool = null;
+  for (const role of Object.keys(pools) as AisPoolRole[]) delete pools[role];
+  for (const role of Object.keys(initPromises) as AisPoolRole[])
+    delete initPromises[role];
   connector = null;
-  initPromise = null;
-  if (p) await p.end();
+  await Promise.all(open.map((p) => p.end()));
   if (c) c.close();
 }

@@ -1,15 +1,22 @@
 import type { Env } from "@/env";
+import type { AisPoolRole } from "./mysql-pool";
 import { MysqlAisSource } from "./mysql-source";
 import type { AisSource } from "./types";
 
 /**
  * The swap seam. Today `mysql`; a future `kafka` source maps stream messages to
  * the same `AisFix` and slots in here without touching anything downstream.
+ *
+ * `role` picks the MySQL connection pool — "live" (tail) vs "backfill" (history)
+ * — so create one source per role to keep their reads isolated.
  */
-export function createAisSource(env: Env): AisSource {
+export function createAisSource(
+  env: Env,
+  role: AisPoolRole = "backfill",
+): AisSource {
   switch (env.AIS_SOURCE) {
     case "mysql":
-      return new MysqlAisSource(env);
+      return new MysqlAisSource(env, role);
     case "kafka":
       throw new Error("AIS_SOURCE=kafka not implemented yet");
     default:
