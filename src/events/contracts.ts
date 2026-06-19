@@ -38,6 +38,19 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
   checkedAt: z.string().datetime(),
   partNumber: z.number().int().min(1).optional(),
   totalParts: z.number().int().min(1).optional(),
+  // Jurisdiction (default NO = Fiskeridir). FO = Vørn, IS = Fiskistofa.
+  region: z.enum(["NO", "FO", "IS"]).default("NO"),
+  // Pre-parsed geometry. Norwegian announcements omit this (the geo-projector
+  // parses coords from `bodyMarkdown`); FO/IS collectors supply it directly so
+  // the same projector lands them in the shared geo store.
+  areas: z
+    .array(
+      z.object({
+        name: z.string().nullable().default(null),
+        points: z.array(z.object({ lat: z.number(), lon: z.number() })),
+      }),
+    )
+    .optional(),
 });
 
 export type JMeldingAnnouncementDiscovered = z.infer<

@@ -146,6 +146,13 @@ export function createApp({
     }
     const limit = parseLimit(params.get("limit"));
     const cursor = params.get("cursor");
+    // Jurisdiction filter (NO/FO/IS). Norwegian J-meldinger + Faroese (Vørn) +
+    // Icelandic (Fiskistofa) closures share this geo index.
+    const regionRaw = params.get("region")?.trim().toUpperCase();
+    const region =
+      regionRaw === "NO" || regionRaw === "FO" || regionRaw === "IS"
+        ? regionRaw
+        : undefined;
 
     if (bboxParam) {
       const bbox = parseBbox(bboxParam);
@@ -158,7 +165,12 @@ export function createApp({
           },
           400,
         );
-      const page = await geoRepository.findInBbox({ ...bbox, limit, cursor });
+      const page = await geoRepository.findInBbox({
+        ...bbox,
+        region,
+        limit,
+        cursor,
+      });
       return c.json(page);
     }
 
@@ -173,7 +185,12 @@ export function createApp({
           },
           400,
         );
-      const page = await geoRepository.findNear({ ...near, limit, cursor });
+      const page = await geoRepository.findNear({
+        ...near,
+        region,
+        limit,
+        cursor,
+      });
       return c.json(page);
     }
 
@@ -190,6 +207,7 @@ export function createApp({
     const q = params.get("q") ?? undefined;
     const page = await geoRepository.list({
       status,
+      region,
       hasGeo,
       q,
       limit,

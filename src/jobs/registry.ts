@@ -11,7 +11,9 @@ import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
 import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
+import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
+import { createVornVeidibannJob } from "./vorn-veidibann";
 import type { JobDefinition } from "./types";
 
 export function createJobDefinitions(
@@ -44,6 +46,32 @@ export function createJobDefinitions(
             status: "active",
           }),
       }),
+    },
+    {
+      id: "vorn-veidibann",
+      name: "Vørn veiðibann collector (Faroe Islands)",
+      schedule: "0 * * * *",
+      inputSchema: z.object({
+        maxItems: z.coerce.number().int().min(1).default(1000),
+        refreshExisting: z.coerce.boolean().default(false),
+      }),
+      execute: createVornVeidibannJob(env, writer, {
+        loadKnownKeys: () =>
+          usable.listFragmentKeys({
+            workspaceId: env.USABLE_WORKSPACE_ID,
+            fragmentTypeId: env.JMELDING_FRAGMENT_TYPE_ID,
+            status: "active",
+          }),
+      }),
+    },
+    {
+      id: "fiskistofa-wfs-closures",
+      name: "Fiskistofa WFS closures collector (Iceland)",
+      schedule: "0 * * * *",
+      inputSchema: z.object({
+        refreshExisting: z.coerce.boolean().default(false),
+      }),
+      execute: createFiskistofaWfsClosuresJob(env, writer),
     },
     {
       id: "sildelaget-catchjournal",

@@ -87,6 +87,9 @@ export const jmeldingGeo = pgTable(
     fragmentId: text("fragment_id"),
     title: text("title").notNull(),
     status: text("status").notNull(),
+    // Jurisdiction: NO (Fiskeridir J-meldinger), FO (Vørn), IS (Fiskistofa).
+    // Lets the shared geo search return + filter regulations by region.
+    region: text("region").notNull().default("NO"),
     url: text("url").notNull(),
     signature: text("signature").notNull(),
     hasGeo: boolean("has_geo").notNull().default(false),
@@ -107,6 +110,7 @@ export const jmeldingGeo = pgTable(
   (table) => ({
     geomGistIdx: index("jmelding_geo_geom_gist_idx").using("gist", table.geom),
     statusIdx: index("jmelding_geo_status_idx").on(table.status),
+    regionIdx: index("jmelding_geo_region_idx").on(table.region),
     hasGeoIdx: index("jmelding_geo_has_geo_idx").on(table.hasGeo),
     fragmentKeyIdx: index("jmelding_geo_fragment_key_idx").on(
       table.fragmentKey,
