@@ -99,6 +99,9 @@ export const jmeldingGeo = pgTable(
     // Jurisdiction: NO (Fiskeridir J-meldinger), FO (Vørn), IS (Fiskistofa).
     // Lets the shared geo search return + filter regulations by region.
     region: text("region").notNull().default("NO"),
+    // Closure/regulation type (e.g. "hrygningarsvæði (spawning closure)",
+    // "bráðfeingis veiðibann"). Lets the assistant colour-code + describe by type.
+    category: text("category"),
     url: text("url").notNull(),
     signature: text("signature").notNull(),
     hasGeo: boolean("has_geo").notNull().default(false),

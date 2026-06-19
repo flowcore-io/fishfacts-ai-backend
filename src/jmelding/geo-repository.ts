@@ -10,6 +10,7 @@ export type GeoListRow = {
   title: string;
   status: string;
   region: string;
+  category: string | null;
   url: string;
   hasGeo: boolean;
   bbox: GeoBbox | null;
@@ -63,6 +64,7 @@ const SELECT_LIST_COLUMNS = sql`
   title,
   status,
   region,
+  category,
   url,
   has_geo,
   min_lat,
@@ -78,6 +80,7 @@ const SELECT_FULL_COLUMNS = sql`
   title,
   status,
   region,
+  category,
   url,
   signature,
   has_geo,
@@ -99,6 +102,7 @@ type ListDbRow = {
   title: string;
   status: string;
   region: string;
+  category: string | null;
   url: string;
   has_geo: boolean;
   min_lat: number | null;
@@ -149,6 +153,7 @@ function toListRow(row: ListDbRow): GeoListRow {
     title: row.title,
     status: row.status,
     region: row.region,
+    category: row.category,
     url: row.url,
     hasGeo: row.has_geo,
     bbox,
