@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.8...v1.11.0) (2026-06-19)
+
+
+### Features
+
+* **closures:** Faroese & Icelandic closures in the shared geo index ([#63](https://github.com/flowcore-io/fishfacts-ai-backend/issues/63)) ([8229bb6](https://github.com/flowcore-io/fishfacts-ai-backend/commit/8229bb677c89c52f87d1c3fdbd96890822ace072))
+
 ## [1.10.8](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.7...v1.10.8) (2026-06-18)
 
 
