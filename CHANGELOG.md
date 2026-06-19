@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.11.1...v1.12.0) (2026-06-19)
+
+
+### Features
+
+* **gillnet:** ingest Faroese gillnet positions (Vørn daily snapshot) ([#67](https://github.com/flowcore-io/fishfacts-ai-backend/issues/67)) ([64f22f0](https://github.com/flowcore-io/fishfacts-ai-backend/commit/64f22f060a1b68526c8332fcc091cb80b20cd071))
+
 ## [1.11.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.11.0...v1.11.1) (2026-06-19)
 
 
