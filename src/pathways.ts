@@ -435,7 +435,14 @@ export function createPathwayRuntime(
         // merge/query time). Low-volume flow types stay at default 1.
         bufferSize: env.AIS_PUMP_BUFFER_SIZE,
         concurrency: {
-          default: 1,
+          // Each flow type runs its own pump. Low-volume flows
+          // (announcement/closures, areas, generic, sildelaget) each do ~2
+          // sequential usable.dev round-trips per event, so at concurrency 1 a
+          // backlog drains painfully slowly — project several in parallel
+          // (closure/J-melding keys are unique per event, so out-of-order
+          // projection is safe; geo + fragment upserts are idempotent). AIS
+          // keeps its own high concurrency via the per-flow-type override.
+          default: 8,
           byFlowType: { [AIS_FLOW_TYPE]: env.AIS_PUMP_CONCURRENCY },
         },
         autoProvision: {
