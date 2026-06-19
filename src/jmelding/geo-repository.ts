@@ -235,6 +235,63 @@ export class JMeldingGeoRepository {
     return paginate(rows.map(toListRow), limit);
   }
 
+  /**
+   * Rows WITH geometry inline (areas), for bulk-drawing a whole set in one call
+   * (e.g. "show all Icelandic closures") instead of one get_regulation per area.
+   * Optional region + bbox filter; only geometry-bearing rows; capped.
+   */
+  async listForDrawing(params: {
+    region?: string;
+    bbox?: GeoBbox;
+    status?: string;
+    limit?: number;
+  }): Promise<
+    Array<{
+      jmNumber: string;
+      title: string;
+      status: string;
+      region: string;
+      category: string | null;
+      areas: unknown;
+    }>
+  > {
+    const cap = Math.min(Math.max(params.limit ?? 500, 1), 1000);
+    const conditions: SQL[] = [sql`geom IS NOT NULL`];
+    conditions.push(sql`status = ${params.status ?? "current"}`);
+    if (params.region) conditions.push(sql`region = ${params.region}`);
+    if (params.bbox) {
+      const [minLon, minLat, maxLon, maxLat] = params.bbox;
+      conditions.push(
+        sql`ST_Intersects(geom, ST_MakeEnvelope(${minLon}, ${minLat}, ${maxLon}, ${maxLat}, 4326))`,
+      );
+    }
+    const result = await this.db.execute<{
+      jm_number: string;
+      title: string;
+      status: string;
+      region: string;
+      category: string | null;
+      areas: unknown;
+    }>(sql`
+      SELECT jm_number, title, status, region, category, areas
+      FROM jmelding_geo
+      ${whereClause(conditions)}
+      ORDER BY jm_number DESC
+      LIMIT ${cap}
+    `);
+    const rows = Array.isArray(result)
+      ? result
+      : ((result as unknown as { rows?: unknown[] }).rows ?? []);
+    return (rows as Array<Record<string, unknown>>).map((r) => ({
+      jmNumber: r.jm_number as string,
+      title: r.title as string,
+      status: r.status as string,
+      region: r.region as string,
+      category: (r.category as string | null) ?? null,
+      areas: r.areas,
+    }));
+  }
+
   async findInBbox(params: BboxParams): Promise<PageResult<GeoListRow>> {
     const limit = clampLimit(params.limit);
     const cursor = decodeCursor(params.cursor);
