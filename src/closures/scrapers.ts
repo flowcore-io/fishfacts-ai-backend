@@ -1,0 +1,307 @@
+/**
+ * Region-aware closure scrapers for the Faroe Islands (Vørn) and Iceland
+ * (Fiskistofa). Both produce a `ClosureRecord` compatible with the j-melding
+ * geo pipeline (region + geometry), so closures land in the SAME geo store and
+ * are returned by the shared `search_regulations`/`get_regulation` tools.
+ *
+ * Pure fetch+parse — no DB/event deps — so they are unit/live testable in
+ * isolation. The collector jobs map `ClosureRecord` → the discovered event.
+ */
+
+export type ClosurePoint = { lat: number; lng: number };
+
+export type ClosureRecord = {
+  region: "FO" | "IS";
+  source: "vorn" | "fiskistofa-wfs";
+  sourceKey: string; // stable per-closure id (ban-nr-year / layer:featureId)
+  title: string;
+  status: "active" | "archived" | "unknown";
+  closureType?: string;
+  gear?: string;
+  species?: string;
+  legalBasis?: string;
+  validFrom?: string;
+  validTo?: string;
+  url?: string;
+  geometryType: "polygon" | "polyline" | "point" | "none";
+  points: ClosurePoint[];
+  bbox?: [number, number, number, number]; // [minLng, minLat, maxLng, maxLat]
+  bodyMarkdown: string;
+};
+
+const UA = "Mozilla/5.0 (compatible; FishFactsBot/1.0; +https://fishfacts.fo)";
+
+function bboxOf(points: ClosurePoint[]): ClosureRecord["bbox"] {
+  if (points.length === 0) return undefined;
+  let minLng = Number.POSITIVE_INFINITY;
+  let minLat = Number.POSITIVE_INFINITY;
+  let maxLng = Number.NEGATIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
+  for (const p of points) {
+    minLng = Math.min(minLng, p.lng);
+    minLat = Math.min(minLat, p.lat);
+    maxLng = Math.max(maxLng, p.lng);
+    maxLat = Math.max(maxLat, p.lat);
+  }
+  return [minLng, minLat, maxLng, maxLat];
+}
+
+// ---------------------------------------------------------------------------
+// 🇫🇴 Vørn — bráðfeingis veiðibann (emergency trawl bans). Coords in raw HTML
+// as DDMM, e.g. "6244 N – 0630 W" = 62°44′N 6°30′W.
+// ---------------------------------------------------------------------------
+const VORN_SITEMAP = "https://www.vorn.fo/sitemap.xml";
+const VORN_BAN_RE =
+  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/veid[ib]+ann-nr-[0-9]+-?[0-9]+/gi;
+const VORN_COORD_RE =
+  /(\d{2})(\d{2})\s*([NS])\s*[–-]\s*(\d{2,3})(\d{2})\s*([EWVØ])/gi;
+
+export function vornSourceKey(url: string): string {
+  const m = url.toLowerCase().match(/veid[ib]+ann-nr-(\d+)-?(\d{4})/);
+  return m ? `vorn-veidibann-${m[1]}-${m[2]}` : url.toLowerCase();
+}
+
+/** Canonical ban title derived from the URL — the page body sometimes opens
+ * with a cross-reference to a prior ban, so the in-text regex picks the wrong
+ * number. The URL number is authoritative. */
+function vornTitleFromUrl(url: string): string | undefined {
+  const m = url.toLowerCase().match(/veid[ib]+ann-nr-(\d+)-?(\d{4})/);
+  return m ? `Veiðibann nr. ${m[1]} - ${m[2]}` : undefined;
+}
+
+export async function listVornBanUrls(): Promise<string[]> {
+  const xml = await (
+    await fetch(VORN_SITEMAP, { headers: { "user-agent": UA } })
+  ).text();
+  return [...new Set(xml.match(VORN_BAN_RE) ?? [])];
+}
+
+/** Parse one Vørn ban page (raw HTML) into a ClosureRecord. */
+export function parseVornBan(url: string, html: string): ClosureRecord {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
+      String.fromCharCode(Number.parseInt(h, 16)),
+    )
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const points: ClosurePoint[] = [];
+  for (const m of html.matchAll(VORN_COORD_RE)) {
+    const latDeg = Number(m[1]);
+    const latMin = Number(m[2]);
+    const ns = m[3].toUpperCase();
+    const lngDeg = Number(m[4]);
+    const lngMin = Number(m[5]);
+    const ew = m[6].toUpperCase();
+    let lat = latDeg + latMin / 60;
+    let lng = lngDeg + lngMin / 60;
+    if (ns === "S") lat = -lat;
+    if (ew === "W" || ew === "V") lng = -lng;
+    points.push({ lat, lng });
+  }
+  // Vørn repeats the first vertex to close the ring — drop the trailing dup.
+  if (
+    points.length > 2 &&
+    points[0].lat === points[points.length - 1].lat &&
+    points[0].lng === points[points.length - 1].lng
+  ) {
+    points.pop();
+  }
+
+  const gear = (text.match(/\b(trol|línu|lína|nót|garn|teinur)\b/i) || [])[1];
+  const legalBasis = (text.match(/Løgtingslóg[^.]*\.?/i) || [])[0]?.trim();
+  // "galdandi frá ... til ..." validity window (best-effort).
+  const valid = text.match(/galdandi fr[áa]\s+([^.]{3,80})/i)?.[1]?.trim();
+
+  return {
+    region: "FO",
+    source: "vorn",
+    sourceKey: vornSourceKey(url),
+    title: vornTitleFromUrl(url) || url,
+    status: "active",
+    closureType: "bráðfeingis veiðibann",
+    gear,
+    legalBasis,
+    validFrom: valid,
+    url,
+    geometryType:
+      points.length >= 3
+        ? "polygon"
+        : points.length === 2
+          ? "polyline"
+          : points.length === 1
+            ? "point"
+            : "none",
+    points,
+    bbox: bboxOf(points),
+    bodyMarkdown: text.includes("Við heimild")
+      ? text.slice(
+          text.indexOf("Við heimild"),
+          text.indexOf("Við heimild") + 1200,
+        )
+      : "",
+  };
+}
+
+export async function fetchVornBan(url: string): Promise<ClosureRecord> {
+  const html = await (
+    await fetch(url, { headers: { "user-agent": UA } })
+  ).text();
+  return parseVornBan(url, html);
+}
+
+// ---------------------------------------------------------------------------
+// 🇮🇸 Fiskistofa — public GeoServer WFS (gis.is). Active closure layers as
+// GeoJSON polygons + attributes. No parsing of coordinates — geometry is
+// already structured.
+// ---------------------------------------------------------------------------
+const FISKISTOFA_WFS = "https://gis.is/geoserver/fiskistofa/ows";
+export const FISKISTOFA_LAYERS: Array<{ layer: string; closureType: string }> =
+  [
+    {
+      layer: "virkar_skyndilokanir",
+      closureType: "skyndilokun (temporary closure)",
+    },
+    {
+      layer: "virk_hrygningarsvaedi",
+      closureType: "hrygningarsvæði (spawning closure)",
+    },
+    {
+      layer: "virk_grasleppulokanir",
+      closureType: "grásleppulokun (lumpfish closure)",
+    },
+    {
+      layer: "virk_dragnotaveidisvaedi",
+      closureType: "dragnótaveiðisvæði (seine area)",
+    },
+    {
+      layer: "virk_humarveidisvaedi",
+      closureType: "humarveiðisvæði (lobster area)",
+    },
+    { layer: "virkar_reglugerdir", closureType: "reglugerð (regulation)" },
+  ];
+
+type GeoJsonFeature = {
+  id?: string | number;
+  geometry: { type: string; coordinates: unknown } | null;
+  properties: Record<string, unknown>;
+};
+
+// Flowcore caps a single event at 64 000 bytes. Some Fiskistofa polygons carry
+// thousands of vertices, which blows that limit (the announcement chunker splits
+// body text, not geometry). The shared geo store indexes a MultiPoint + bbox, so
+// full vertex resolution isn't needed — evenly decimate to keep events small
+// while preserving the closure's shape and extent (first/last vertex kept).
+const MAX_POINTS_PER_FEATURE = 600;
+
+function decimate(points: ClosurePoint[], max: number): ClosurePoint[] {
+  if (points.length <= max) return points;
+  const stride = (points.length - 1) / (max - 1);
+  const out: ClosurePoint[] = [];
+  for (let i = 0; i < max; i++) out.push(points[Math.round(i * stride)]);
+  return out;
+}
+
+function ringPoints(geometry: GeoJsonFeature["geometry"]): {
+  points: ClosurePoint[];
+  geometryType: ClosureRecord["geometryType"];
+} {
+  if (!geometry) return { points: [], geometryType: "none" };
+  const coords = geometry.coordinates as
+    | number[][][]
+    | number[][][][]
+    | number[][];
+  const flatten = (c: unknown): ClosurePoint[] => {
+    const out: ClosurePoint[] = [];
+    const walk = (x: unknown) => {
+      if (
+        Array.isArray(x) &&
+        x.length >= 2 &&
+        typeof x[0] === "number" &&
+        typeof x[1] === "number"
+      ) {
+        out.push({ lng: x[0] as number, lat: x[1] as number });
+      } else if (Array.isArray(x)) {
+        for (const y of x) walk(y);
+      }
+    };
+    walk(c);
+    return out;
+  };
+  const pts = decimate(flatten(coords), MAX_POINTS_PER_FEATURE);
+  const gt = /Polygon/i.test(geometry.type)
+    ? "polygon"
+    : /LineString/i.test(geometry.type)
+      ? "polyline"
+      : /Point/i.test(geometry.type)
+        ? "point"
+        : "none";
+  return { points: pts, geometryType: gt as ClosureRecord["geometryType"] };
+}
+
+export function featureToClosure(
+  layer: string,
+  closureType: string,
+  f: GeoJsonFeature,
+): ClosureRecord {
+  const p = f.properties || {};
+  const str = (k: string) => {
+    const v = p[k];
+    if (typeof v !== "string") return undefined;
+    const t = v.trim();
+    // Drop sentinels + JSON-ish junk ("{}", "[]", "null") that some layers
+    // carry in attribute fields — they make for useless fragment titles.
+    if (!t || t === "ENGAR UPPLÝSINGAR" || /^(\{\}|\[\]|null)$/i.test(t)) {
+      return undefined;
+    }
+    return t;
+  };
+  const { points, geometryType } = ringPoints(f.geometry);
+  // The GML `f.id` (e.g. "virk_…​.fid--3c475c88_19edf437561_-2d0a") embeds a
+  // per-REQUEST token that changes on every WFS call, so it is NOT a stable key.
+  // The feature's own `id`/`objectid` attribute is stable across requests — use
+  // it so the sourceKey dedupes instead of duplicating the dataset each run.
+  const stableId = p.id ?? p.objectid ?? p.fid;
+  const fid = String(
+    stableId !== undefined && stableId !== null ? stableId : (f.id ?? ""),
+  );
+  const title = str("heiti") || str("vfheiti") || `${closureType} ${fid}`;
+  return {
+    region: "IS",
+    source: "fiskistofa-wfs",
+    sourceKey: `fiskistofa-${layer}-${fid}`,
+    title,
+    status: "active",
+    closureType,
+    legalBasis: str("fors") || str("vmork"),
+    species: str("teg_veidisvaeda"),
+    validFrom: str("dags_fra"),
+    validTo: str("dags_til"),
+    url: "https://www.fiskistofa.is/fiskveidistjorn/skyndilokanir/",
+    geometryType,
+    points,
+    bbox: bboxOf(points),
+    bodyMarkdown: [str("skyring"), str("ath"), str("undanthaga")]
+      .filter(Boolean)
+      .join("\n\n"),
+  };
+}
+
+export async function fetchFiskistofaLayer(
+  layer: string,
+  closureType: string,
+): Promise<ClosureRecord[]> {
+  const url = `${FISKISTOFA_WFS}?service=WFS&version=2.0.0&request=GetFeature&typeNames=fiskistofa:${layer}&outputFormat=application/json`;
+  const json = (await (
+    await fetch(url, { headers: { "user-agent": UA } })
+  ).json()) as {
+    features?: GeoJsonFeature[];
+  };
+  return (json.features ?? []).map((f) =>
+    featureToClosure(layer, closureType, f),
+  );
+}

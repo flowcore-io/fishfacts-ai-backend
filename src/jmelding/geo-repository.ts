@@ -9,6 +9,7 @@ export type GeoListRow = {
   fragmentId: string | null;
   title: string;
   status: string;
+  region: string;
   url: string;
   hasGeo: boolean;
   bbox: GeoBbox | null;
@@ -24,6 +25,7 @@ export type GeoFullRecord = GeoListRow & {
 
 export type ListParams = {
   status?: string;
+  region?: string;
   hasGeo?: boolean;
   q?: string;
   limit: number;
@@ -35,6 +37,7 @@ export type BboxParams = {
   minLat: number;
   maxLon: number;
   maxLat: number;
+  region?: string;
   limit: number;
   cursor?: string | null;
 };
@@ -43,6 +46,7 @@ export type NearParams = {
   lon: number;
   lat: number;
   radiusKm: number;
+  region?: string;
   limit: number;
   cursor?: string | null;
 };
@@ -58,6 +62,7 @@ const SELECT_LIST_COLUMNS = sql`
   fragment_id,
   title,
   status,
+  region,
   url,
   has_geo,
   min_lat,
@@ -72,6 +77,7 @@ const SELECT_FULL_COLUMNS = sql`
   fragment_id,
   title,
   status,
+  region,
   url,
   signature,
   has_geo,
@@ -92,6 +98,7 @@ type ListDbRow = {
   fragment_id: string | null;
   title: string;
   status: string;
+  region: string;
   url: string;
   has_geo: boolean;
   min_lat: number | null;
@@ -141,6 +148,7 @@ function toListRow(row: ListDbRow): GeoListRow {
     fragmentId: row.fragment_id,
     title: row.title,
     status: row.status,
+    region: row.region,
     url: row.url,
     hasGeo: row.has_geo,
     bbox,
@@ -205,6 +213,7 @@ export class JMeldingGeoRepository {
     const cursor = decodeCursor(params.cursor);
     const conditions: SQL[] = [];
     if (params.status) conditions.push(sql`status = ${params.status}`);
+    if (params.region) conditions.push(sql`region = ${params.region}`);
     if (typeof params.hasGeo === "boolean")
       conditions.push(sql`has_geo = ${params.hasGeo}`);
     if (params.q)
@@ -228,6 +237,7 @@ export class JMeldingGeoRepository {
       sql`geom IS NOT NULL`,
       sql`ST_Intersects(geom, ST_MakeEnvelope(${params.minLon}, ${params.minLat}, ${params.maxLon}, ${params.maxLat}, 4326))`,
     ];
+    if (params.region) conditions.push(sql`region = ${params.region}`);
     if (cursor) conditions.push(sql`jm_number < ${cursor}`);
     const where = whereClause(conditions);
     const rows = await this.execListQuery(sql`
@@ -248,6 +258,7 @@ export class JMeldingGeoRepository {
       sql`geom IS NOT NULL`,
       sql`ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(${params.lon}, ${params.lat}), 4326)::geography, ${radiusMeters})`,
     ];
+    if (params.region) conditions.push(sql`region = ${params.region}`);
     if (cursor) conditions.push(sql`jm_number < ${cursor}`);
     const where = whereClause(conditions);
     const rows = await this.execListQuery(sql`

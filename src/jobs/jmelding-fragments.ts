@@ -28,7 +28,28 @@ function slugFromUrl(url: string) {
     .slice(0, 80);
 }
 
-export function jmeldingFragmentKey(url: string) {
+function slugFromKey(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+/**
+ * Stable fragment key. Norwegian J-meldinger derive it from the per-announcement
+ * URL. Faroese (Vørn) and Icelandic (Fiskistofa) closures don't have one URL per
+ * closure (Fiskistofa features all share one listing page), so they key off the
+ * unique `jmNumber` (= the collector's sourceKey) instead — otherwise every IS
+ * feature would collide on one key.
+ */
+export function jmeldingFragmentKey(
+  url: string,
+  opts?: { region?: string; jmNumber?: string },
+) {
+  if (opts?.region && opts.region !== "NO" && opts.jmNumber) {
+    return `fishfacts-closure-${slugFromKey(opts.jmNumber)}`;
+  }
   return `fishfacts-jmelding-${slugFromUrl(url)}`;
 }
 
@@ -41,25 +62,50 @@ function normalizedCreatedAt(value?: string) {
   return parsed.toISOString();
 }
 
+const REGION_META: Record<
+  string,
+  { source: string; type: string; authority: string; tags: string[] }
+> = {
+  NO: {
+    source: "fiskeridir-jmeldinger",
+    type: "announcement",
+    authority: "Fiskeridirektoratet (Norway)",
+    tags: ["fiskeridir", "j-melding", "announcement", "region:NO"],
+  },
+  FO: {
+    source: "vorn-veidibann",
+    type: "closure",
+    authority: "Vørn (Faroe Islands)",
+    tags: ["vorn", "veidibann", "closure", "region:FO"],
+  },
+  IS: {
+    source: "fiskistofa-closures",
+    type: "closure",
+    authority: "Fiskistofa (Iceland)",
+    tags: ["fiskistofa", "skyndilokun", "closure", "region:IS"],
+  },
+};
+
+function regionMeta(region?: string) {
+  return REGION_META[region ?? "NO"] ?? REGION_META.NO;
+}
+
 function buildMarkdown(input: {
   key: string;
   item: JMeldingAnnouncementDiscovered;
 }) {
   const item = input.item;
-  const tags = [
-    "fishfacts",
-    "fiskeridir",
-    "j-melding",
-    "announcement",
-    `status:${item.status}`,
-  ];
+  const meta = regionMeta(item.region);
+  const tags = ["fishfacts", ...meta.tags, `status:${item.status}`];
   const body = sanitizeText(
     item.bodyMarkdown?.trim() || "No body content extracted from source page.",
   );
   const lines = [
     "---",
-    'source: "fiskeridir-jmeldinger"',
-    'type: "announcement"',
+    `source: "${meta.source}"`,
+    `type: "${meta.type}"`,
+    `region: "${item.region ?? "NO"}"`,
+    `authority: "${yamlEscape(meta.authority)}"`,
     `key: "${yamlEscape(input.key)}"`,
     `title: "${yamlEscape(item.title)}"`,
     `jm_number: "${yamlEscape(item.jmNumber)}"`,
@@ -81,7 +127,8 @@ function buildMarkdown(input: {
     "",
     "## Metadata",
     "",
-    `- **J-melding:** ${item.jmNumber ?? "unknown"}`,
+    `- **Region:** ${item.region ?? "NO"} (${meta.authority})`,
+    `- **Reference:** ${item.jmNumber ?? "unknown"}`,
     `- **Status:** ${item.status}`,
     `- **Published:** ${item.publishedAt ?? "unknown"}`,
     `- **Valid from:** ${item.validFrom ?? "unknown"}`,
@@ -107,17 +154,19 @@ export class JMeldingFragmentProjector {
   ) {}
 
   async project(item: JMeldingAnnouncementDiscovered) {
-    const key = jmeldingFragmentKey(item.url);
+    const key = jmeldingFragmentKey(item.url, {
+      region: item.region,
+      jmNumber: item.jmNumber,
+    });
+    const meta = regionMeta(item.region);
     const tags = [
       "fishfacts",
-      "fiskeridir",
-      "j-melding",
-      "announcement",
+      ...meta.tags,
       `status:${item.status}`,
       `fragment-key:${key}`,
     ];
     const content = buildMarkdown({ key, item });
-    const summary = `Fiskeridir J-melding ${item.jmNumber ?? ""} (${item.status})`;
+    const summary = `${meta.authority} ${meta.type} ${item.jmNumber ?? ""} (${item.status})`;
     const existing = await this.usable.getFragmentByKey(
       this.env.USABLE_WORKSPACE_ID,
       key,

@@ -507,6 +507,7 @@ export function createFiskeridirJMeldingerJob(
       for (const item of enriched) {
         await writer.writeJMeldingAnnouncement({
           ...item,
+          region: "NO",
           bodyMarkdown: item.bodyMarkdown ?? "",
           checkedAt,
         });

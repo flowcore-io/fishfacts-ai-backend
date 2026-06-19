@@ -15,6 +15,25 @@ export type GeoProjectionResult = {
   skipped: boolean;
 };
 
+/** [minLon, minLat, maxLon, maxLat] for pre-parsed (FO/IS) geometry. */
+function bboxFromAreas(
+  areas: NonNullable<JMeldingAnnouncementDiscovered["areas"]>,
+): [number, number, number, number] | null {
+  let minLat = Number.POSITIVE_INFINITY;
+  let minLon = Number.POSITIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
+  let maxLon = Number.NEGATIVE_INFINITY;
+  for (const a of areas) {
+    for (const p of a.points) {
+      minLat = Math.min(minLat, p.lat);
+      minLon = Math.min(minLon, p.lon);
+      maxLat = Math.max(maxLat, p.lat);
+      maxLon = Math.max(maxLon, p.lon);
+    }
+  }
+  return Number.isFinite(minLat) ? [minLon, minLat, maxLon, maxLat] : null;
+}
+
 export class JMeldingGeoProjector {
   constructor(private readonly db: Database) {}
 
@@ -22,14 +41,26 @@ export class JMeldingGeoProjector {
     item: JMeldingAnnouncementDiscovered,
     fragmentId: string | null,
   ): Promise<GeoProjectionResult> {
-    const fragmentKey = jmeldingFragmentKey(item.url);
+    const fragmentKey = jmeldingFragmentKey(item.url, {
+      region: item.region,
+      jmNumber: item.jmNumber,
+    });
     const jmNumber = item.jmNumber ?? fragmentKey;
 
     if (!item.jmNumber && item.status === "unknown") {
       return { jmNumber, fragmentKey, hasGeo: false, skipped: true };
     }
 
-    const parsed = parseJmeldingGeo(item.bodyMarkdown);
+    // FO/IS collectors supply pre-parsed geometry; Norwegian announcements
+    // parse coords out of the body via the existing parser.
+    const parsed =
+      item.areas && item.areas.length > 0
+        ? {
+            areas: item.areas,
+            bbox: bboxFromAreas(item.areas),
+            hasGeo: item.areas.some((a) => a.points.length > 0),
+          }
+        : parseJmeldingGeo(item.bodyMarkdown);
     const geojson = areasToFeatureCollection(parsed.areas);
     const wkt = areasToWkt(parsed.areas);
     const bbox = parsed.bbox;
@@ -42,11 +73,11 @@ export class JMeldingGeoProjector {
 
     await this.db.execute(sql`
       INSERT INTO jmelding_geo (
-        jm_number, fragment_key, fragment_id, title, status, url, signature,
+        jm_number, fragment_key, fragment_id, title, status, region, url, signature,
         has_geo, areas, geojson, geom, min_lat, max_lat, min_lon, max_lon, updated_at
       )
       VALUES (
-        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.url}, ${item.signature},
+        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.url}, ${item.signature},
         ${parsed.hasGeo}, ${areasJson}::jsonb, ${geojsonJson}::jsonb,
         ${geomExpr},
         ${bbox?.[1] ?? null}, ${bbox?.[3] ?? null}, ${bbox?.[0] ?? null}, ${bbox?.[2] ?? null},
@@ -57,6 +88,7 @@ export class JMeldingGeoProjector {
         fragment_id  = EXCLUDED.fragment_id,
         title        = EXCLUDED.title,
         status       = EXCLUDED.status,
+        region       = EXCLUDED.region,
         url          = EXCLUDED.url,
         signature    = EXCLUDED.signature,
         has_geo      = EXCLUDED.has_geo,
