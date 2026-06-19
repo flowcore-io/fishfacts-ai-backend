@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.11.0...v1.11.1) (2026-06-19)
+
+
+### Bug Fixes
+
+* **pump:** raise default pump concurrency to 8 for low-volume flows ([#65](https://github.com/flowcore-io/fishfacts-ai-backend/issues/65)) ([53c56a3](https://github.com/flowcore-io/fishfacts-ai-backend/commit/53c56a31ffc61b1fe0f6e82c373c9deee259a4d9))
+
 ## [1.11.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.10.8...v1.11.0) (2026-06-19)
 
 
