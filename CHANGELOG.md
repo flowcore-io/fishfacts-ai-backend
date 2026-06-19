@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.12.0...v1.13.0) (2026-06-19)
+
+
+### Features
+
+* **closures:** expose closure type (category) in geo search ([#69](https://github.com/flowcore-io/fishfacts-ai-backend/issues/69)) ([e80ee31](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e80ee31948ee66305ac84e2ebd117d5a189132ba))
+
 ## [1.12.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.11.1...v1.12.0) (2026-06-19)
 
 
