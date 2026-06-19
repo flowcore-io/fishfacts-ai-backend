@@ -431,10 +431,7 @@
       "compositePrimaryKeys": {
         "jmelding_chunk_queue_signature_part_number_pk": {
           "name": "jmelding_chunk_queue_signature_part_number_pk",
-          "columns": [
-            "signature",
-            "part_number"
-          ]
+          "columns": ["signature", "part_number"]
         }
       },
       "uniqueConstraints": {},

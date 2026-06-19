@@ -13,8 +13,8 @@ import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
-import { createVornVeidibannJob } from "./vorn-veidibann";
 import type { JobDefinition } from "./types";
+import { createVornVeidibannJob } from "./vorn-veidibann";
 
 export function createJobDefinitions(
   env: Env,

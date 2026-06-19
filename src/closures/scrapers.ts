@@ -33,10 +33,10 @@ const UA = "Mozilla/5.0 (compatible; FishFactsBot/1.0; +https://fishfacts.fo)";
 
 function bboxOf(points: ClosurePoint[]): ClosureRecord["bbox"] {
   if (points.length === 0) return undefined;
-  let minLng = Infinity;
-  let minLat = Infinity;
-  let maxLng = -Infinity;
-  let maxLat = -Infinity;
+  let minLng = Number.POSITIVE_INFINITY;
+  let minLat = Number.POSITIVE_INFINITY;
+  let maxLng = Number.NEGATIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
   for (const p of points) {
     minLng = Math.min(minLng, p.lng);
     minLat = Math.min(minLat, p.lat);
@@ -51,8 +51,10 @@ function bboxOf(points: ClosurePoint[]): ClosureRecord["bbox"] {
 // as DDMM, e.g. "6244 N – 0630 W" = 62°44′N 6°30′W.
 // ---------------------------------------------------------------------------
 const VORN_SITEMAP = "https://www.vorn.fo/sitemap.xml";
-const VORN_BAN_RE = /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/veid[ib]+ann-nr-[0-9]+-?[0-9]+/gi;
-const VORN_COORD_RE = /(\d{2})(\d{2})\s*([NS])\s*[–-]\s*(\d{2,3})(\d{2})\s*([EWVØ])/gi;
+const VORN_BAN_RE =
+  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/veid[ib]+ann-nr-[0-9]+-?[0-9]+/gi;
+const VORN_COORD_RE =
+  /(\d{2})(\d{2})\s*([NS])\s*[–-]\s*(\d{2,3})(\d{2})\s*([EWVØ])/gi;
 
 export function vornSourceKey(url: string): string {
   const m = url.toLowerCase().match(/veid[ib]+ann-nr-(\d+)-?(\d{4})/);
@@ -68,7 +70,9 @@ function vornTitleFromUrl(url: string): string | undefined {
 }
 
 export async function listVornBanUrls(): Promise<string[]> {
-  const xml = await (await fetch(VORN_SITEMAP, { headers: { "user-agent": UA } })).text();
+  const xml = await (
+    await fetch(VORN_SITEMAP, { headers: { "user-agent": UA } })
+  ).text();
   return [...new Set(xml.match(VORN_BAN_RE) ?? [])];
 }
 
@@ -78,7 +82,9 @@ export function parseVornBan(url: string, html: string): ClosureRecord {
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
+      String.fromCharCode(Number.parseInt(h, 16)),
+    )
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
@@ -122,17 +128,29 @@ export function parseVornBan(url: string, html: string): ClosureRecord {
     legalBasis,
     validFrom: valid,
     url,
-    geometryType: points.length >= 3 ? "polygon" : points.length === 2 ? "polyline" : points.length === 1 ? "point" : "none",
+    geometryType:
+      points.length >= 3
+        ? "polygon"
+        : points.length === 2
+          ? "polyline"
+          : points.length === 1
+            ? "point"
+            : "none",
     points,
     bbox: bboxOf(points),
     bodyMarkdown: text.includes("Við heimild")
-      ? text.slice(text.indexOf("Við heimild"), text.indexOf("Við heimild") + 1200)
+      ? text.slice(
+          text.indexOf("Við heimild"),
+          text.indexOf("Við heimild") + 1200,
+        )
       : "",
   };
 }
 
 export async function fetchVornBan(url: string): Promise<ClosureRecord> {
-  const html = await (await fetch(url, { headers: { "user-agent": UA } })).text();
+  const html = await (
+    await fetch(url, { headers: { "user-agent": UA } })
+  ).text();
   return parseVornBan(url, html);
 }
 
@@ -142,14 +160,30 @@ export async function fetchVornBan(url: string): Promise<ClosureRecord> {
 // already structured.
 // ---------------------------------------------------------------------------
 const FISKISTOFA_WFS = "https://gis.is/geoserver/fiskistofa/ows";
-export const FISKISTOFA_LAYERS: Array<{ layer: string; closureType: string }> = [
-  { layer: "virkar_skyndilokanir", closureType: "skyndilokun (temporary closure)" },
-  { layer: "virk_hrygningarsvaedi", closureType: "hrygningarsvæði (spawning closure)" },
-  { layer: "virk_grasleppulokanir", closureType: "grásleppulokun (lumpfish closure)" },
-  { layer: "virk_dragnotaveidisvaedi", closureType: "dragnótaveiðisvæði (seine area)" },
-  { layer: "virk_humarveidisvaedi", closureType: "humarveiðisvæði (lobster area)" },
-  { layer: "virkar_reglugerdir", closureType: "reglugerð (regulation)" },
-];
+export const FISKISTOFA_LAYERS: Array<{ layer: string; closureType: string }> =
+  [
+    {
+      layer: "virkar_skyndilokanir",
+      closureType: "skyndilokun (temporary closure)",
+    },
+    {
+      layer: "virk_hrygningarsvaedi",
+      closureType: "hrygningarsvæði (spawning closure)",
+    },
+    {
+      layer: "virk_grasleppulokanir",
+      closureType: "grásleppulokun (lumpfish closure)",
+    },
+    {
+      layer: "virk_dragnotaveidisvaedi",
+      closureType: "dragnótaveiðisvæði (seine area)",
+    },
+    {
+      layer: "virk_humarveidisvaedi",
+      closureType: "humarveiðisvæði (lobster area)",
+    },
+    { layer: "virkar_reglugerdir", closureType: "reglugerð (regulation)" },
+  ];
 
 type GeoJsonFeature = {
   id?: string | number;
@@ -177,7 +211,10 @@ function ringPoints(geometry: GeoJsonFeature["geometry"]): {
   geometryType: ClosureRecord["geometryType"];
 } {
   if (!geometry) return { points: [], geometryType: "none" };
-  const coords = geometry.coordinates as number[][][] | number[][][][] | number[][];
+  const coords = geometry.coordinates as
+    | number[][][]
+    | number[][][][]
+    | number[][];
   const flatten = (c: unknown): ClosurePoint[] => {
     const out: ClosurePoint[] = [];
     const walk = (x: unknown) => {
@@ -259,8 +296,12 @@ export async function fetchFiskistofaLayer(
   closureType: string,
 ): Promise<ClosureRecord[]> {
   const url = `${FISKISTOFA_WFS}?service=WFS&version=2.0.0&request=GetFeature&typeNames=fiskistofa:${layer}&outputFormat=application/json`;
-  const json = (await (await fetch(url, { headers: { "user-agent": UA } })).json()) as {
+  const json = (await (
+    await fetch(url, { headers: { "user-agent": UA } })
+  ).json()) as {
     features?: GeoJsonFeature[];
   };
-  return (json.features ?? []).map((f) => featureToClosure(layer, closureType, f));
+  return (json.features ?? []).map((f) =>
+    featureToClosure(layer, closureType, f),
+  );
 }

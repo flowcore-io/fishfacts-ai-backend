@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ClosureRecord } from "@/closures/scrapers";
-import {
-  FISKISTOFA_LAYERS,
-  fetchFiskistofaLayer,
-} from "@/closures/scrapers";
+import { FISKISTOFA_LAYERS, fetchFiskistofaLayer } from "@/closures/scrapers";
 import type { Env } from "@/env";
 import type { PathwayWriter } from "@/pathways";
 import type { JobExecutionResult, JobLatestItem, JobState } from "./types";
@@ -41,10 +38,10 @@ function bboxOfPoints(
   points: ClosurePoint[],
 ): [number, number, number, number] | undefined {
   if (points.length === 0) return undefined;
-  let minLng = Infinity;
-  let minLat = Infinity;
-  let maxLng = -Infinity;
-  let maxLat = -Infinity;
+  let minLng = Number.POSITIVE_INFINITY;
+  let minLat = Number.POSITIVE_INFINITY;
+  let maxLng = Number.NEGATIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
   for (const p of points) {
     minLng = Math.min(minLng, p.lng);
     minLat = Math.min(minLat, p.lat);
@@ -132,7 +129,10 @@ export function createFiskistofaWfsClosuresJob(
         if (existing) {
           existing.points.push(...record.points);
         } else {
-          byKey.set(record.sourceKey, { ...record, points: [...record.points] });
+          byKey.set(record.sourceKey, {
+            ...record,
+            points: [...record.points],
+          });
         }
       }
     }

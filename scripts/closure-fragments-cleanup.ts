@@ -42,9 +42,9 @@ async function validKeys(): Promise<Set<string>> {
     );
   }
   for (const { layer, closureType } of FISKISTOFA_LAYERS) {
-    const recs = (await fetchFiskistofaLayer(layer, closureType).catch(
-      () => [],
-    )).filter((r) => r.points.length > 0);
+    const recs = (
+      await fetchFiskistofaLayer(layer, closureType).catch(() => [])
+    ).filter((r) => r.points.length > 0);
     for (const r of recs) {
       keys.add(
         jmeldingFragmentKey(r.url ?? "", {
@@ -63,7 +63,9 @@ function keyOf(fragment: Record<string, unknown>): string | undefined {
   const tag = tags.find(
     (t) => typeof t === "string" && t.startsWith("fragment-key:"),
   );
-  return typeof tag === "string" ? tag.slice("fragment-key:".length) : undefined;
+  return typeof tag === "string"
+    ? tag.slice("fragment-key:".length)
+    : undefined;
 }
 
 async function listAll(): Promise<Array<Record<string, unknown>>> {
@@ -80,7 +82,8 @@ async function listAll(): Promise<Array<Record<string, unknown>>> {
     const res = await fetch(`${BASE}/memory-fragments?${params}`, {
       headers: authHeaders(),
     });
-    if (!res.ok) throw new Error(`list HTTP ${res.status}: ${await res.text()}`);
+    if (!res.ok)
+      throw new Error(`list HTTP ${res.status}: ${await res.text()}`);
     const json = (await res.json()) as {
       fragments?: Array<Record<string, unknown>>;
       count?: number;
@@ -118,7 +121,7 @@ console.log(`valid stable closure keys: ${valid.size}`);
 console.log(`total fragments of type:   ${all.length}`);
 console.log(`closure fragments:         ${closures.length}`);
 console.log(`ORPHAN closure fragments:  ${orphans.length}`);
-console.log(`sample orphans:`);
+console.log("sample orphans:");
 for (const f of orphans.slice(0, 5)) console.log("  ", f.id, keyOf(f));
 
 if (!APPLY) {

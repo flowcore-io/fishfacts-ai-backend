@@ -107,7 +107,8 @@ export function createVornVeidibannJob(
     });
     const knownKeys = args.refreshExisting
       ? new Set<string>()
-      : await (options?.loadKnownKeys?.() ?? Promise.resolve(new Set<string>()));
+      : await (options?.loadKnownKeys?.() ??
+          Promise.resolve(new Set<string>()));
 
     const fragmentKeyFor = (url: string) =>
       jmeldingFragmentKey(url, { region: "FO", jmNumber: vornSourceKey(url) });
@@ -134,11 +135,7 @@ export function createVornVeidibannJob(
     }
 
     const latestItems: JobLatestItem[] = [];
-    for (
-      let start = 0;
-      start < unseen.length;
-      start += FETCH_CONCURRENCY
-    ) {
+    for (let start = 0; start < unseen.length; start += FETCH_CONCURRENCY) {
       if (context.signal.aborted || context.isStopRequested()) {
         throw new Error("Job stopped by request");
       }

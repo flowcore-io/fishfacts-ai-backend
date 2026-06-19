@@ -19,10 +19,10 @@ export type GeoProjectionResult = {
 function bboxFromAreas(
   areas: NonNullable<JMeldingAnnouncementDiscovered["areas"]>,
 ): [number, number, number, number] | null {
-  let minLat = Infinity;
-  let minLon = Infinity;
-  let maxLat = -Infinity;
-  let maxLon = -Infinity;
+  let minLat = Number.POSITIVE_INFINITY;
+  let minLon = Number.POSITIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
+  let maxLon = Number.NEGATIVE_INFINITY;
   for (const a of areas) {
     for (const p of a.points) {
       minLat = Math.min(minLat, p.lat);
