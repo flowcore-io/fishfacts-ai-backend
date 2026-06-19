@@ -157,6 +157,31 @@ export function createApp({
         ? regionRaw
         : undefined;
 
+    // Bulk-draw path: return every matching regulation WITH geometry inline so
+    // the client can draw a whole set (e.g. all Icelandic closures) in one call
+    // instead of one get_regulation per area.
+    if (params.get("includeAreas") === "true") {
+      const drawBbox = bboxParam ? parseBbox(bboxParam) : undefined;
+      if (bboxParam && !drawBbox)
+        return c.json(
+          {
+            error: "invalid_bbox",
+            message:
+              "bbox must be minLon,minLat,maxLon,maxLat in [-180..180,-90..90]",
+          },
+          400,
+        );
+      const rows = await geoRepository.listForDrawing({
+        region,
+        status: params.get("status") ?? undefined,
+        bbox: drawBbox
+          ? [drawBbox.minLon, drawBbox.minLat, drawBbox.maxLon, drawBbox.maxLat]
+          : undefined,
+        limit,
+      });
+      return c.json({ rows, returned: rows.length });
+    }
+
     if (bboxParam) {
       const bbox = parseBbox(bboxParam);
       if (!bbox)
