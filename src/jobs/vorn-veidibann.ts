@@ -48,6 +48,7 @@ function signatureFor(record: ClosureRecord): string {
         sourceKey: record.sourceKey,
         title: record.title,
         status: record.status,
+        category: record.closureType ?? "",
         validFrom: record.validFrom ?? "",
         validTo: record.validTo ?? "",
         bbox: record.bbox ?? null,

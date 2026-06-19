@@ -73,11 +73,11 @@ export class JMeldingGeoProjector {
 
     await this.db.execute(sql`
       INSERT INTO jmelding_geo (
-        jm_number, fragment_key, fragment_id, title, status, region, url, signature,
+        jm_number, fragment_key, fragment_id, title, status, region, category, url, signature,
         has_geo, areas, geojson, geom, min_lat, max_lat, min_lon, max_lon, updated_at
       )
       VALUES (
-        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.url}, ${item.signature},
+        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.category ?? null}, ${item.url}, ${item.signature},
         ${parsed.hasGeo}, ${areasJson}::jsonb, ${geojsonJson}::jsonb,
         ${geomExpr},
         ${bbox?.[1] ?? null}, ${bbox?.[3] ?? null}, ${bbox?.[0] ?? null}, ${bbox?.[2] ?? null},
@@ -89,6 +89,7 @@ export class JMeldingGeoProjector {
         title        = EXCLUDED.title,
         status       = EXCLUDED.status,
         region       = EXCLUDED.region,
+        category     = EXCLUDED.category,
         url          = EXCLUDED.url,
         signature    = EXCLUDED.signature,
         has_geo      = EXCLUDED.has_geo,
