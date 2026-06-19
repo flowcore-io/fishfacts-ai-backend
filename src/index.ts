@@ -16,6 +16,8 @@ import { runMigrations } from "./db/migrate";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
+import { GillnetProjector } from "./gillnet/projector";
+import { GillnetRepository } from "./gillnet/repository";
 import { JMeldingGeoProjector } from "./jmelding/geo-projector";
 import { JMeldingGeoRepository } from "./jmelding/geo-repository";
 import { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
@@ -38,6 +40,8 @@ const usable = new UsableApiClient(env);
 const jmeldingProjector = new JMeldingFragmentProjector(env, usable);
 const geoProjector = new JMeldingGeoProjector(db);
 const geoRepository = new JMeldingGeoRepository(db);
+const gillnetProjector = new GillnetProjector(db);
+const gillnetRepository = new GillnetRepository(db);
 const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
@@ -79,6 +83,7 @@ const pathways = createPathwayRuntime(
   areasProjector,
   sildelagetCatchProjector,
   aisProjector,
+  gillnetProjector,
 );
 const jobs = createJobDefinitions(
   env,
@@ -110,6 +115,7 @@ const app = createApp({
   fishfactsClient,
   authCache,
   geoRepository,
+  gillnetRepository,
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,

@@ -18,6 +18,15 @@ const geometryMultiPoint = customType<{ data: string; driverData: string }>({
   },
 });
 
+const geometryMultiLineString = customType<{
+  data: string;
+  driverData: string;
+}>({
+  dataType() {
+    return "geometry(MultiLineString, 4326)";
+  },
+});
+
 export const genericEvents = pgTable("generic_events", {
   id: text("id").primaryKey(),
   kind: text("kind").notNull(),
@@ -114,6 +123,37 @@ export const jmeldingGeo = pgTable(
     hasGeoIdx: index("jmelding_geo_has_geo_idx").on(table.hasGeo),
     fragmentKeyIdx: index("jmelding_geo_fragment_key_idx").on(
       table.fragmentKey,
+    ),
+  }),
+);
+
+// Faroese gillnet positions (Vørn GillnetPublic). One row per vessel (call
+// sign), replaced daily — `snapshot_date` is the daily key; the read model
+// returns only rows at the latest snapshot so dropped-out vessels fall away.
+export const gillnetPositions = pgTable(
+  "gillnet_positions",
+  {
+    callSign: text("call_sign").primaryKey(),
+    vesselName: text("vessel_name").notNull(),
+    gearType: text("gear_type").notNull(),
+    snapshotDate: text("snapshot_date").notNull(),
+    lastUpdatedAt: timestamp("last_updated_at", { withTimezone: true }),
+    nets: jsonb("nets").notNull().default([]),
+    geom: geometryMultiLineString("geom"),
+    minLat: doublePrecision("min_lat"),
+    maxLat: doublePrecision("max_lat"),
+    minLon: doublePrecision("min_lon"),
+    maxLon: doublePrecision("max_lon"),
+    sourceEventId: text("source_event_id").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    snapshotIdx: index("gillnet_positions_snapshot_idx").on(table.snapshotDate),
+    geomGistIdx: index("gillnet_positions_geom_gist_idx").using(
+      "gist",
+      table.geom,
     ),
   }),
 );
