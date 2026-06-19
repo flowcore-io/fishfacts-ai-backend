@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.13.0...v1.14.0) (2026-06-19)
+
+
+### Features
+
+* **closures:** bulk-draw endpoint for whole regulation sets ([#71](https://github.com/flowcore-io/fishfacts-ai-backend/issues/71)) ([2384391](https://github.com/flowcore-io/fishfacts-ai-backend/commit/23843914c64d47d0beba5eb2497d4b448cd72f65))
+
 ## [1.13.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.12.0...v1.13.0) (2026-06-19)
 
 
