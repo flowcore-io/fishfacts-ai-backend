@@ -31,6 +31,7 @@ describe("sildelaget-catchjournal job", () => {
         emitted.push(entry);
         return "evt-sild";
       },
+      writeGillnetVesselObserved: async () => "unused",
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",
@@ -108,6 +109,7 @@ describe("sildelaget-catchjournal job", () => {
         emitted.push(entry);
         return "evt-sild";
       },
+      writeGillnetVesselObserved: async () => "unused",
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",
@@ -170,6 +172,7 @@ describe("sildelaget-catchjournal job", () => {
         emitted.push(entry);
         return "evt-sild";
       },
+      writeGillnetVesselObserved: async () => "unused",
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",

@@ -21,6 +21,7 @@ import { AIS_FLOW_TYPE } from "./events/contracts";
 import { genericEventInputSchema } from "./events/contracts";
 import type { GenericEventRepository } from "./events/repository";
 import type { FishfactsApiClient } from "./fishfacts/client";
+import type { GillnetRepository } from "./gillnet/repository";
 import type { JMeldingGeoRepository } from "./jmelding/geo-repository";
 import type { JobRunner } from "./jobs/runner";
 import type { JobStateStore } from "./jobs/state-store";
@@ -39,6 +40,7 @@ export type AppDependencies = {
   fishfactsClient: FishfactsApiClient;
   authCache: TokenCache;
   geoRepository: JMeldingGeoRepository;
+  gillnetRepository: GillnetRepository;
   tilesRepository: TilesRepository;
   areasRepository: AreasRepository;
   sildelagetCatchRepository: SildelagetCatchRepository;
@@ -56,6 +58,7 @@ export function createApp({
   fishfactsClient,
   authCache,
   geoRepository,
+  gillnetRepository,
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
@@ -214,6 +217,28 @@ export function createApp({
       cursor,
     });
     return c.json(page);
+  });
+
+  // Faroese gillnet positions (Vørn) — latest daily snapshot. Optional `bbox`
+  // (minLon,minLat,maxLon,maxLat) to find nets near a trawl plan.
+  app.get("/api/gillnet", async (c) => {
+    const bboxParam = c.req.query("bbox");
+    let bbox: [number, number, number, number] | undefined;
+    if (bboxParam) {
+      const parsed = parseBbox(bboxParam);
+      if (!parsed)
+        return c.json(
+          {
+            error: "invalid_bbox",
+            message:
+              "bbox must be minLon,minLat,maxLon,maxLat in [-180..180,-90..90]",
+          },
+          400,
+        );
+      bbox = [parsed.minLon, parsed.minLat, parsed.maxLon, parsed.maxLat];
+    }
+    const result = await gillnetRepository.listLatest({ bbox });
+    return c.json(result);
   });
 
   app.get("/api/jmeldinger/:jmNumber", async (c) => {

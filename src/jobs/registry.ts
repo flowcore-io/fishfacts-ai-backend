@@ -12,6 +12,7 @@ import type { UsableApiClient } from "@/usable/client";
 import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
+import { createGillnetPositionsJob } from "./gillnet-positions";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
 import { createVornVeidibannJob } from "./vorn-veidibann";
@@ -72,6 +73,16 @@ export function createJobDefinitions(
         refreshExisting: z.coerce.boolean().default(false),
       }),
       execute: createFiskistofaWfsClosuresJob(env, writer),
+    },
+    {
+      id: "gillnet-positions",
+      name: "Faroese gillnet positions collector (Vørn)",
+      // Daily at 07:00 UTC — the feed updates ~06:23.
+      schedule: "0 7 * * *",
+      inputSchema: z.object({
+        refreshExisting: z.coerce.boolean().default(false),
+      }),
+      execute: createGillnetPositionsJob(env, writer),
     },
     {
       id: "sildelaget-catchjournal",

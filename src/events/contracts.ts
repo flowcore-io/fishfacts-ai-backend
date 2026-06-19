@@ -249,3 +249,38 @@ export const aisPositionFixObservedSchema = z.object({
 export type AisPositionFixObserved = z.infer<
   typeof aisPositionFixObservedSchema
 >;
+
+export const GILLNET_FLOW_TYPE = "fishfacts-gillnet.0" as const;
+export const GILLNET_VESSEL_OBSERVED_EVENT_TYPE =
+  "gillnet.vessel.observed.0" as const;
+export const GILLNET_VESSEL_OBSERVED_PATHWAY =
+  `${GILLNET_FLOW_TYPE}/${GILLNET_VESSEL_OBSERVED_EVENT_TYPE}` as const;
+
+const gillnetPointSchema = z.object({
+  lat: z.number(),
+  lon: z.number(),
+  area: z.string().nullable().default(null),
+});
+const gillnetLineSchema = z.object({
+  idx: z.number().int(),
+  from: gillnetPointSchema,
+  to: gillnetPointSchema,
+});
+
+/**
+ * One Faroese gillnet vessel's currently-set nets, from the Vørn GillnetPublic
+ * daily snapshot. `snapshotDate` (YYYY-MM-DD) is the daily replace key — the
+ * read model returns only the latest snapshot, so vessels that drop out fall
+ * away automatically.
+ */
+export const gillnetVesselObservedSchema = z.object({
+  callSign: z.string().min(1),
+  vesselName: z.string().min(1),
+  gearType: z.string().min(1),
+  snapshotDate: z.string().min(1),
+  lastUpdatedAt: z.string().optional(),
+  nets: z.array(gillnetLineSchema),
+  signature: z.string().min(1),
+  checkedAt: z.string().datetime(),
+});
+export type GillnetVesselObserved = z.infer<typeof gillnetVesselObservedSchema>;
