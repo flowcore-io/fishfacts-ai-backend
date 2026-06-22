@@ -129,7 +129,6 @@ export class JobRunner {
       ];
       persisted = await this.stateStore.save({
         jobId,
-        fragmentId: loaded.fragmentId,
         state,
       });
     } catch (preIifeError) {
@@ -138,17 +137,16 @@ export class JobRunner {
     }
     let completed:
       | {
-          fragmentId: string | null;
           state: PersistedJobState;
           result: Awaited<ReturnType<JobDefinition["execute"]>>;
         }
       | undefined;
     let progressSaveChain = Promise.resolve();
     // Throttle in-run PROGRESS saves: reportProgress() can fire many times/second
-    // (the AIS backfill emits thousands of rows/s), and each save is a Usable
-    // fragment PATCH. Coalesce them to ≤1 write per JOB_PROGRESS_SAVE_MIN_INTERVAL_MS.
-    // The latest progress is already mutated into persisted.state, so a single
-    // trailing save captures it. Start/terminal/checkpoint saves bypass this.
+    // (the AIS backfill emits thousands of rows/s). Coalesce them to ≤1 write per
+    // JOB_PROGRESS_SAVE_MIN_INTERVAL_MS. The latest progress is already mutated
+    // into persisted.state, so a single trailing save captures it.
+    // Start/terminal/checkpoint saves bypass this.
     const progressMinIntervalMs = this.env.JOB_PROGRESS_SAVE_MIN_INTERVAL_MS;
     let lastProgressSaveMs = 0;
     let progressTimer: ReturnType<typeof setTimeout> | null = null;
@@ -166,7 +164,6 @@ export class JobRunner {
           persisted.state.updatedAt = new Date().toISOString();
           persisted = await this.stateStore.save({
             jobId,
-            fragmentId: persisted.fragmentId,
             state: persisted.state,
           });
         });
@@ -227,7 +224,6 @@ export class JobRunner {
             persisted.state.updatedAt = new Date().toISOString();
             persisted = await this.stateStore.save({
               jobId,
-              fragmentId: persisted.fragmentId,
               state: persisted.state,
             });
           },
@@ -280,7 +276,6 @@ export class JobRunner {
         try {
           persisted = await this.stateStore.save({
             jobId,
-            fragmentId: persisted.fragmentId,
             state: nextState,
           });
         } catch (saveError) {
@@ -299,7 +294,6 @@ export class JobRunner {
           throw saveError;
         }
         completed = {
-          fragmentId: persisted.fragmentId,
           state: persisted.state,
           result,
         };
@@ -366,7 +360,6 @@ export class JobRunner {
         try {
           await this.stateStore.save({
             jobId,
-            fragmentId: persisted.fragmentId,
             state: nextState,
           });
         } catch (saveError) {
@@ -409,7 +402,6 @@ export class JobRunner {
           try {
             await this.stateStore.save({
               jobId,
-              fragmentId: persisted.fragmentId,
               state: persisted.state,
             });
             console.error(
@@ -435,7 +427,6 @@ export class JobRunner {
     return {
       jobId,
       runId,
-      fragmentId: persisted.fragmentId,
       state: persisted.state,
       promise,
       result: () => {

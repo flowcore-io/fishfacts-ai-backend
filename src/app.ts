@@ -320,7 +320,6 @@ export function createApp({
     const loaded = await jobStateStore.loadAll();
     return c.json({
       ok: true,
-      fragmentIds: loaded.fragmentIds,
       jobs: jobRunner.definitions().map((job) => ({
         id: job.id,
         name: job.name,

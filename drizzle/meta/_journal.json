@@ -85,6 +85,13 @@
       "when": 1781879461860,
       "tag": "0011_flippant_mother_askani",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1782167064916,
+      "tag": "0012_fantastic_raider",
+      "breakpoints": true
     }
   ]
 }

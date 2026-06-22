@@ -25,6 +25,7 @@ import { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
 import { createJobDefinitions } from "./jobs/registry";
 import { JobRunner } from "./jobs/runner";
 import { JobScheduler } from "./jobs/scheduler";
+import { seedJobStateFromUsable } from "./jobs/seed-from-usable";
 import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
 import { SildelagetCatchProjector } from "./sildelaget/projector";
@@ -96,7 +97,7 @@ const jobs = createJobDefinitions(
   aisChRepo,
   aisBucketReader,
 );
-const jobStateStore = new JobStateStore(env, usable, jobs);
+const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
 const jobScheduler = new JobScheduler(env, jobRunner);
 const aisBackfillSupervisor = new AisBackfillSupervisor(
@@ -126,6 +127,14 @@ const app = createApp({
 });
 
 await pathways.startPump();
+// One-time migration of legacy Usable job-state fragments → Postgres. MUST run
+// before the scheduler/supervisor so resume-dependent jobs don't start on empty
+// state. Idempotent (only seeds jobs missing a row) and best-effort.
+await seedJobStateFromUsable(db, usable, env, jobs).catch((error) => {
+  console.error("[Jobs] seedJobStateFromUsable failed (jobs may start fresh)", {
+    message: error instanceof Error ? error.message : String(error),
+  });
+});
 jobScheduler.start();
 aisBackfillSupervisor.start();
 
