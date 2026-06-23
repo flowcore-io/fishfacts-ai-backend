@@ -32,9 +32,12 @@ const headers = {
   authorization: `Bearer ${token}`,
   "content-type": "application/json",
 };
-const KEY_PREFIX = "fishfacts-ai-backend-job-state-";
+// JOB_STATE_FRAGMENT_TYPE_ID is dedicated to job-state fragments, so listing by
+// it scopes us correctly. (The list endpoint does NOT return `key`, so we can't
+// filter on that — we match the title prefix as a belt-and-suspenders check.)
+const TITLE_PREFIX = "FishFacts Job State:";
 
-const found: { id: string; key: string }[] = [];
+const found: { id: string; title: string }[] = [];
 let offset = 0;
 for (;;) {
   const url = `${base}/memory-fragments?workspaceId=${ws}&fragmentTypeId=${typeId}&limit=200&offset=${offset}`;
@@ -44,13 +47,13 @@ for (;;) {
     process.exit(1);
   }
   const json = (await res.json()) as {
-    fragments?: { id: string; key?: string }[];
+    fragments?: { id: string; title?: string }[];
     totalCount?: number;
   };
   const rows = json.fragments ?? [];
   for (const f of rows) {
-    if ((f.key ?? "").startsWith(KEY_PREFIX))
-      found.push({ id: f.id, key: f.key ?? "" });
+    if ((f.title ?? "").startsWith(TITLE_PREFIX))
+      found.push({ id: f.id, title: f.title ?? "" });
   }
   if (rows.length === 0) break;
   offset += rows.length;
@@ -58,7 +61,7 @@ for (;;) {
 }
 
 console.log(`Found ${found.length} job-state fragment(s):`);
-for (const f of found) console.log(`  ${f.key}  (${f.id})`);
+for (const f of found) console.log(`  ${f.title}  (${f.id})`);
 
 if (!apply) {
   console.log("\nDry run — pass --apply to archive these.");
@@ -71,6 +74,6 @@ for (const f of found) {
     headers,
     body: JSON.stringify({ status: "archived" }),
   });
-  console.log(`archive ${f.key}: HTTP ${res.status}`);
+  console.log(`archive ${f.title}: HTTP ${res.status}`);
 }
 console.log("Done.");
