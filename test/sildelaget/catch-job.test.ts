@@ -32,6 +32,7 @@ describe("sildelaget-catchjournal job", () => {
         return "evt-sild";
       },
       writeGillnetVesselObserved: async () => "unused",
+      writeGebcoFeatureObserved: async () => "unused",
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",
@@ -110,6 +111,7 @@ describe("sildelaget-catchjournal job", () => {
         return "evt-sild";
       },
       writeGillnetVesselObserved: async () => "unused",
+      writeGebcoFeatureObserved: async () => "unused",
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",
@@ -173,6 +175,7 @@ describe("sildelaget-catchjournal job", () => {
         return "evt-sild";
       },
       writeGillnetVesselObserved: async () => "unused",
+      writeGebcoFeatureObserved: async () => "unused",
       writeAreaCreated: async () => "unused",
       writeAreaUpdated: async () => "unused",
       writeAreaDeleted: async () => "unused",

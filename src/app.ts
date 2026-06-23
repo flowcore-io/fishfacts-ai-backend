@@ -21,6 +21,7 @@ import { AIS_FLOW_TYPE } from "./events/contracts";
 import { genericEventInputSchema } from "./events/contracts";
 import type { GenericEventRepository } from "./events/repository";
 import type { FishfactsApiClient } from "./fishfacts/client";
+import type { GebcoRepository } from "./gebco/repository";
 import type { GillnetRepository } from "./gillnet/repository";
 import type { JMeldingGeoRepository } from "./jmelding/geo-repository";
 import type { JobRunner } from "./jobs/runner";
@@ -41,6 +42,7 @@ export type AppDependencies = {
   authCache: TokenCache;
   geoRepository: JMeldingGeoRepository;
   gillnetRepository: GillnetRepository;
+  gebcoRepository: GebcoRepository;
   tilesRepository: TilesRepository;
   areasRepository: AreasRepository;
   sildelagetCatchRepository: SildelagetCatchRepository;
@@ -59,6 +61,7 @@ export function createApp({
   authCache,
   geoRepository,
   gillnetRepository,
+  gebcoRepository,
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
@@ -264,6 +267,93 @@ export function createApp({
     }
     const result = await gillnetRepository.listLatest({ bbox });
     return c.json(result);
+  });
+
+  // GEBCO undersea feature names (banks, ridges, basins, …). Public reference
+  // gazetteer. `q` = name search, `bbox` = features in a map view, `near` =
+  // point+radiusKm, `includeGeoJSON=true` adds geometry to name results.
+  app.get("/api/gebco", async (c) => {
+    const q = c.req.query("q");
+    const bboxParam = c.req.query("bbox");
+    const nearParam = c.req.query("near");
+    const limit = parseLimit(c.req.query("limit") ?? null);
+    const includeGeoJSON = c.req.query("includeGeoJSON") === "true";
+
+    const set = [q, bboxParam, nearParam].filter(Boolean).length;
+    if (set > 1) {
+      return c.json(
+        {
+          error: "invalid_query",
+          message: "pass at most one of q, bbox, near",
+        },
+        400,
+      );
+    }
+
+    if (typeof q === "string" && q.trim().length > 0) {
+      const features = await gebcoRepository.findByName(
+        q,
+        limit,
+        includeGeoJSON,
+      );
+      return c.json({ query: { q }, features, returned: features.length });
+    }
+    if (bboxParam) {
+      const parsed = parseBbox(bboxParam);
+      if (!parsed)
+        return c.json(
+          {
+            error: "invalid_bbox",
+            message:
+              "bbox must be minLon,minLat,maxLon,maxLat in [-180..180,-90..90]",
+          },
+          400,
+        );
+      const features = await gebcoRepository.findInBbox(
+        [parsed.minLon, parsed.minLat, parsed.maxLon, parsed.maxLat],
+        limit,
+      );
+      return c.json({
+        query: { bbox: bboxParam },
+        features,
+        returned: features.length,
+      });
+    }
+    if (nearParam) {
+      const near = parseNear(nearParam, c.req.query("radiusKm") ?? null);
+      if (!near)
+        return c.json(
+          {
+            error: "invalid_near",
+            message: "near must be lon,lat with radiusKm in (0..5000]",
+          },
+          400,
+        );
+      const features = await gebcoRepository.findNear(
+        near.lon,
+        near.lat,
+        near.radiusKm,
+        limit,
+      );
+      return c.json({
+        query: { near: nearParam },
+        features,
+        returned: features.length,
+      });
+    }
+    return c.json(
+      {
+        error: "invalid_query",
+        message: "provide one of q, bbox, or near",
+      },
+      400,
+    );
+  });
+
+  app.get("/api/gebco/:featureId", async (c) => {
+    const feature = await gebcoRepository.findById(c.req.param("featureId"));
+    if (!feature) return c.json({ error: "not_found" }, 404);
+    return c.json(feature);
   });
 
   app.get("/api/jmeldinger/:jmNumber", async (c) => {
