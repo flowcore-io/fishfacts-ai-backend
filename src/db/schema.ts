@@ -27,6 +27,13 @@ const geometryMultiLineString = customType<{
   },
 });
 
+/** Mixed-type geometry column (GEBCO features are points, lines, or polygons). */
+const geometryGeneric = customType<{ data: string; driverData: string }>({
+  dataType() {
+    return "geometry(Geometry, 4326)";
+  },
+});
+
 export const genericEvents = pgTable("generic_events", {
   id: text("id").primaryKey(),
   kind: text("kind").notNull(),
@@ -158,6 +165,34 @@ export const gillnetPositions = pgTable(
       "gist",
       table.geom,
     ),
+  }),
+);
+
+export const gebcoFeatures = pgTable(
+  "gebco_features",
+  {
+    featureId: text("feature_id").primaryKey(),
+    name: text("name").notNull(),
+    featureType: text("feature_type").notNull(),
+    geometryType: text("geometry_type").notNull(),
+    geom: geometryGeneric("geom"),
+    centroidLat: doublePrecision("centroid_lat"),
+    centroidLon: doublePrecision("centroid_lon"),
+    minLat: doublePrecision("min_lat"),
+    maxLat: doublePrecision("max_lat"),
+    minLon: doublePrecision("min_lon"),
+    maxLon: doublePrecision("max_lon"),
+    sourceEventId: text("source_event_id").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    geomGistIdx: index("gebco_features_geom_gist_idx").using(
+      "gist",
+      table.geom,
+    ),
+    nameIdx: index("gebco_features_name_idx").on(table.name),
   }),
 );
 

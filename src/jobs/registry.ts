@@ -12,6 +12,7 @@ import type { UsableApiClient } from "@/usable/client";
 import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
+import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
@@ -83,6 +84,17 @@ export function createJobDefinitions(
         refreshExisting: z.coerce.boolean().default(false),
       }),
       execute: createGillnetPositionsJob(env, writer),
+    },
+    {
+      id: "gebco-ingest",
+      name: "GEBCO undersea feature names ingester",
+      // Static reference data — impossible date (Feb 31) ⇒ never auto-scheduled;
+      // run manually via POST /api/jobs/run when GEBCO republishes.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        refreshExisting: z.coerce.boolean().default(false),
+      }),
+      execute: createGebcoIngestJob(env, writer),
     },
     {
       id: "sildelaget-catchjournal",

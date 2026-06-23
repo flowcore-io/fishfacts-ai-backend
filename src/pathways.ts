@@ -25,12 +25,16 @@ import {
   type AreaCreated,
   type AreaDeleted,
   type AreaUpdated,
+  GEBCO_FEATURE_OBSERVED_EVENT_TYPE,
+  GEBCO_FEATURE_OBSERVED_PATHWAY,
+  GEBCO_FLOW_TYPE,
   GENERIC_EVENT_TYPE,
   GENERIC_FLOW_TYPE,
   GENERIC_PATHWAY,
   GILLNET_FLOW_TYPE,
   GILLNET_VESSEL_OBSERVED_EVENT_TYPE,
   GILLNET_VESSEL_OBSERVED_PATHWAY,
+  type GebcoFeatureObserved,
   type GillnetVesselObserved,
   JMELDING_ANNOUNCEMENT_DISCOVERED_EVENT_TYPE,
   JMELDING_ANNOUNCEMENT_PATHWAY,
@@ -43,6 +47,7 @@ import {
   areaCreatedSchema,
   areaDeletedSchema,
   areaUpdatedSchema,
+  gebcoFeatureObservedSchema,
   genericEventInputSchema,
   gillnetVesselObservedSchema,
   jmeldingAnnouncementDiscoveredSchema,
@@ -50,6 +55,7 @@ import {
 } from "./events/contracts";
 import { chunkAnnouncement } from "./events/jmelding-chunking";
 import type { GenericEventRepository } from "./events/repository";
+import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import type { SildelagetCatchProjector } from "./sildelaget/projector";
@@ -63,6 +69,7 @@ export interface PathwayWriter {
     data: SildelagetCatchEntryObserved,
   ): Promise<string>;
   writeGillnetVesselObserved(data: GillnetVesselObserved): Promise<string>;
+  writeGebcoFeatureObserved(data: GebcoFeatureObserved): Promise<string>;
   writeAreaCreated(data: AreaCreated): Promise<string>;
   writeAreaUpdated(data: AreaUpdated): Promise<string>;
   writeAreaDeleted(data: AreaDeleted): Promise<string>;
@@ -104,6 +111,7 @@ export function createPathwayRuntime(
   sildelagetCatchProjector: SildelagetCatchProjector,
   aisProjector: AisPositionProjector,
   gillnetProjector: GillnetProjector,
+  gebcoProjector: GebcoProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -256,6 +264,20 @@ export function createPathwayRuntime(
       );
     });
 
+  pathways
+    .register({
+      flowType: GEBCO_FLOW_TYPE,
+      eventType: GEBCO_FEATURE_OBSERVED_EVENT_TYPE,
+      schema: gebcoFeatureObservedSchema,
+      flowTypeDescription: "FishFacts GEBCO undersea feature name events",
+      description: "An IHO-IOC GEBCO undersea feature was observed",
+    } as never)
+    .handle(GEBCO_FEATURE_OBSERVED_PATHWAY, async (event) => {
+      await gebcoProjector.handleObserved(
+        event as { eventId: string; payload: unknown },
+      );
+    });
+
   const router = new PathwayRouter(pathways, env.FLOWCORE_TRANSFORMER_SECRET);
 
   return {
@@ -334,6 +356,26 @@ export function createPathwayRuntime(
             source: "gillnet-positions-job",
             callSign: data.callSign,
             snapshotDate: data.snapshotDate,
+          },
+          options: { fireAndForget: true },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeGebcoFeatureObserved(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof GEBCO_FEATURE_OBSERVED_PATHWAY,
+            input: {
+              data: GebcoFeatureObserved;
+              metadata: Record<string, unknown>;
+              options?: { fireAndForget?: boolean };
+            },
+          ) => Promise<string | string[]>
+        )(GEBCO_FEATURE_OBSERVED_PATHWAY, {
+          data,
+          metadata: {
+            source: "gebco-ingest-job",
+            featureId: data.featureId,
           },
           options: { fireAndForget: true },
         });

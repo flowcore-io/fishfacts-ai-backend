@@ -284,3 +284,34 @@ export const gillnetVesselObservedSchema = z.object({
   checkedAt: z.string().datetime(),
 });
 export type GillnetVesselObserved = z.infer<typeof gillnetVesselObservedSchema>;
+
+export const GEBCO_FLOW_TYPE = "fishfacts-gebco.0" as const;
+export const GEBCO_FEATURE_OBSERVED_EVENT_TYPE =
+  "gebco.feature.observed.0" as const;
+export const GEBCO_FEATURE_OBSERVED_PATHWAY =
+  `${GEBCO_FLOW_TYPE}/${GEBCO_FEATURE_OBSERVED_EVENT_TYPE}` as const;
+
+export const gebcoGeometryTypeSchema = z.enum(["point", "line", "polygon"]);
+export type GebcoGeometryType = z.infer<typeof gebcoGeometryTypeSchema>;
+
+/**
+ * One named undersea feature from the IHO-IOC GEBCO Gazetteer (banks, ridges,
+ * basins, seamounts, …). `featureId` is the gazetteer's stable FEATURE_ID (kept
+ * as text per the text-PK convention) so projection upserts by identity — the
+ * dataset is append-mostly, so there is no snapshot full-replace. `bbox` is
+ * `[minLon, minLat, maxLon, maxLat]`; `geomWkt` is WGS84 WKT (POINT / MULTIPOINT
+ * / MULTILINESTRING / MULTIPOLYGON).
+ */
+export const gebcoFeatureObservedSchema = z.object({
+  featureId: z.string().min(1),
+  name: z.string().min(1),
+  featureType: z.string().min(1),
+  geometryType: gebcoGeometryTypeSchema,
+  geomWkt: z.string().min(1),
+  centroidLat: z.number(),
+  centroidLon: z.number(),
+  bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+  signature: z.string().min(1),
+  checkedAt: z.string().datetime(),
+});
+export type GebcoFeatureObserved = z.infer<typeof gebcoFeatureObservedSchema>;

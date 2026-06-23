@@ -16,6 +16,8 @@ import { runMigrations } from "./db/migrate";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
+import { GebcoProjector } from "./gebco/projector";
+import { GebcoRepository } from "./gebco/repository";
 import { GillnetProjector } from "./gillnet/projector";
 import { GillnetRepository } from "./gillnet/repository";
 import { JMeldingGeoProjector } from "./jmelding/geo-projector";
@@ -43,6 +45,8 @@ const geoProjector = new JMeldingGeoProjector(db);
 const geoRepository = new JMeldingGeoRepository(db);
 const gillnetProjector = new GillnetProjector(db);
 const gillnetRepository = new GillnetRepository(db);
+const gebcoProjector = new GebcoProjector(db);
+const gebcoRepository = new GebcoRepository(db);
 const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
@@ -85,6 +89,7 @@ const pathways = createPathwayRuntime(
   sildelagetCatchProjector,
   aisProjector,
   gillnetProjector,
+  gebcoProjector,
 );
 const jobs = createJobDefinitions(
   env,
@@ -117,6 +122,7 @@ const app = createApp({
   authCache,
   geoRepository,
   gillnetRepository,
+  gebcoRepository,
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
