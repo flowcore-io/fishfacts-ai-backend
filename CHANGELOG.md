@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.15.0...v1.15.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* bump @flowcore/pathways to 2.4.6 (guarded notification-client JSON.parse) ([#76](https://github.com/flowcore-io/fishfacts-ai-backend/issues/76)) ([b41f0d7](https://github.com/flowcore-io/fishfacts-ai-backend/commit/b41f0d7a3ef483eac618cdb62aea7b9b653c9625))
+
 ## [1.15.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.14.0...v1.15.0) (2026-06-23)
 
 
