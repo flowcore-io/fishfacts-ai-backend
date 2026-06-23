@@ -6,6 +6,7 @@ import {
   expect,
   test,
 } from "bun:test";
+import postgres from "postgres";
 import { AppProcess } from "./fixtures/app-process";
 import { FakeFishfactsServer } from "./fixtures/fake-fishfacts";
 import { FakeFiskeridirServer } from "./fixtures/fake-fiskeridir";
@@ -13,6 +14,8 @@ import { FakeUsableServer } from "./fixtures/fake-usable";
 import { WebhookTestFixture } from "./fixtures/webhook.fixture";
 
 const APP_PORT = 4410;
+const DB_URL =
+  "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test";
 const WEBHOOK_PORT = 4411;
 const USABLE_PORT = 4412;
 const FISKERIDIR_PORT = 4413;
@@ -49,8 +52,7 @@ const webhook = new WebhookTestFixture({
 }).addEndpoint(FLOW_TYPE, EVENT_TYPE, true);
 const app = new AppProcess(APP_PORT, {
   NODE_ENV: "test",
-  DATABASE_URL:
-    "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test",
+  DATABASE_URL: DB_URL,
   FLOWCORE_TENANT: "jbiskur",
   FLOWCORE_DATA_CORE: "fishfacts-ai-backend",
   FLOWCORE_DATA_CORE_ID: "ad37e770-4d43-4ebd-8166-401be5e0b513",
@@ -70,6 +72,13 @@ const app = new AppProcess(APP_PORT, {
   FISHFACTS_API_BASE_URL: fishfacts.baseUrl,
   FISHFACTS_APPLICATION: "FISHFACTS",
 });
+
+// Job state now lives in Postgres (not Usable fragments), so resetting a job's
+// resume state between in-test runs means truncating these tables.
+const jobStateDb = postgres(DB_URL);
+async function resetJobState() {
+  await jobStateDb`truncate table job_state, job_runs`;
+}
 
 async function waitFor<T>(read: () => T | Promise<T>, message: string) {
   const deadline = Date.now() + 5000;
@@ -104,6 +113,7 @@ describe("J-meldinger jobs black-box", () => {
     await fishfacts.stop();
     await fiskeridir.stop();
     await usable.stop();
+    await jobStateDb.end();
   });
 
   test("job run emits Flowcore announcement event and reconstructs Usable fragment", async () => {
@@ -163,9 +173,7 @@ describe("J-meldinger jobs black-box", () => {
         state.state.jobs["fiskeridir-jmeldinger"]?.lastRunStatus === "success"
       );
     }, "Job did not finish before second run");
-    for (const [id, fragment] of usable.fragments) {
-      if (fragment.tags?.includes("job-system")) usable.fragments.delete(id);
-    }
+    await resetJobState();
     const secondResponse = await app.fetch("/api/jobs/run", {
       method: "POST",
       headers: { "x-auth-token": VALID_AUTH_TOKEN },
@@ -323,8 +331,8 @@ describe("J-meldinger jobs black-box", () => {
   test("oversize body chunks across multiple events and reassembles into one fragment", async () => {
     fiskeridir.setLargeDetailBody(180_000, "L");
     try {
+      await resetJobState();
       for (const [id, fragment] of usable.fragments) {
-        if (fragment.tags?.includes("job-system")) usable.fragments.delete(id);
         if (fragment.key === "fishfacts-jmelding-j-1-2026") {
           usable.fragments.delete(id);
         }

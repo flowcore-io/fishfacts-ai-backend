@@ -15,6 +15,7 @@ export default defineConfig({
     "jmelding_*",
     "sildelaget_*",
     "ais_*",
+    "job_*",
     "!pathway_*",
   ],
 });

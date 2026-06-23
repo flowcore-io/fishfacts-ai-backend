@@ -319,3 +319,54 @@ export const aisBackfillBuckets = pgTable(
     ),
   }),
 );
+
+// Job-system state — moved off Usable memory fragments (which re-chunk + re-embed
+// the whole doc on every PATCH, hammering Usable) into Postgres. One row per job
+// in `job_state` (resume cursor + telemetry), plus a bounded `job_runs` history.
+// The runner's JobStateStore reads/writes these; nothing else consumes them.
+export const jobState = pgTable("job_state", {
+  jobId: text("job_id").primaryKey(),
+  enabled: boolean("enabled").notNull().default(true),
+  lastRunStatus: text("last_run_status").notNull().default("idle"),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  lastDurationMs: bigint("last_duration_ms", { mode: "number" }),
+  listingFingerprint: text("listing_fingerprint"),
+  // Per-job resume cursor (jmelding/gillnet/vorn/fiskistofa). AIS jobs leave this
+  // null — their cursor lives in ais_ingest_state / ais_backfill_buckets.
+  cursor: jsonb("cursor"),
+  progress: jsonb("progress"),
+  latestItems: jsonb("latest_items").notNull().default([]),
+  // Cumulative counters (job_runs is bounded, so it can't be the counter source).
+  metrics: jsonb("metrics")
+    .notNull()
+    .default({ runs: 0, successes: 0, failures: 0, newDataEvents: 0 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const jobRuns = pgTable(
+  "job_runs",
+  {
+    runId: text("run_id").primaryKey(),
+    jobId: text("job_id").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    status: text("status").notNull(),
+    trigger: text("trigger").notNull(),
+    args: jsonb("args"),
+    error: text("error"),
+    durationMs: bigint("duration_ms", { mode: "number" }),
+    changed: boolean("changed"),
+  },
+  (table) => ({
+    jobStartedIdx: index("job_runs_job_id_started_at_idx").on(
+      table.jobId,
+      table.startedAt,
+    ),
+  }),
+);
