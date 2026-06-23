@@ -528,7 +528,16 @@ export function createPathwayRuntime(
           // projection is safe; geo + fragment upserts are idempotent). AIS
           // keeps its own high concurrency via the per-flow-type override.
           default: 8,
-          byFlowType: { [AIS_FLOW_TYPE]: env.AIS_PUMP_CONCURRENCY },
+          byFlowType: {
+            [AIS_FLOW_TYPE]: env.AIS_PUMP_CONCURRENCY,
+            // GEBCO is a one-shot ~5,189-event bulk reference load. On the
+            // default 8 it drains slowly because the box is dominated by the
+            // AIS firehose (shared CPU / pg pool / API / notifier), inflating
+            // each pump cycle. A higher per-flow-type concurrency reserves more
+            // per cycle so a refresh drains in minutes, not hours. Upserts are
+            // idempotent (PK feature_id), so out-of-order projection is safe.
+            [GEBCO_FLOW_TYPE]: 48,
+          },
         },
         autoProvision: {
           dataCore: true,
