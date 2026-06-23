@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.14.0...v1.15.0) (2026-06-23)
+
+
+### Features
+
+* **jobs:** move job-state store from Usable fragments to Postgres ([#73](https://github.com/flowcore-io/fishfacts-ai-backend/issues/73)) ([c548d83](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c548d8314c10a2a27de6e9c340945fef5367ee65))
+
 ## [1.14.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.13.0...v1.14.0) (2026-06-19)
 
 
