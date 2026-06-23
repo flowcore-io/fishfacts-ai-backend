@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.15.1...v1.16.0) (2026-06-23)
+
+
+### Features
+
+* **gebco:** ingest GEBCO undersea feature names into PostGIS geo index ([#78](https://github.com/flowcore-io/fishfacts-ai-backend/issues/78)) ([1905267](https://github.com/flowcore-io/fishfacts-ai-backend/commit/1905267c76f2542dccc10152661fa48d8ef93558))
+
 ## [1.15.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.15.0...v1.15.1) (2026-06-23)
 
 
