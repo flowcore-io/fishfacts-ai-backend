@@ -6,7 +6,8 @@
       "name": "fishfacts-ai-backend",
       "dependencies": {
         "@clickhouse/client": "^1.20.0",
-        "@flowcore/pathways": "^2.4.2",
+        "@flowcore/pathways": "^2.4.6",
+        "@flowcore/sdk": "^4.2.4",
         "@google-cloud/cloud-sql-connector": "^1.11.1",
         "drizzle-orm": "^0.43.1",
         "exceljs": "^4.4.0",
@@ -117,11 +118,17 @@
 
     "@fast-csv/parse": ["@fast-csv/parse@4.3.6", "", { "dependencies": { "@types/node": "^14.0.1", "lodash.escaperegexp": "^4.1.2", "lodash.groupby": "^4.6.0", "lodash.isfunction": "^3.0.9", "lodash.isnil": "^4.0.0", "lodash.isundefined": "^3.0.1", "lodash.uniq": "^4.5.0" } }, "sha512-uRsLYksqpbDmWaSmzvJcuApSEe38+6NQZBUsuAyMZKqHxH0g1wcJgsKUvN3WC8tewaqFjBMMGrkHmC+T7k8LvA=="],
 
-    "@flowcore/pathways": ["@flowcore/pathways@2.4.2", "", { "dependencies": { "@date-fns/utc": "^2.1.0", "@deno/shim-deno": "~0.18.0", "@flowcore/sdk": "^1.78.0", "@flowcore/sdk-transformer-core": "^2.5.1", "@sinclair/typebox": "0.32.15", "date-fns": "^4.1.0", "file-type": "^21.0.0", "long": "^5.3.1", "nats": "^2.29.1", "node-cache": "^5.1.2", "postgres": "^3.4.3", "prom-client": "^15.1.3", "rxjs": "^7.8.1", "ws": "^8.18.0" }, "optionalDependencies": { "bun-sqlite-key-value": "1.13.1" }, "peerDependencies": { "zod": "^3.25.63" } }, "sha512-oIXKWaG1JEWIUxLtls1lVh4DVYMpbVPCRPJYKGNKRdm2Z38p1aeyuxNVxwPnN1e9qlwYc3OvER+E4JPxMJB0bA=="],
+    "@flowcore/data-pump": ["@flowcore/data-pump@0.22.1", "", { "dependencies": { "@date-fns/utc": "^2.1.0", "@flowcore/sdk": "^4.2.3", "@flowcore/sdk-oidc-client": "^1.3.1", "@flowcore/time-uuid": "^0.2.0", "@sinclair/typebox": "0.32.15", "date-fns": "^4.1.0", "nats": "^2.29.1", "prom-client": "^15.1.3", "rxjs": "^7.8.1" } }, "sha512-Nv4cgGWoOvFRNAqd1E2hmR4lpfbdb1GqA0CNnYdg5eYE7Lj1AXbo4fVP8YMCm+iQDtEl/eH+GdVvVlveNkuJ1g=="],
 
-    "@flowcore/sdk": ["@flowcore/sdk@1.79.0", "", { "dependencies": { "@deno/shim-deno": "~0.18.0", "@sinclair/typebox": "0.32.15", "rxjs": "^7.8.1", "ws": "^8.13.0" } }, "sha512-urO+30TGQPxRvQTxHig2kajwVm5M3L2BH1ibqtDi6PvNzwqxSzJht2qNuIVh4mEyltZPIF5n8PnBLeAQysmUTQ=="],
+    "@flowcore/pathways": ["@flowcore/pathways@2.4.6", "", { "dependencies": { "@deno/shim-deno": "~0.18.0", "@flowcore/data-pump": "^0.22.1", "@flowcore/sdk": "^4.2.4", "@flowcore/sdk-transformer-core": "^2.5.1", "date-fns": "4.1.0", "file-type": "^21.0.0", "node-cache": "^5.1.2", "postgres": "^3.4.3", "rxjs": "^7.8.1", "ws": "^8.18.0" }, "optionalDependencies": { "bun-sqlite-key-value": "1.13.1" }, "peerDependencies": { "zod": "^3.25.63" } }, "sha512-6iy4tWA2eST25GtMDl2mHDs9NryJu3cAR81GAsVky+zB/BJAH4nwPwxeaLR7diTfI079U1teUlmYkCVgxod8Rw=="],
+
+    "@flowcore/sdk": ["@flowcore/sdk@4.2.4", "", { "dependencies": { "@sinclair/typebox": "0.32.15", "rxjs": "^7.8.1", "ws": "^8.18.0" } }, "sha512-ODsC54c0QY8y1iySU+1MeSUOjdnxc64b3atIx/Vif94++uJzYclNaV4uBJKbEgijP1g3qQD65z6lcA2YoVf1Gw=="],
+
+    "@flowcore/sdk-oidc-client": ["@flowcore/sdk-oidc-client@1.3.1", "", {}, "sha512-fUHOmKDQYMqMDlh/KucJiDZ9he12QUkQ2KOJKCVy6GD7qsJs9qiJ8jV9th1Xeuz9kAca4TRXt+spMUhZ4CfUDw=="],
 
     "@flowcore/sdk-transformer-core": ["@flowcore/sdk-transformer-core@2.5.1", "", { "dependencies": { "@sinclair/typebox": "^0.32.15", "radash": "12.1.0" } }, "sha512-RgXxMBsF/SxpE5libbPA+RKKM8tXJtKJKiHV86nY0ALY+5xSOmGXbvw1qUndwgOxSv5xiwL9rty0p1gLPFXmtw=="],
+
+    "@flowcore/time-uuid": ["@flowcore/time-uuid@0.2.0", "", { "dependencies": { "long": "^5.3.1" } }, "sha512-48+3o2EAsJa0lZbVEb5GRYbGoq5FSBgis4LFvhWspdtrSI6LBHTkhKNJKMkLVw9GzYxvIKyjRfFgEQ9aqbkUSQ=="],
 
     "@google-cloud/cloud-sql-connector": ["@google-cloud/cloud-sql-connector@1.11.1", "", { "dependencies": { "@googleapis/sqladmin": "^35.2.0", "gaxios": "^7.1.4", "google-auth-library": "^10.6.2", "p-throttle": "^7.0.0" } }, "sha512-pYFURu8H4Jr5O2KjrN0MdBLKkrChOPiQt+J/KT/DIRwa9cWhFVf2EB6MQxYYv3vQvkB5vEBpTi+TUp4DHZPi6Q=="],
 
