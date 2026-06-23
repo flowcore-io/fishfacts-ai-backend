@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.16.0...v1.16.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **gebco:** raise pump concurrency to 48 for the gebco flow type ([#80](https://github.com/flowcore-io/fishfacts-ai-backend/issues/80)) ([842979b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/842979b392d9b40fbc515bc2b7bf9abf04138096))
+
 ## [1.16.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.15.1...v1.16.0) (2026-06-23)
 
 
