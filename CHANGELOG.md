@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.16.1...v1.17.0) (2026-06-24)
+
+
+### Features
+
+* **ais:** GET /api/ais/density — fleet-density grid for area recommendations ([#82](https://github.com/flowcore-io/fishfacts-ai-backend/issues/82)) ([d82ddc6](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d82ddc6396781d1c3b541d98f9b89c32f1d97510))
+
 ## [1.16.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.16.0...v1.16.1) (2026-06-23)
 
 
