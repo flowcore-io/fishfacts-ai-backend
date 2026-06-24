@@ -183,6 +183,87 @@ export class AisClickhouseRepository {
     };
   }
 
+  /**
+   * Fleet-density grid over a bbox + time window. Aggregates position fixes into
+   * `gridDeg`-sized cells (count of fixes + distinct vessels), optionally
+   * restricted to a speed band (e.g. trawling speeds = "actively fishing").
+   * Powers the "exclude where the fleet is fishing" recommendation signal.
+   * Counts are pre-merge (ReplacingMergeTree) so treat as an approximate density,
+   * not an exact fix count — fine for ranking cells.
+   */
+  async getDensityGrid(opts: {
+    minLon: number;
+    minLat: number;
+    maxLon: number;
+    maxLat: number;
+    gridDeg: number;
+    from: string;
+    to: string;
+    minKnots?: number;
+    maxKnots?: number;
+    limit: number;
+  }): Promise<AisDensityResult> {
+    const speedFilter =
+      opts.minKnots !== undefined || opts.maxKnots !== undefined
+        ? "AND speed IS NOT NULL AND speed >= {minKn:Float64} AND speed <= {maxKn:Float64}"
+        : "";
+    const query = `
+      SELECT
+        round(latitude  / {g:Float64}) * {g:Float64} AS cell_lat,
+        round(longitude / {g:Float64}) * {g:Float64} AS cell_lon,
+        count()              AS fixes,
+        uniqExact(vessel_id) AS vessels
+      FROM ais_position_fixes
+      WHERE event_time >= {from:DateTime64(3)}
+        AND event_time <  {to:DateTime64(3)}
+        AND latitude  >= {minLat:Float64} AND latitude  <= {maxLat:Float64}
+        AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}
+        ${speedFilter}
+      GROUP BY cell_lat, cell_lon
+      ORDER BY fixes DESC
+      LIMIT {lim:UInt32}
+    `;
+    const rs = await this.client.query({
+      query,
+      query_params: {
+        g: opts.gridDeg,
+        from: isoToCh(opts.from),
+        to: isoToCh(opts.to),
+        minLat: opts.minLat,
+        maxLat: opts.maxLat,
+        minLon: opts.minLon,
+        maxLon: opts.maxLon,
+        lim: opts.limit,
+        ...(speedFilter
+          ? { minKn: opts.minKnots ?? 0, maxKn: opts.maxKnots ?? 1_000_000 }
+          : {}),
+      },
+      format: "JSONEachRow",
+    });
+    const rows = (await rs.json()) as Array<{
+      cell_lat: number;
+      cell_lon: number;
+      fixes: string | number;
+      vessels: string | number;
+    }>;
+    return {
+      gridDeg: opts.gridDeg,
+      from: opts.from,
+      to: opts.to,
+      speedBand:
+        opts.minKnots !== undefined || opts.maxKnots !== undefined
+          ? [opts.minKnots ?? 0, opts.maxKnots ?? null]
+          : null,
+      cells: rows.map((r) => ({
+        lat: Number(r.cell_lat),
+        lng: Number(r.cell_lon),
+        fixes: Number(r.fixes),
+        vessels: Number(r.vessels),
+      })),
+      cellCount: rows.length,
+    };
+  }
+
   async close(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
@@ -192,6 +273,22 @@ export class AisClickhouseRepository {
     await this.client.close();
   }
 }
+
+export type AisDensityCell = {
+  lat: number;
+  lng: number;
+  fixes: number;
+  vessels: number;
+};
+
+export type AisDensityResult = {
+  gridDeg: number;
+  from: string;
+  to: string;
+  speedBand: [number, number | null] | null;
+  cells: AisDensityCell[];
+  cellCount: number;
+};
 
 export type AisTrackPoint = {
   t: string;
