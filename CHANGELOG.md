@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.17.0...v1.18.0) (2026-06-24)
+
+
+### Features
+
+* **ais:** vesselIds gear filter on /api/ais/density (GET+POST) ([#84](https://github.com/flowcore-io/fishfacts-ai-backend/issues/84)) ([c64efaf](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c64efaf089eabdad1bc914150b5ca46dbf0dda17))
+
 ## [1.17.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.16.1...v1.17.0) (2026-06-24)
 
 
