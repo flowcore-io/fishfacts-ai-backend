@@ -44,7 +44,104 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
     return c.json(result);
   });
 
+  // Fleet-density grid over a bbox + window — the "where is the fleet (fishing)"
+  // signal for area recommendations. Optional speed band restricts to fishing
+  // speeds. Defaults to the last 7d when no window/from/to is given.
+  app.get("/density", async (c) => {
+    const params = new URL(c.req.url).searchParams;
+
+    const bbox = parseBbox(params.get("bbox"));
+    if ("error" in bbox) return c.json(bbox, 400);
+
+    const range = parseRange(params, "7d");
+    if ("error" in range) return c.json(range, 400);
+
+    const speed = parseSpeed(params);
+    if ("error" in speed) return c.json(speed, 400);
+
+    const result = await deps.repository.getDensityGrid({
+      ...bbox,
+      gridDeg: parseGrid(params.get("gridDeg")),
+      from: range.from,
+      to: range.to,
+      ...speed,
+      limit: parseLimitCells(params.get("limit")),
+    });
+    return c.json(result);
+  });
+
   return app;
+}
+
+function parseBbox(
+  raw: string | null,
+):
+  | { minLon: number; minLat: number; maxLon: number; maxLat: number }
+  | QueryError {
+  if (!raw) {
+    return {
+      error: "invalid_query",
+      message: "bbox is required: minLon,minLat,maxLon,maxLat",
+    };
+  }
+  const p = raw.split(",").map((s) => Number.parseFloat(s.trim()));
+  if (p.length !== 4 || p.some((n) => !Number.isFinite(n))) {
+    return {
+      error: "invalid_query",
+      message: "bbox must be 4 finite numbers: minLon,minLat,maxLon,maxLat",
+    };
+  }
+  const [minLon, minLat, maxLon, maxLat] = p as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  if (
+    minLon < -180 ||
+    maxLon > 180 ||
+    minLat < -90 ||
+    maxLat > 90 ||
+    minLon >= maxLon ||
+    minLat >= maxLat
+  ) {
+    return {
+      error: "invalid_query",
+      message: "bbox out of range or min >= max",
+    };
+  }
+  return { minLon, minLat, maxLon, maxLat };
+}
+
+function parseGrid(raw: string | null): number {
+  const n = raw ? Number.parseFloat(raw) : 0.1;
+  if (!Number.isFinite(n)) return 0.1;
+  return Math.min(Math.max(n, 0.02), 1);
+}
+
+function parseSpeed(
+  params: URLSearchParams,
+): { minKnots?: number; maxKnots?: number } | QueryError {
+  const minR = params.get("minKnots");
+  const maxR = params.get("maxKnots");
+  if (minR == null && maxR == null) return {};
+  const min = minR != null ? Number.parseFloat(minR) : 0;
+  const max = maxR != null ? Number.parseFloat(maxR) : 1000;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || max < min) {
+    return {
+      error: "invalid_query",
+      message:
+        "minKnots/maxKnots must be finite with 0 <= minKnots <= maxKnots",
+    };
+  }
+  return { minKnots: min, maxKnots: max };
+}
+
+function parseLimitCells(raw: string | null): number {
+  if (!raw) return 2000;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 2000;
+  return Math.min(Math.max(n, 1), 10_000);
 }
 
 function parseVesselIds(raw: string | null): { ids: number[] } | QueryError {
@@ -77,6 +174,7 @@ function parseVesselIds(raw: string | null): { ids: number[] } | QueryError {
 
 function parseRange(
   params: URLSearchParams,
+  defaultWindow: keyof typeof WINDOWS = "24h",
 ): { from: string; to: string } | QueryError {
   const window = params.get("window")?.trim();
   if (window) {
@@ -120,10 +218,10 @@ function parseRange(
     };
   }
 
-  // Default: last 24h.
+  // Default window (24h for tracks, 7d for density).
   const to = new Date();
   return {
-    from: new Date(to.getTime() - WINDOWS["24h"]).toISOString(),
+    from: new Date(to.getTime() - WINDOWS[defaultWindow]).toISOString(),
     to: to.toISOString(),
   };
 }
