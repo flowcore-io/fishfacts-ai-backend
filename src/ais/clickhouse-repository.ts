@@ -201,11 +201,19 @@ export class AisClickhouseRepository {
     to: string;
     minKnots?: number;
     maxKnots?: number;
+    vesselIds?: number[];
     limit: number;
   }): Promise<AisDensityResult> {
     const speedFilter =
       opts.minKnots !== undefined || opts.maxKnots !== undefined
         ? "AND speed IS NOT NULL AND speed >= {minKn:Float64} AND speed <= {maxKn:Float64}"
+        : "";
+    // Optional gear/vessel-type filter: the FE resolves a vessel type (e.g.
+    // longliners) to its FF vessel ids and passes them here. vessel_id is the
+    // leading ORDER BY key, so the IN filter is cheap.
+    const vesselFilter =
+      opts.vesselIds && opts.vesselIds.length > 0
+        ? "AND vessel_id IN ({ids:Array(Int32)})"
         : "";
     const query = `
       SELECT
@@ -219,6 +227,7 @@ export class AisClickhouseRepository {
         AND latitude  >= {minLat:Float64} AND latitude  <= {maxLat:Float64}
         AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}
         ${speedFilter}
+        ${vesselFilter}
       GROUP BY cell_lat, cell_lon
       ORDER BY fixes DESC
       LIMIT {lim:UInt32}
@@ -237,6 +246,7 @@ export class AisClickhouseRepository {
         ...(speedFilter
           ? { minKn: opts.minKnots ?? 0, maxKn: opts.maxKnots ?? 1_000_000 }
           : {}),
+        ...(vesselFilter ? { ids: opts.vesselIds } : {}),
       },
       format: "JSONEachRow",
     });
@@ -254,6 +264,7 @@ export class AisClickhouseRepository {
         opts.minKnots !== undefined || opts.maxKnots !== undefined
           ? [opts.minKnots ?? 0, opts.maxKnots ?? null]
           : null,
+      vesselIdCount: opts.vesselIds?.length ?? 0,
       cells: rows.map((r) => ({
         lat: Number(r.cell_lat),
         lng: Number(r.cell_lon),
@@ -286,6 +297,8 @@ export type AisDensityResult = {
   from: string;
   to: string;
   speedBand: [number, number | null] | null;
+  /** Number of vessel ids the grid was restricted to (0 = all vessels). */
+  vesselIdCount: number;
   cells: AisDensityCell[];
   cellCount: number;
 };

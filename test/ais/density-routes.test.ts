@@ -80,4 +80,76 @@ describe("GET /density", () => {
     expect(o.minKnots).toBeUndefined();
     expect(o.maxKnots).toBeUndefined();
   });
+
+  test("parses vesselIds (GET, dedup) gear filter", async () => {
+    const captured: Captured = {};
+    const app = createAisRouter({ repository: mockRepo(captured) });
+    const res = await app.request(
+      "/density?bbox=0,0,1,1&vesselIds=12,34,12,56",
+    );
+    expect(res.status).toBe(200);
+    const o = captured.opts as Record<string, unknown>;
+    expect(o.vesselIds).toEqual([12, 34, 56]);
+  });
+
+  test("omits vesselIds when not given (all vessels)", async () => {
+    const captured: Captured = {};
+    const app = createAisRouter({ repository: mockRepo(captured) });
+    const res = await app.request("/density?bbox=0,0,1,1");
+    expect(res.status).toBe(200);
+    const o = captured.opts as Record<string, unknown>;
+    expect(o.vesselIds).toBeUndefined();
+  });
+
+  test("rejects a non-integer vesselId", async () => {
+    const app = createAisRouter({ repository: mockRepo({}) });
+    const res = await app.request("/density?bbox=0,0,1,1&vesselIds=12,abc");
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /density", () => {
+  test("parses bbox array + window + vesselIds array body", async () => {
+    const captured: Captured = {};
+    const app = createAisRouter({ repository: mockRepo(captured) });
+    const res = await app.request("/density", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        bbox: [10, 70, 40, 76],
+        window: "7d",
+        gridDeg: 0.1,
+        vesselIds: [101, 202, 303],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const o = captured.opts as Record<string, unknown>;
+    expect(o.minLon).toBe(10);
+    expect(o.maxLat).toBe(76);
+    expect(o.gridDeg).toBe(0.1);
+    expect(o.vesselIds).toEqual([101, 202, 303]);
+  });
+
+  test("empty vesselIds array ⇒ no filter (all vessels)", async () => {
+    const captured: Captured = {};
+    const app = createAisRouter({ repository: mockRepo(captured) });
+    const res = await app.request("/density", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ bbox: "0,0,1,1", vesselIds: [] }),
+    });
+    expect(res.status).toBe(200);
+    const o = captured.opts as Record<string, unknown>;
+    expect(o.vesselIds).toBeUndefined();
+  });
+
+  test("400 on non-JSON body", async () => {
+    const app = createAisRouter({ repository: mockRepo({}) });
+    const res = await app.request("/density", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json",
+    });
+    expect(res.status).toBe(400);
+  });
 });

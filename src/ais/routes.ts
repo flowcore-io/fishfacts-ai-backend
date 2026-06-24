@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { AisClickhouseRepository } from "./clickhouse-repository";
 
 export type AisRouterDeps = {
@@ -6,6 +6,9 @@ export type AisRouterDeps = {
 };
 
 const MAX_VESSELS = 50;
+// Density gear-filter id lists come from the FE resolving a vessel type to its
+// fleet (e.g. all longliners), so the cap is far higher than /tracks' 50.
+const MAX_DENSITY_VESSELS = 5000;
 const DEFAULT_MAX_POINTS = 2000;
 const MAX_MAX_POINTS = 50_000;
 
@@ -45,32 +48,80 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   });
 
   // Fleet-density grid over a bbox + window — the "where is the fleet (fishing)"
-  // signal for area recommendations. Optional speed band restricts to fishing
-  // speeds. Defaults to the last 7d when no window/from/to is given.
+  // signal for area recommendations and custom AIS heatmaps. Optional speed band
+  // restricts to fishing speeds; optional vesselIds restrict to a gear/vessel
+  // type (resolved by the FE). Defaults to the last 7d when no window/from/to is
+  // given. Available as GET (query params) or POST (JSON body) — a gear-filtered
+  // vesselIds list can be large enough to overflow a GET URL.
   app.get("/density", async (c) => {
     const params = new URL(c.req.url).searchParams;
+    return runDensity(c, deps, params, params.get("vesselIds"));
+  });
 
-    const bbox = parseBbox(params.get("bbox"));
-    if ("error" in bbox) return c.json(bbox, 400);
-
-    const range = parseRange(params, "7d");
-    if ("error" in range) return c.json(range, 400);
-
-    const speed = parseSpeed(params);
-    if ("error" in speed) return c.json(speed, 400);
-
-    const result = await deps.repository.getDensityGrid({
-      ...bbox,
-      gridDeg: parseGrid(params.get("gridDeg")),
-      from: range.from,
-      to: range.to,
-      ...speed,
-      limit: parseLimitCells(params.get("limit")),
-    });
-    return c.json(result);
+  app.post("/density", async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json(
+        { error: "invalid_query", message: "body must be JSON" } as QueryError,
+        400,
+      );
+    }
+    return runDensity(c, deps, bodyToParams(body), body.vesselIds ?? null);
   });
 
   return app;
+}
+
+async function runDensity(
+  c: Context,
+  deps: AisRouterDeps,
+  params: URLSearchParams,
+  vesselIdsRaw: unknown,
+): Promise<Response> {
+  const bbox = parseBbox(params.get("bbox"));
+  if ("error" in bbox) return c.json(bbox, 400);
+
+  const range = parseRange(params, "7d");
+  if ("error" in range) return c.json(range, 400);
+
+  const speed = parseSpeed(params);
+  if ("error" in speed) return c.json(speed, 400);
+
+  const vessels = parseDensityVesselIds(vesselIdsRaw);
+  if ("error" in vessels) return c.json(vessels, 400);
+
+  const result = await deps.repository.getDensityGrid({
+    ...bbox,
+    gridDeg: parseGrid(params.get("gridDeg")),
+    from: range.from,
+    to: range.to,
+    ...speed,
+    vesselIds: vessels.ids,
+    limit: parseLimitCells(params.get("limit")),
+  });
+  return c.json(result);
+}
+
+// Normalise a JSON body into the URLSearchParams shape the parse* helpers expect.
+// bbox may be a "minLon,minLat,maxLon,maxLat" string or a 4-number array.
+function bodyToParams(body: Record<string, unknown>): URLSearchParams {
+  const params = new URLSearchParams();
+  const set = (key: string, value: unknown) => {
+    if (value === undefined || value === null) return;
+    if (Array.isArray(value)) params.set(key, value.join(","));
+    else params.set(key, String(value));
+  };
+  set("bbox", body.bbox);
+  set("window", body.window);
+  set("from", body.from);
+  set("to", body.to);
+  set("gridDeg", body.gridDeg);
+  set("minKnots", body.minKnots);
+  set("maxKnots", body.maxKnots);
+  set("limit", body.limit);
+  return params;
 }
 
 function parseBbox(
@@ -167,6 +218,45 @@ function parseVesselIds(raw: string | null): { ids: number[] } | QueryError {
     return {
       error: "invalid_query",
       message: `too many vessels: max ${MAX_VESSELS}`,
+    };
+  }
+  return { ids };
+}
+
+// Optional gear/vessel-type filter for /density. Accepts a comma-separated
+// string (GET) or an array (POST body). Empty/absent ⇒ no filter (all vessels).
+function parseDensityVesselIds(
+  raw: unknown,
+): { ids: number[] | undefined } | QueryError {
+  if (raw == null) return { ids: undefined };
+  let parts: unknown[];
+  if (Array.isArray(raw)) {
+    parts = raw;
+  } else if (typeof raw === "string") {
+    parts = raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } else {
+    return {
+      error: "invalid_query",
+      message: "vesselIds must be a comma-separated string or an array",
+    };
+  }
+  if (parts.length === 0) return { ids: undefined };
+  const ids: number[] = [];
+  for (const part of parts) {
+    const n =
+      typeof part === "number" ? part : Number.parseInt(String(part), 10);
+    if (!Number.isInteger(n) || n < 0) {
+      return { error: "invalid_query", message: `invalid vesselId: ${part}` };
+    }
+    if (!ids.includes(n)) ids.push(n);
+  }
+  if (ids.length > MAX_DENSITY_VESSELS) {
+    return {
+      error: "invalid_query",
+      message: `too many vesselIds: max ${MAX_DENSITY_VESSELS}`,
     };
   }
   return { ids };
