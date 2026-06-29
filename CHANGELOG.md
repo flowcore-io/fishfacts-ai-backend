@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.18.0...v1.18.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* **closures:** match Vørn veiðibann typo'd slugs (nr 12/13 were missed) ([#86](https://github.com/flowcore-io/fishfacts-ai-backend/issues/86)) ([e559183](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e5591832cc81c8fdf0f0da3e3a95716990e5e95e))
+
 ## [1.18.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.17.0...v1.18.0) (2026-06-24)
 
 
