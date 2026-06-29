@@ -51,13 +51,23 @@ function bboxOf(points: ClosurePoint[]): ClosureRecord["bbox"] {
 // as DDMM, e.g. "6244 N – 0630 W" = 62°44′N 6°30′W.
 // ---------------------------------------------------------------------------
 const VORN_SITEMAP = "https://www.vorn.fo/sitemap.xml";
+// Match any ban page under the (consistently-spelled) bradfeingis-veidibann
+// directory, regardless of how the trailing slug word is spelled. Vørn has
+// typo'd the slug per-ban — "veidbann" (nr 9), "veidibann" (10/11),
+// "veidinann" (12), "veiibann" (13) — so anchoring on the veiðibann spelling
+// (the old `veid[ib]+ann`) silently dropped nr 12/13. Anchor on the directory
+// + a generic `-nr-<n>-<year>` tail instead. The `/kunning/tidindi/…` news
+// archive lives under a different path, so it stays excluded.
 const VORN_BAN_RE =
-  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/veid[ib]+ann-nr-[0-9]+-?[0-9]+/gi;
+  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/[a-z]+-nr-[0-9]+-[0-9]{4}/gi;
+// Pull the ban number + year from the `-nr-N-YYYY` tail without depending on
+// the (unreliable) veiðibann spelling.
+const VORN_NR_RE = /-nr-(\d+)-?(\d{4})/;
 const VORN_COORD_RE =
   /(\d{2})(\d{2})\s*([NS])\s*[–-]\s*(\d{2,3})(\d{2})\s*([EWVØ])/gi;
 
 export function vornSourceKey(url: string): string {
-  const m = url.toLowerCase().match(/veid[ib]+ann-nr-(\d+)-?(\d{4})/);
+  const m = url.toLowerCase().match(VORN_NR_RE);
   return m ? `vorn-veidibann-${m[1]}-${m[2]}` : url.toLowerCase();
 }
 
@@ -65,15 +75,21 @@ export function vornSourceKey(url: string): string {
  * with a cross-reference to a prior ban, so the in-text regex picks the wrong
  * number. The URL number is authoritative. */
 function vornTitleFromUrl(url: string): string | undefined {
-  const m = url.toLowerCase().match(/veid[ib]+ann-nr-(\d+)-?(\d{4})/);
+  const m = url.toLowerCase().match(VORN_NR_RE);
   return m ? `Veiðibann nr. ${m[1]} - ${m[2]}` : undefined;
+}
+
+/** Extract the unique Vørn ban-page URLs from a sitemap XML body. Pure +
+ * network-free so it can be unit-tested against a fixture. */
+export function matchVornBanUrls(xml: string): string[] {
+  return [...new Set(xml.match(VORN_BAN_RE) ?? [])];
 }
 
 export async function listVornBanUrls(): Promise<string[]> {
   const xml = await (
     await fetch(VORN_SITEMAP, { headers: { "user-agent": UA } })
   ).text();
-  return [...new Set(xml.match(VORN_BAN_RE) ?? [])];
+  return matchVornBanUrls(xml);
 }
 
 /** Parse one Vørn ban page (raw HTML) into a ClosureRecord. */
