@@ -20,6 +20,8 @@ import type { Database } from "./db/client";
 import { AIS_FLOW_TYPE } from "./events/contracts";
 import { genericEventInputSchema } from "./events/contracts";
 import type { GenericEventRepository } from "./events/repository";
+import type { FinancialsRepository } from "./financials/repository";
+import { createFinancialsRouter } from "./financials/routes";
 import type { FishfactsApiClient } from "./fishfacts/client";
 import type { GebcoRepository } from "./gebco/repository";
 import type { GillnetRepository } from "./gillnet/repository";
@@ -46,6 +48,7 @@ export type AppDependencies = {
   tilesRepository: TilesRepository;
   areasRepository: AreasRepository;
   sildelagetCatchRepository: SildelagetCatchRepository;
+  financialsRepository: FinancialsRepository;
   aisRepository: AisClickhouseRepository;
   aisIngestState: AisIngestStateRepository;
   aisSource: AisSource;
@@ -65,6 +68,7 @@ export function createApp({
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
+  financialsRepository,
   aisRepository,
   aisIngestState,
   aisSource,
@@ -95,6 +99,8 @@ export function createApp({
   app.use("/api/areas/*", authMiddleware);
   app.use("/api/catch", authMiddleware);
   app.use("/api/catch/*", authMiddleware);
+  app.use("/api/financials", authMiddleware);
+  app.use("/api/financials/*", authMiddleware);
   app.use("/api/ais/*", authMiddleware);
 
   app.route("/api/tiles", createTilesRouter({ tilesRepository }));
@@ -108,6 +114,10 @@ export function createApp({
   app.route(
     "/api/catch",
     createSildelagetCatchRouter({ repository: sildelagetCatchRepository }),
+  );
+  app.route(
+    "/api/financials",
+    createFinancialsRouter({ repository: financialsRepository }),
   );
   app.route("/api/ais", createAisRouter({ repository: aisRepository }));
 

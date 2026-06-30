@@ -15,6 +15,7 @@ import { createDb } from "./db/client";
 import { runMigrations } from "./db/migrate";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
+import { FinancialsRepository } from "./financials/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
 import { GebcoProjector } from "./gebco/projector";
 import { GebcoRepository } from "./gebco/repository";
@@ -51,6 +52,7 @@ const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
 const sildelagetCatchRepository = new SildelagetCatchRepository(db);
+const financialsRepository = new FinancialsRepository(env);
 const sildelagetCatchProjector = new SildelagetCatchProjector(
   sildelagetCatchRepository,
 );
@@ -126,6 +128,7 @@ const app = createApp({
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
+  financialsRepository,
   aisRepository: aisChRepo,
   aisIngestState,
   aisSource: aisBackfillSource,
