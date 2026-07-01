@@ -8,8 +8,11 @@ export type FinancialsRouterDeps = {
 
 /**
  * Financials REST router (mounted under /api/financials, auth-protected).
- *   GET /companies?q=&limit=   → companies with annual reports, by name
- *   GET /report?companyId=&years=  → income statement + balance sheet + key figures
+ *   GET /companies?q=&limit=&category=  → companies with annual reports
+ *   GET /report?companyId=&years=&currency=  → income statement + balance sheet + key figures
+ *   GET /market?metric=&year=&currency=&country=&category=  → cross-company snapshot
+ *   GET /compare?metric=&companyIds=&currency=  → metric time series per company
+ *   GET /categories  → distinct fishing-category tags
  */
 export function createFinancialsRouter(deps: FinancialsRouterDeps): Hono {
   const app = new Hono();
@@ -19,7 +22,8 @@ export function createFinancialsRouter(deps: FinancialsRouterDeps): Hono {
     const q =
       params.get("q")?.trim() || params.get("query")?.trim() || undefined;
     const limit = parseLimit(params.get("limit"));
-    const companies = await deps.repository.searchCompanies(q, limit);
+    const category = params.get("category")?.trim() || undefined;
+    const companies = await deps.repository.searchCompanies(q, limit, category);
     return c.json({ companies });
   });
 
@@ -33,21 +37,77 @@ export function createFinancialsRouter(deps: FinancialsRouterDeps): Hono {
       );
     }
     const years = parseYears(params.get("years"));
-    const report = await deps.repository.getCompanyReport(companyId, years);
+    const currency = params.get("currency")?.trim() || undefined;
+    const report = await deps.repository.getCompanyReport(
+      companyId,
+      years,
+      currency,
+    );
     if (!report) {
       return c.json({ error: "not_found", message: "company not found" }, 404);
     }
     return c.json(report);
   });
 
+  app.get("/market", async (c) => {
+    const params = new URL(c.req.url).searchParams;
+    const metric = params.get("metric")?.trim();
+    const year = Number.parseInt(params.get("year") ?? "", 10);
+    if (!metric || !Number.isInteger(year)) {
+      return c.json(
+        { error: "invalid_query", message: "metric and year are required" },
+        400,
+      );
+    }
+    return c.json(
+      await deps.repository.getMarket({
+        metric,
+        year,
+        displayCurrency: params.get("currency")?.trim() || undefined,
+        country: params.get("country")?.trim() || undefined,
+        category: params.get("category")?.trim() || undefined,
+        limit: parseLimit(params.get("limit"), 200, 500),
+      }),
+    );
+  });
+
+  app.get("/compare", async (c) => {
+    const params = new URL(c.req.url).searchParams;
+    const metric = params.get("metric")?.trim();
+    const companyIds = (params.get("companyIds") ?? "")
+      .split(",")
+      .map((s) => Number.parseInt(s.trim(), 10))
+      .filter((n) => Number.isInteger(n));
+    if (!metric || companyIds.length === 0) {
+      return c.json(
+        {
+          error: "invalid_query",
+          message: "metric and companyIds (csv) are required",
+        },
+        400,
+      );
+    }
+    return c.json(
+      await deps.repository.getCompare({
+        metric,
+        companyIds,
+        displayCurrency: params.get("currency")?.trim() || undefined,
+      }),
+    );
+  });
+
+  app.get("/categories", async (c) => {
+    return c.json({ categories: await deps.repository.listCategories() });
+  });
+
   return app;
 }
 
-function parseLimit(raw: string | null): number {
-  if (!raw) return 15;
+function parseLimit(raw: string | null, def = 15, max = 50): number {
+  if (!raw) return def;
   const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return 15;
-  return Math.min(Math.max(parsed, 1), 50);
+  if (!Number.isFinite(parsed)) return def;
+  return Math.min(Math.max(parsed, 1), max);
 }
 
 function parseYears(raw: string | null): number[] | undefined {

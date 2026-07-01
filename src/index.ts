@@ -52,7 +52,7 @@ const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
 const sildelagetCatchRepository = new SildelagetCatchRepository(db);
-const financialsRepository = new FinancialsRepository(env);
+const financialsRepository = new FinancialsRepository(env, db);
 const sildelagetCatchProjector = new SildelagetCatchProjector(
   sildelagetCatchRepository,
 );
