@@ -351,10 +351,7 @@
       "compositePrimaryKeys": {
         "fx_rate_year_quote_pk": {
           "name": "fx_rate_year_quote_pk",
-          "columns": [
-            "year",
-            "quote"
-          ]
+          "columns": ["year", "quote"]
         }
       },
       "uniqueConstraints": {},
@@ -730,10 +727,7 @@
       "compositePrimaryKeys": {
         "jmelding_chunk_queue_signature_part_number_pk": {
           "name": "jmelding_chunk_queue_signature_part_number_pk",
-          "columns": [
-            "signature",
-            "part_number"
-          ]
+          "columns": ["signature", "part_number"]
         }
       },
       "uniqueConstraints": {},
