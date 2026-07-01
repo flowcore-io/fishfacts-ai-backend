@@ -405,3 +405,22 @@ export const jobRuns = pgTable(
     ),
   }),
 );
+
+// EUR-based year-end FX rates cached from Frankfurter (ECB). Base is always EUR
+// (EUR row = 1). Convert X→Y via rate(EUR→Y) / rate(EUR→X). One row per
+// (year, quote); used to normalise annual-report figures to a display currency.
+export const fxRate = pgTable(
+  "fx_rate",
+  {
+    year: integer("year").notNull(),
+    quote: text("quote").notNull(), // ISO 4217, e.g. "DKK"
+    rate: doublePrecision("rate").notNull(), // EUR → quote
+    asOf: text("as_of"), // the rate date used (YYYY-MM-DD)
+    fetchedAt: timestamp("fetched_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.year, table.quote] }),
+  }),
+);
