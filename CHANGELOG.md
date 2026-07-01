@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.18.1...v1.19.0) (2026-07-01)
+
+
+### Features
+
+* **financials:** annual-report financials API (single-company, native currency) ([#88](https://github.com/flowcore-io/fishfacts-ai-backend/issues/88)) ([e4f0fe2](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e4f0fe236a7fa173b09dec66126ddf3e5e33b1e7))
+
 ## [1.18.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.18.0...v1.18.1) (2026-06-29)
 
 
