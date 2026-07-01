@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.19.0...v1.20.0) (2026-07-01)
+
+
+### Features
+
+* **financials:** FX + cross-company market/compare + categories ([#90](https://github.com/flowcore-io/fishfacts-ai-backend/issues/90)) ([7c4bd86](https://github.com/flowcore-io/fishfacts-ai-backend/commit/7c4bd8656e1cbe9cd14cbe173310cb3b6fa74615))
+
 ## [1.19.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.18.1...v1.19.0) (2026-07-01)
 
 
