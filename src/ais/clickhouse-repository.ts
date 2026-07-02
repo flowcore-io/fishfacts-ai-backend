@@ -202,11 +202,25 @@ export class AisClickhouseRepository {
     minKnots?: number;
     maxKnots?: number;
     vesselIds?: number[];
+    /** Optional outer rings ([lng,lat], closed) — per-fix polygon clip. */
+    polygons?: number[][][];
     limit: number;
   }): Promise<AisDensityResult> {
     const speedFilter =
       opts.minKnots !== undefined || opts.maxKnots !== undefined
         ? "AND speed IS NOT NULL AND speed >= {minKn:Float64} AND speed <= {maxKn:Float64}"
+        : "";
+    // Per-fix polygon clip (vs the FE's cell-centre clip): applied BEFORE the
+    // fixes-DESC LIMIT so out-of-area hotspots can't crowd in-area cells out.
+    const polyParams: Record<string, unknown> = {};
+    const polyFilter =
+      opts.polygons && opts.polygons.length > 0
+        ? `AND (${opts.polygons
+            .map((ring, i) => {
+              polyParams[`poly${i}`] = ring;
+              return `pointInPolygon((longitude, latitude), {poly${i}:Array(Tuple(Float64, Float64))})`;
+            })
+            .join(" OR ")})`
         : "";
     // Optional gear/vessel-type filter: the FE resolves a vessel type (e.g.
     // longliners) to its FF vessel ids and passes them here. vessel_id is the
@@ -227,6 +241,7 @@ export class AisClickhouseRepository {
         AND latitude  >= {minLat:Float64} AND latitude  <= {maxLat:Float64}
         AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}
         ${speedFilter}
+        ${polyFilter}
         ${vesselFilter}
       GROUP BY cell_lat, cell_lon
       ORDER BY fixes DESC
@@ -246,6 +261,7 @@ export class AisClickhouseRepository {
         ...(speedFilter
           ? { minKn: opts.minKnots ?? 0, maxKn: opts.maxKnots ?? 1_000_000 }
           : {}),
+        ...polyParams,
         ...(vesselFilter ? { ids: opts.vesselIds } : {}),
       },
       format: "JSONEachRow",
@@ -265,6 +281,7 @@ export class AisClickhouseRepository {
           ? [opts.minKnots ?? 0, opts.maxKnots ?? null]
           : null,
       vesselIdCount: opts.vesselIds?.length ?? 0,
+      clippedToPolygon: (opts.polygons?.length ?? 0) > 0,
       cells: rows.map((r) => ({
         lat: Number(r.cell_lat),
         lng: Number(r.cell_lon),
@@ -272,6 +289,146 @@ export class AisClickhouseRepository {
         vessels: Number(r.vessels),
       })),
       cellCount: rows.length,
+    };
+  }
+
+  /**
+   * Per-vessel fishing-effort aggregation inside a polygon (or bbox) + time
+   * range. "Fishing" = fixes inside the speed band; effort duration = sum of
+   * gaps between consecutive qualifying fixes per vessel, with gaps above
+   * `maxGapSeconds` discarded so AIS coverage holes (or the vessel leaving the
+   * area) are never credited as fishing — sparse-AIS vessels are undercounted,
+   * never overcounted. Rows are deduped to one per (vessel, event_time) first:
+   * that GROUP BY is a prefix of the ReplacingMergeTree sort key, so it is far
+   * cheaper than FINAL and collapses pre-merge duplicate rows and multi-source
+   * same-second fixes. The bbox always applies as a cheap prefilter; the
+   * polygon test (ClickHouse pointInPolygon, (lon,lat) order) refines it.
+   * pointInPolygon edge behaviour for fixes exactly on a boundary is
+   * implementation-defined — irrelevant at AIS position-jitter scale.
+   */
+  async getFishingEffort(opts: {
+    minLon: number;
+    minLat: number;
+    maxLon: number;
+    maxLat: number;
+    /** Outer rings, [lng,lat], closed. Holes are not supported. */
+    polygons?: number[][][];
+    from: string;
+    to: string;
+    minKnots: number;
+    maxKnots: number;
+    maxGapSeconds: number;
+    vesselIds?: number[];
+    limit: number;
+  }): Promise<AisEffortResult> {
+    const vesselFilter =
+      opts.vesselIds && opts.vesselIds.length > 0
+        ? "AND vessel_id IN ({ids:Array(Int32)})"
+        : "";
+    const polyParams: Record<string, unknown> = {};
+    const polyFilter =
+      opts.polygons && opts.polygons.length > 0
+        ? `AND (${opts.polygons
+            .map((ring, i) => {
+              polyParams[`poly${i}`] = ring;
+              return `pointInPolygon((longitude, latitude), {poly${i}:Array(Tuple(Float64, Float64))})`;
+            })
+            .join(" OR ")})`
+        : "";
+    const query = `
+      WITH fixes AS (
+        SELECT vessel_id, event_time
+        FROM ais_position_fixes
+        WHERE event_time >= {from:DateTime64(3)}
+          AND event_time <  {to:DateTime64(3)}
+          AND latitude  >= {minLat:Float64} AND latitude  <= {maxLat:Float64}
+          AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}
+          AND speed IS NOT NULL
+          AND speed >= {minKn:Float64} AND speed <= {maxKn:Float64}
+          ${polyFilter}
+          ${vesselFilter}
+        GROUP BY vessel_id, event_time
+      ),
+      deltas AS (
+        SELECT
+          vessel_id,
+          event_time,
+          dateDiff('second',
+            lagInFrame(event_time, 1, event_time) OVER (
+              PARTITION BY vessel_id ORDER BY event_time
+              ROWS BETWEEN 1 PRECEDING AND CURRENT ROW),
+            event_time) AS gap_s
+        FROM fixes
+      )
+      SELECT
+        vessel_id                     AS vesselId,
+        count()                       AS fixes,
+        sum(if(gap_s > 0 AND gap_s <= {maxGap:UInt32}, gap_s, 0)) AS fishingSeconds,
+        uniqExact(toDate(event_time)) AS activeDays,
+        min(event_time)               AS firstSeen,
+        max(event_time)               AS lastSeen
+      FROM deltas
+      GROUP BY vessel_id
+      ORDER BY fishingSeconds DESC
+      LIMIT 10000
+    `;
+    const rs = await this.client.query({
+      query,
+      query_params: {
+        from: isoToCh(opts.from),
+        to: isoToCh(opts.to),
+        minLat: opts.minLat,
+        maxLat: opts.maxLat,
+        minLon: opts.minLon,
+        maxLon: opts.maxLon,
+        minKn: opts.minKnots,
+        maxKn: opts.maxKnots,
+        maxGap: opts.maxGapSeconds,
+        ...polyParams,
+        ...(vesselFilter ? { ids: opts.vesselIds } : {}),
+      },
+      clickhouse_settings: { max_execution_time: 30 },
+      format: "JSONEachRow",
+    });
+    const rows = (await rs.json()) as Array<{
+      vesselId: number;
+      fixes: string | number;
+      fishingSeconds: string | number;
+      activeDays: string | number;
+      firstSeen: string;
+      lastSeen: string;
+    }>;
+    const all: AisEffortVessel[] = rows.map((r) => {
+      const fishingSeconds = Number(r.fishingSeconds);
+      return {
+        vesselId: Number(r.vesselId),
+        fixes: Number(r.fixes),
+        fishingSeconds,
+        fishingHours: fishingSeconds / 3600,
+        fishingDays: fishingSeconds / 86_400,
+        activeDays: Number(r.activeDays),
+        firstSeen: chToIso(r.firstSeen),
+        lastSeen: chToIso(r.lastSeen),
+      };
+    });
+    const totalSeconds = all.reduce((s, v) => s + v.fishingSeconds, 0);
+    return {
+      from: opts.from,
+      to: opts.to,
+      speedBand: [opts.minKnots, opts.maxKnots],
+      maxGapMinutes: opts.maxGapSeconds / 60,
+      bbox: [opts.minLon, opts.minLat, opts.maxLon, opts.maxLat],
+      polygonCount: opts.polygons?.length ?? 0,
+      vesselIdCount: opts.vesselIds?.length ?? 0,
+      totals: {
+        vessels: all.length,
+        fixes: all.reduce((s, v) => s + v.fixes, 0),
+        fishingSeconds: totalSeconds,
+        fishingHours: totalSeconds / 3600,
+        fishingDays: totalSeconds / 86_400,
+      },
+      vessels: all.slice(0, opts.limit),
+      truncated: all.length > opts.limit,
     };
   }
 
@@ -299,8 +456,42 @@ export type AisDensityResult = {
   speedBand: [number, number | null] | null;
   /** Number of vessel ids the grid was restricted to (0 = all vessels). */
   vesselIdCount: number;
+  /** True when fixes were clipped server-side to a polygon. */
+  clippedToPolygon: boolean;
   cells: AisDensityCell[];
   cellCount: number;
+};
+
+export type AisEffortVessel = {
+  vesselId: number;
+  fixes: number;
+  fishingSeconds: number;
+  fishingHours: number;
+  /** Gap-capped summed fishing time / 24 h — effort-days. */
+  fishingDays: number;
+  /** Distinct UTC calendar days with ≥1 qualifying fix in the area. */
+  activeDays: number;
+  firstSeen: string;
+  lastSeen: string;
+};
+
+export type AisEffortResult = {
+  from: string;
+  to: string;
+  speedBand: [number, number];
+  maxGapMinutes: number;
+  bbox: [number, number, number, number];
+  polygonCount: number;
+  vesselIdCount: number;
+  totals: {
+    vessels: number;
+    fixes: number;
+    fishingSeconds: number;
+    fishingHours: number;
+    fishingDays: number;
+  };
+  vessels: AisEffortVessel[];
+  truncated: boolean;
 };
 
 export type AisTrackPoint = {

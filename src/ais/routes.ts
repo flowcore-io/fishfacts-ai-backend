@@ -11,6 +11,14 @@ const MAX_VESSELS = 50;
 const MAX_DENSITY_VESSELS = 5000;
 const DEFAULT_MAX_POINTS = 2000;
 const MAX_MAX_POINTS = 50_000;
+const MAX_EFFORT_POLYGONS = 10;
+const MAX_EFFORT_VERTICES = 1000;
+// "Fishing" for effort analytics: trawling/hauling speeds. Wider than the map
+// UI's visual Activity-layer band (1–5.5) by design — client-specified.
+const DEFAULT_EFFORT_MIN_KNOTS = 0.3;
+const DEFAULT_EFFORT_MAX_KNOTS = 5.5;
+const DEFAULT_MAX_GAP_MINUTES = 30;
+const MAX_EFFORT_VESSEL_ROWS = 500;
 
 // Preset windows mirror the map UI (6h … 90d). Value = milliseconds back from now.
 const WINDOWS: Record<string, number> = {
@@ -68,7 +76,75 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
         400,
       );
     }
-    return runDensity(c, deps, bodyToParams(body), body.vesselIds ?? null);
+    const polygons = parseEffortPolygon(body.polygon);
+    if (polygons && "error" in polygons) return c.json(polygons, 400);
+    return runDensity(
+      c,
+      deps,
+      bodyToParams(body),
+      body.vesselIds ?? null,
+      polygons?.rings,
+    );
+  });
+
+  // Per-vessel fishing-effort aggregation inside a polygon/bbox + time range.
+  // "Fishing" = fixes in the speed band (default 0.3–5.5 kn). Effort duration
+  // = per-vessel sum of gaps between consecutive qualifying fixes, discarding
+  // gaps above maxGapMinutes (default 30) so AIS coverage holes are never
+  // credited as fishing. POST-only: polygons don't fit in GET query params.
+  app.post("/effort", async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json(
+        { error: "invalid_query", message: "body must be JSON" } as QueryError,
+        400,
+      );
+    }
+    const params = bodyToParams(body);
+
+    const polygons = parseEffortPolygon(body.polygon);
+    if (polygons && "error" in polygons) return c.json(polygons, 400);
+
+    let bbox: ReturnType<typeof parseBbox> | undefined;
+    if (params.get("bbox") != null) {
+      bbox = parseBbox(params.get("bbox"));
+      if ("error" in bbox) return c.json(bbox, 400);
+    } else if (polygons) {
+      bbox = bboxOfRings(polygons.rings);
+    }
+    if (!bbox || "error" in bbox) {
+      return c.json(
+        {
+          error: "invalid_query",
+          message: "polygon or bbox is required",
+        } as QueryError,
+        400,
+      );
+    }
+
+    const range = parseRange(params, "7d");
+    if ("error" in range) return c.json(range, 400);
+
+    const speed = parseSpeed(params);
+    if ("error" in speed) return c.json(speed, 400);
+
+    const vessels = parseDensityVesselIds(body.vesselIds ?? null);
+    if ("error" in vessels) return c.json(vessels, 400);
+
+    const result = await deps.repository.getFishingEffort({
+      ...bbox,
+      polygons: polygons?.rings,
+      from: range.from,
+      to: range.to,
+      minKnots: speed.minKnots ?? DEFAULT_EFFORT_MIN_KNOTS,
+      maxKnots: speed.maxKnots ?? DEFAULT_EFFORT_MAX_KNOTS,
+      maxGapSeconds: parseMaxGapMinutes(body.maxGapMinutes) * 60,
+      vesselIds: vessels.ids,
+      limit: parseEffortLimit(body.limit),
+    });
+    return c.json(result);
   });
 
   return app;
@@ -79,8 +155,12 @@ async function runDensity(
   deps: AisRouterDeps,
   params: URLSearchParams,
   vesselIdsRaw: unknown,
+  polygons?: number[][][],
 ): Promise<Response> {
-  const bbox = parseBbox(params.get("bbox"));
+  const bbox =
+    params.get("bbox") == null && polygons?.length
+      ? bboxOfRings(polygons)
+      : parseBbox(params.get("bbox"));
   if ("error" in bbox) return c.json(bbox, 400);
 
   const range = parseRange(params, "7d");
@@ -99,9 +179,127 @@ async function runDensity(
     to: range.to,
     ...speed,
     vesselIds: vessels.ids,
+    polygons,
     limit: parseLimitCells(params.get("limit")),
   });
   return c.json(result);
+}
+
+/**
+ * Optional GeoJSON Polygon/MultiPolygon → outer rings ([lng,lat], closed).
+ * Holes (rings beyond the first) are ignored — drawn map areas never carry
+ * them. Rings are auto-closed; caps keep the ClickHouse pointInPolygon
+ * OR-chain bounded.
+ */
+function parseEffortPolygon(
+  raw: unknown,
+): { rings: number[][][] } | QueryError | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return {
+      error: "invalid_query",
+      message: "polygon must be a GeoJSON Polygon or MultiPolygon object",
+    };
+  }
+  const geo = raw as { type?: unknown; coordinates?: unknown };
+  let outers: unknown[];
+  if (geo.type === "Polygon") {
+    outers = [(geo.coordinates as unknown[])?.[0]];
+  } else if (geo.type === "MultiPolygon") {
+    outers = ((geo.coordinates as unknown[]) ?? []).map(
+      (poly) => (poly as unknown[])?.[0],
+    );
+  } else {
+    return {
+      error: "invalid_query",
+      message: "polygon.type must be Polygon or MultiPolygon",
+    };
+  }
+  if (outers.length === 0 || outers.some((r) => !Array.isArray(r))) {
+    return { error: "invalid_query", message: "polygon has no valid rings" };
+  }
+  if (outers.length > MAX_EFFORT_POLYGONS) {
+    return {
+      error: "invalid_query",
+      message: `too many polygons: max ${MAX_EFFORT_POLYGONS}`,
+    };
+  }
+  const rings: number[][][] = [];
+  let totalVertices = 0;
+  for (const outer of outers as unknown[][]) {
+    const ring: number[][] = [];
+    for (const vertex of outer) {
+      if (
+        !Array.isArray(vertex) ||
+        vertex.length < 2 ||
+        !Number.isFinite(vertex[0]) ||
+        !Number.isFinite(vertex[1]) ||
+        (vertex[0] as number) < -180 ||
+        (vertex[0] as number) > 180 ||
+        (vertex[1] as number) < -90 ||
+        (vertex[1] as number) > 90
+      ) {
+        return {
+          error: "invalid_query",
+          message: "polygon vertices must be [lng,lat] pairs in WGS84 range",
+        };
+      }
+      ring.push([vertex[0] as number, vertex[1] as number]);
+    }
+    const first = ring[0];
+    const last = ring.at(-1);
+    const isClosed =
+      first && last && first[0] === last[0] && first[1] === last[1];
+    if (ring.length < (isClosed ? 4 : 3)) {
+      return {
+        error: "invalid_query",
+        message: "each polygon ring needs at least 3 distinct vertices",
+      };
+    }
+    if (!isClosed && first) ring.push([first[0], first[1]]);
+    totalVertices += ring.length;
+    rings.push(ring);
+  }
+  if (totalVertices > MAX_EFFORT_VERTICES) {
+    return {
+      error: "invalid_query",
+      message: `too many polygon vertices: max ${MAX_EFFORT_VERTICES} total (simplify the geometry)`,
+    };
+  }
+  return { rings };
+}
+
+function parseMaxGapMinutes(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : Number.parseFloat(String(raw));
+  if (raw == null || !Number.isFinite(n)) return DEFAULT_MAX_GAP_MINUTES;
+  return Math.min(Math.max(n, 1), 120);
+}
+
+function parseEffortLimit(raw: unknown): number {
+  const n = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+  if (raw == null || !Number.isFinite(n)) return 100;
+  return Math.min(Math.max(n, 1), MAX_EFFORT_VESSEL_ROWS);
+}
+
+function bboxOfRings(rings: number[][][]): {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
+} {
+  let minLon = 180;
+  let minLat = 90;
+  let maxLon = -180;
+  let maxLat = -90;
+  for (const ring of rings) {
+    for (const [lng, lat] of ring as [number, number][]) {
+      if (lng < minLon) minLon = lng;
+      if (lng > maxLon) maxLon = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  }
+  return { minLon, minLat, maxLon, maxLat };
 }
 
 // Normalise a JSON body into the URLSearchParams shape the parse* helpers expect.
