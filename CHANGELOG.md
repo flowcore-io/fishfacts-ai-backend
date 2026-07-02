@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.20.0...v1.21.0) (2026-07-02)
+
+
+### Features
+
+* **ais:** per-vessel fishing-effort endpoint + polygon clip on density ([#92](https://github.com/flowcore-io/fishfacts-ai-backend/issues/92)) ([fde2772](https://github.com/flowcore-io/fishfacts-ai-backend/commit/fde27723860afdc98a1b32440b3c6564246f4607))
+
 ## [1.20.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.19.0...v1.20.0) (2026-07-01)
 
 
