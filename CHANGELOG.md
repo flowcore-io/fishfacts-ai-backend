@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.21.0...v1.21.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **ais:** release the polygon-literal query fix for effort and density ([9bd0417](https://github.com/flowcore-io/fishfacts-ai-backend/commit/9bd04177de8d1daf4ac75bddbdfc71df891c6038))
+
 ## [1.21.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.20.0...v1.21.0) (2026-07-02)
 
 
