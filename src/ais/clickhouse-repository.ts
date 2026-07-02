@@ -212,16 +212,7 @@ export class AisClickhouseRepository {
         : "";
     // Per-fix polygon clip (vs the FE's cell-centre clip): applied BEFORE the
     // fixes-DESC LIMIT so out-of-area hotspots can't crowd in-area cells out.
-    const polyParams: Record<string, unknown> = {};
-    const polyFilter =
-      opts.polygons && opts.polygons.length > 0
-        ? `AND (${opts.polygons
-            .map((ring, i) => {
-              polyParams[`poly${i}`] = ring;
-              return `pointInPolygon((longitude, latitude), {poly${i}:Array(Tuple(Float64, Float64))})`;
-            })
-            .join(" OR ")})`
-        : "";
+    const polyFilter = buildPolygonFilter(opts.polygons);
     // Optional gear/vessel-type filter: the FE resolves a vessel type (e.g.
     // longliners) to its FF vessel ids and passes them here. vessel_id is the
     // leading ORDER BY key, so the IN filter is cheap.
@@ -261,7 +252,6 @@ export class AisClickhouseRepository {
         ...(speedFilter
           ? { minKn: opts.minKnots ?? 0, maxKn: opts.maxKnots ?? 1_000_000 }
           : {}),
-        ...polyParams,
         ...(vesselFilter ? { ids: opts.vesselIds } : {}),
       },
       format: "JSONEachRow",
@@ -325,16 +315,7 @@ export class AisClickhouseRepository {
       opts.vesselIds && opts.vesselIds.length > 0
         ? "AND vessel_id IN ({ids:Array(Int32)})"
         : "";
-    const polyParams: Record<string, unknown> = {};
-    const polyFilter =
-      opts.polygons && opts.polygons.length > 0
-        ? `AND (${opts.polygons
-            .map((ring, i) => {
-              polyParams[`poly${i}`] = ring;
-              return `pointInPolygon((longitude, latitude), {poly${i}:Array(Tuple(Float64, Float64))})`;
-            })
-            .join(" OR ")})`
-        : "";
+    const polyFilter = buildPolygonFilter(opts.polygons);
     const query = `
       WITH fixes AS (
         SELECT vessel_id, event_time
@@ -384,7 +365,6 @@ export class AisClickhouseRepository {
         minKn: opts.minKnots,
         maxKn: opts.maxKnots,
         maxGap: opts.maxGapSeconds,
-        ...polyParams,
         ...(vesselFilter ? { ids: opts.vesselIds } : {}),
       },
       clickhouse_settings: { max_execution_time: 30 },
@@ -533,6 +513,30 @@ function toRow(p: AisPositionFixObserved): ChRow {
     observed_at: isoToCh(p.observedAt),
     source: p.source,
   };
+}
+
+/**
+ * OR-chain of pointInPolygon tests over [lng,lat] outer rings, inlined as a
+ * SQL literal. Inlining is deliberate: the ClickHouse HTTP client cannot bind
+ * an Array(Tuple(Float64, Float64)) query param (it serialises tuples as
+ * `[x,y]` where ClickHouse expects `(x,y)`), and pointInPolygon wants a
+ * constant polygon anyway. Injection-safe: every vertex is re-validated
+ * finite here (routes already range-check) and rendered via Number toString.
+ */
+function buildPolygonFilter(polygons: number[][][] | undefined): string {
+  if (!polygons || polygons.length === 0) return "";
+  const parts = polygons.map((ring) => {
+    const pts = ring
+      .map(([lng, lat]) => {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+          throw new Error("polygon vertices must be finite numbers");
+        }
+        return `(${lng},${lat})`;
+      })
+      .join(",");
+    return `pointInPolygon((longitude, latitude), [${pts}])`;
+  });
+  return `AND (${parts.join(" OR ")})`;
 }
 
 /** ISO 'YYYY-MM-DDTHH:MM:SS.sssZ' → ClickHouse 'YYYY-MM-DD HH:MM:SS.sss' (UTC). */
