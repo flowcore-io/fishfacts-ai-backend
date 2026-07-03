@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.21.1...v1.21.2) (2026-07-03)
+
+
+### Bug Fixes
+
+* **ais:** raise effort/density query budget to 55s ([#96](https://github.com/flowcore-io/fishfacts-ai-backend/issues/96)) ([254a090](https://github.com/flowcore-io/fishfacts-ai-backend/commit/254a090171cfcefc0c1d8997d51a49c4934d93dc))
+
 ## [1.21.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.21.0...v1.21.1) (2026-07-02)
 
 
