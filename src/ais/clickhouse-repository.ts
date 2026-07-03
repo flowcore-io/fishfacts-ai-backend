@@ -240,6 +240,10 @@ export class AisClickhouseRepository {
     `;
     const rs = await this.client.query({
       query,
+      // Same bounded budget as /effort: a polygon-clipped year-to-date scan
+      // over the full fleet is the heaviest query this table serves, and the
+      // FE calls with a 60 s timeout - fail crisply just under it.
+      clickhouse_settings: { max_execution_time: 55 },
       query_params: {
         g: opts.gridDeg,
         from: isoToCh(opts.from),
@@ -367,7 +371,7 @@ export class AisClickhouseRepository {
         maxGap: opts.maxGapSeconds,
         ...(vesselFilter ? { ids: opts.vesselIds } : {}),
       },
-      clickhouse_settings: { max_execution_time: 30 },
+      clickhouse_settings: { max_execution_time: 55 },
       format: "JSONEachRow",
     });
     const rows = (await rs.json()) as Array<{
