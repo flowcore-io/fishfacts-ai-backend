@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.22.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.0...v1.22.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **ais:** qualify speed column in getTracks WHERE (fixes POST /tracks 500) ([764a969](https://github.com/flowcore-io/fishfacts-ai-backend/commit/764a9696d8c6affa3a6de125c28e62d7643fe50b))
+* **ais:** qualify speed column in getTracks WHERE (ILLEGAL_AGGREGATION) ([aeac364](https://github.com/flowcore-io/fishfacts-ai-backend/commit/aeac364a67c37cbd6438ab3f3fa56b9c3f3ec585))
+
 ## [1.22.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.21.2...v1.22.0) (2026-07-06)
 
 
