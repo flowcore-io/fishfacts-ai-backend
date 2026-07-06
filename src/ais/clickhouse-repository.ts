@@ -105,6 +105,10 @@ export class AisClickhouseRepository {
     to: string;
     maxPointsPerVessel: number;
     statuses?: string[];
+    minKnots?: number;
+    maxKnots?: number;
+    /** Optional outer rings ([lng,lat], closed) — per-fix polygon clip. */
+    polygons?: number[][][];
   }): Promise<AisTracksResult> {
     const windowSec = Math.max(
       1,
@@ -116,6 +120,16 @@ export class AisClickhouseRepository {
     const statusFilter = opts.statuses?.length
       ? "AND status IN ({statuses:Array(String)})"
       : "";
+    const speedFilter =
+      opts.minKnots !== undefined || opts.maxKnots !== undefined
+        ? "AND speed IS NOT NULL AND speed >= {minKn:Float64} AND speed <= {maxKn:Float64}"
+        : "";
+    // Per-fix polygon clip: applied in the WHERE clause, so out-of-area fixes
+    // are dropped BEFORE the toStartOfInterval bucket downsampling — the point
+    // budget (step) is spent only on in-polygon fixes. Same inlining rationale
+    // as /density and /effort (buildPolygonFilter). Absent polygon/speed ⇒ both
+    // filters are "" and the emitted SQL is identical to the pre-clip query.
+    const polyFilter = buildPolygonFilter(opts.polygons);
     const query = `
       SELECT
         vessel_id                     AS vesselId,
@@ -131,6 +145,8 @@ export class AisClickhouseRepository {
         AND event_time >= {from:DateTime64(3)}
         AND event_time <  {to:DateTime64(3)}
         ${statusFilter}
+        ${speedFilter}
+        ${polyFilter}
       GROUP BY vessel_id, toStartOfInterval(event_time, INTERVAL ${step} SECOND)
       ORDER BY vessel_id, t
     `;
@@ -141,8 +157,16 @@ export class AisClickhouseRepository {
         from: isoToCh(opts.from),
         to: isoToCh(opts.to),
         ...(opts.statuses?.length ? { statuses: opts.statuses } : {}),
+        ...(speedFilter
+          ? { minKn: opts.minKnots ?? 0, maxKn: opts.maxKnots ?? 1_000_000 }
+          : {}),
       },
       format: "JSONEachRow",
+      // Crisp failure over a slow hang: a polygon clip (per-row pointInPolygon)
+      // + speed band over a long window could run long. Matches /density and
+      // /effort. The vessel_id IN (...) prefix already bounds the scan to ≤50
+      // vessels' partitions, so this is a safety ceiling, not the common path.
+      clickhouse_settings: { max_execution_time: 55 },
     });
     const rows = (await rs.json()) as Array<{
       vesselId: number;

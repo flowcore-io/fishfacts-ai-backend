@@ -55,6 +55,46 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
     return c.json(result);
   });
 
+  // Same as GET /tracks but accepts a GeoJSON `polygon` (Polygon/MultiPolygon)
+  // that clips each vessel's track to the drawn area, plus an optional
+  // minKnots/maxKnots speed band. POST-only: a polygon doesn't fit in a GET URL
+  // (same reason as /density and /effort). Without a polygon this behaves like
+  // GET /tracks — the clip/speed filters only narrow the fixes, never widen.
+  app.post("/tracks", async (c) => {
+    const body = await readJsonBody(c);
+    if (body instanceof Response) return body;
+
+    const vesselIds = parseVesselIds(
+      Array.isArray(body.vesselIds)
+        ? (body.vesselIds as unknown[]).join(",")
+        : ((body.vesselIds as string | null | undefined) ?? null),
+    );
+    if ("error" in vesselIds) return c.json(vesselIds, 400);
+
+    const params = bodyToParams(body);
+
+    const range = parseRange(params);
+    if ("error" in range) return c.json(range, 400);
+
+    const speed = parseSpeed(params);
+    if ("error" in speed) return c.json(speed, 400);
+
+    const polygons = parseEffortPolygon(body.polygon);
+    if (polygons && "error" in polygons) return c.json(polygons, 400);
+
+    const result = await deps.repository.getTracks({
+      vesselIds: vesselIds.ids,
+      from: range.from,
+      to: range.to,
+      maxPointsPerVessel: parseMaxPoints(params.get("maxPointsPerVessel")),
+      statuses: parseStatuses(params.get("status")),
+      minKnots: speed.minKnots,
+      maxKnots: speed.maxKnots,
+      polygons: polygons?.rings,
+    });
+    return c.json(result);
+  });
+
   // Fleet-density grid over a bbox + window — the "where is the fleet (fishing)"
   // signal for area recommendations and custom AIS heatmaps. Optional speed band
   // restricts to fishing speeds; optional vesselIds restrict to a gear/vessel
@@ -67,15 +107,8 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   });
 
   app.post("/density", async (c) => {
-    let body: Record<string, unknown>;
-    try {
-      body = (await c.req.json()) as Record<string, unknown>;
-    } catch {
-      return c.json(
-        { error: "invalid_query", message: "body must be JSON" } as QueryError,
-        400,
-      );
-    }
+    const body = await readJsonBody(c);
+    if (body instanceof Response) return body;
     const polygons = parseEffortPolygon(body.polygon);
     if (polygons && "error" in polygons) return c.json(polygons, 400);
     return runDensity(
@@ -93,15 +126,8 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   // gaps above maxGapMinutes (default 30) so AIS coverage holes are never
   // credited as fishing. POST-only: polygons don't fit in GET query params.
   app.post("/effort", async (c) => {
-    let body: Record<string, unknown>;
-    try {
-      body = (await c.req.json()) as Record<string, unknown>;
-    } catch {
-      return c.json(
-        { error: "invalid_query", message: "body must be JSON" } as QueryError,
-        400,
-      );
-    }
+    const body = await readJsonBody(c);
+    if (body instanceof Response) return body;
     const params = bodyToParams(body);
 
     const polygons = parseEffortPolygon(body.polygon);
@@ -148,6 +174,21 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   });
 
   return app;
+}
+
+// Parse a JSON request body, or return a 400 Response the caller should
+// forward. Shared by the three POST handlers (/tracks, /density, /effort).
+async function readJsonBody(
+  c: Context,
+): Promise<Record<string, unknown> | Response> {
+  try {
+    return (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return c.json(
+      { error: "invalid_query", message: "body must be JSON" } as QueryError,
+      400,
+    );
+  }
 }
 
 async function runDensity(
@@ -319,6 +360,8 @@ function bodyToParams(body: Record<string, unknown>): URLSearchParams {
   set("minKnots", body.minKnots);
   set("maxKnots", body.maxKnots);
   set("limit", body.limit);
+  set("maxPointsPerVessel", body.maxPointsPerVessel);
+  set("status", body.status);
   return params;
 }
 
