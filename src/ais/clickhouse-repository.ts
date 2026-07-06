@@ -120,9 +120,16 @@ export class AisClickhouseRepository {
     const statusFilter = opts.statuses?.length
       ? "AND status IN ({statuses:Array(String)})"
       : "";
+    // The speed column is referenced TABLE-QUALIFIED on purpose. The SELECT
+    // aliases `argMax(speed, event_time) AS speed`, which shadows the raw
+    // column — an unqualified `speed` in WHERE binds to that aggregate and
+    // ClickHouse rejects it (Code 184 ILLEGAL_AGGREGATION: "Aggregate function
+    // argMax(speed, event_time) AS speed is found in WHERE"). Qualifying with
+    // the table name resolves to the raw column. (/density and /effort never
+    // hit this — neither SELECT aliases anything `speed`.)
     const speedFilter =
       opts.minKnots !== undefined || opts.maxKnots !== undefined
-        ? "AND speed IS NOT NULL AND speed >= {minKn:Float64} AND speed <= {maxKn:Float64}"
+        ? "AND ais_position_fixes.speed IS NOT NULL AND ais_position_fixes.speed >= {minKn:Float64} AND ais_position_fixes.speed <= {maxKn:Float64}"
         : "";
     // Per-fix polygon clip: applied in the WHERE clause, so out-of-area fixes
     // are dropped BEFORE the toStartOfInterval bucket downsampling — the point
