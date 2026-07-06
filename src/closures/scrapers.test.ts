@@ -111,4 +111,20 @@ describe("Vørn ring normalisation", () => {
     expect(points).toHaveLength(3);
     expect(warning).toBeNull();
   });
+
+  test("leaves a ≥4-vertex unclosed but simple ring untouched (no warning)", () => {
+    // The conservative guarantee rests on the ≥4-vertex case: a simple ring
+    // that does not repeat P1 must pass through, since ringSelfIntersects only
+    // short-circuits below 4 vertices. Simple quadrilateral, unclosed.
+    const ring = [
+      p(62, 0, 7, 0),
+      p(62, 0, 6, 30),
+      p(61, 50, 6, 30),
+      p(61, 50, 7, 0),
+    ];
+    expect(ringSelfIntersects(ring)).toBe(false);
+    const { points, warning } = normalizeVornRing(ring);
+    expect(points).toHaveLength(4);
+    expect(warning).toBeNull();
+  });
 });
