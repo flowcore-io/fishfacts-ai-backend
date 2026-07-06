@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.22.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.21.2...v1.22.0) (2026-07-06)
+
+
+### Features
+
+* **ais:** polygon clip + speed band for vessel tracks ([1abd081](https://github.com/flowcore-io/fishfacts-ai-backend/commit/1abd081a187c7ca98d44f156a68506ca523d9fc6))
+* **ais:** polygon clip + speed band for vessel tracks ([fe7f763](https://github.com/flowcore-io/fishfacts-ai-backend/commit/fe7f7639711a00c8fedd5f914dfc65c773caf697))
+
 ## [1.21.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.21.1...v1.21.2) (2026-07-03)
 
 
