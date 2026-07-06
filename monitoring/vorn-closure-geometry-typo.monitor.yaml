@@ -1,0 +1,61 @@
+# Groundcover logs monitor — Vørn closure geometry typo detector
+# --------------------------------------------------------------
+# Fires when the Vørn veiðibann scraper has to auto-repair a malformed source
+# ring (see src/closures/scrapers.ts › normalizeVornRing). The backend emits:
+#
+#   [Vorn] closure geometry normalized: <sourceKey> — <reason...>
+#
+# for both repaired (typo-unclosed-ring-repaired) and un-repairable
+# (unclosed-ring-unrepairable) cases. Each firing = a coordinate typo in a Vørn
+# notice that should be reported to Vørn (vakt@vorn.fo) so the authoritative
+# source is corrected.
+#
+# The Groundcover MCP is read-only, so this can't be applied via API. Create it
+# in the Groundcover UI (Monitors → New monitor → Logs → "Edit as code") or via
+# your monitors-as-code pipeline. The two fields that matter are the gcQL query
+# and the threshold — both validated against live logs on 2026-07-06. Reconcile
+# the surrounding keys with an existing "[SQL] …" monitor if the schema differs.
+
+title: "[SQL] fishfacts-ai-backend: Vørn closure geometry typo (source notice)"
+severity: warning
+labels:
+  team: fishfacts
+  service: fishfacts-ai-backend
+  category: data-quality
+
+model:
+  # Count normalization warnings in a rolling window, scoped to the workload.
+  # Bare keywords ("closure geometry normalized") hit the full-text index;
+  # the workload label keeps the scan cheap.
+  queries:
+    - name: normalizations
+      dataType: logs
+      pipeline: >-
+        workload:fishfacts-ai-backend closure geometry normalized
+        | stats count() as hits
+  thresholds:
+    - inputName: normalizations
+      column: hits
+      operator: gt
+      value: 0
+
+evaluationInterval:
+  interval: 30m      # the Vørn crawl is hourly; 30m is comfortably sub-cadence
+  pendingFor: 0s
+
+noDataState: OK          # no logs / no matches ≠ a problem
+executionErrorState: OK
+
+annotations:
+  summary: >-
+    A Vørn veiðibann notice has malformed geometry that the scraper had to
+    auto-repair — likely a coordinate typo in the source.
+  description: >-
+    fishfacts-ai-backend logged "[Vorn] closure geometry normalized". Find the
+    firing line for the sourceKey + reason (repaired vs un-repairable), open the
+    linked vorn.fo notice, confirm the coordinate typo, and notify Vørn
+    (vakt@vorn.fo) so the authoritative notice is corrected. Reference:
+    veiðibann nr. 14-2026 closed with "6014 N" instead of "6104 N".
+    gcQL to inspect firings:
+    workload:fishfacts-ai-backend closure geometry normalized
+    | fields _time, content | sort by (_time desc) | limit 20
