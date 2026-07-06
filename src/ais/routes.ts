@@ -61,15 +61,8 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   // (same reason as /density and /effort). Without a polygon this behaves like
   // GET /tracks — the clip/speed filters only narrow the fixes, never widen.
   app.post("/tracks", async (c) => {
-    let body: Record<string, unknown>;
-    try {
-      body = (await c.req.json()) as Record<string, unknown>;
-    } catch {
-      return c.json(
-        { error: "invalid_query", message: "body must be JSON" } as QueryError,
-        400,
-      );
-    }
+    const body = await readJsonBody(c);
+    if (body instanceof Response) return body;
 
     const vesselIds = parseVesselIds(
       Array.isArray(body.vesselIds)
@@ -114,15 +107,8 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   });
 
   app.post("/density", async (c) => {
-    let body: Record<string, unknown>;
-    try {
-      body = (await c.req.json()) as Record<string, unknown>;
-    } catch {
-      return c.json(
-        { error: "invalid_query", message: "body must be JSON" } as QueryError,
-        400,
-      );
-    }
+    const body = await readJsonBody(c);
+    if (body instanceof Response) return body;
     const polygons = parseEffortPolygon(body.polygon);
     if (polygons && "error" in polygons) return c.json(polygons, 400);
     return runDensity(
@@ -140,15 +126,8 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   // gaps above maxGapMinutes (default 30) so AIS coverage holes are never
   // credited as fishing. POST-only: polygons don't fit in GET query params.
   app.post("/effort", async (c) => {
-    let body: Record<string, unknown>;
-    try {
-      body = (await c.req.json()) as Record<string, unknown>;
-    } catch {
-      return c.json(
-        { error: "invalid_query", message: "body must be JSON" } as QueryError,
-        400,
-      );
-    }
+    const body = await readJsonBody(c);
+    if (body instanceof Response) return body;
     const params = bodyToParams(body);
 
     const polygons = parseEffortPolygon(body.polygon);
@@ -195,6 +174,21 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   });
 
   return app;
+}
+
+// Parse a JSON request body, or return a 400 Response the caller should
+// forward. Shared by the three POST handlers (/tracks, /density, /effort).
+async function readJsonBody(
+  c: Context,
+): Promise<Record<string, unknown> | Response> {
+  try {
+    return (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return c.json(
+      { error: "invalid_query", message: "body must be JSON" } as QueryError,
+      400,
+    );
+  }
 }
 
 async function runDensity(

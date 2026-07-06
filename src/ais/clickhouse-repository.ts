@@ -162,6 +162,11 @@ export class AisClickhouseRepository {
           : {}),
       },
       format: "JSONEachRow",
+      // Crisp failure over a slow hang: a polygon clip (per-row pointInPolygon)
+      // + speed band over a long window could run long. Matches /density and
+      // /effort. The vessel_id IN (...) prefix already bounds the scan to ≤50
+      // vessels' partitions, so this is a safety ceiling, not the common path.
+      clickhouse_settings: { max_execution_time: 55 },
     });
     const rows = (await rs.json()) as Array<{
       vesselId: number;
