@@ -46,6 +46,106 @@ function bboxOf(points: ClosurePoint[]): ClosureRecord["bbox"] {
   return [minLng, minLat, maxLng, maxLat];
 }
 
+function fmtPoint(p: ClosurePoint): string {
+  const ns = p.lat >= 0 ? "N" : "S";
+  const ew = p.lng >= 0 ? "E" : "W";
+  return `${Math.abs(p.lat).toFixed(4)}${ns}, ${Math.abs(p.lng).toFixed(4)}${ew}`;
+}
+
+/**
+ * Do any two non-adjacent edges of the ring cross? The ring is treated as
+ * implicitly closed (last vertex → first vertex), matching how the map draws
+ * it. Pure + allocation-light so it can gate the ring normaliser below.
+ */
+export function ringSelfIntersects(points: ClosurePoint[]): boolean {
+  const n = points.length;
+  if (n < 4) return false;
+  const ccw = (a: ClosurePoint, b: ClosurePoint, c: ClosurePoint) =>
+    (c.lat - a.lat) * (b.lng - a.lng) > (b.lat - a.lat) * (c.lng - a.lng);
+  const crosses = (
+    a: ClosurePoint,
+    b: ClosurePoint,
+    c: ClosurePoint,
+    d: ClosurePoint,
+  ) => ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+  for (let i = 0; i < n; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % n];
+    for (let j = i + 1; j < n; j++) {
+      // Skip edges that share a vertex — they can't "cross" meaningfully.
+      if (j === (i + 1) % n || (j + 1) % n === i) continue;
+      if (crosses(a, b, points[j], points[(j + 1) % n])) return true;
+    }
+  }
+  return false;
+}
+
+export type RingNormalization = {
+  code: "typo-unclosed-ring-repaired" | "unclosed-ring-unrepairable";
+  message: string;
+  droppedPoint?: ClosurePoint;
+  firstPoint: ClosurePoint;
+  lastPoint: ClosurePoint;
+};
+
+/**
+ * Apply Vørn's ring-closing convention to a raw coordinate list.
+ *
+ * Every published ban closes its polygon by repeating the first vertex as the
+ * last — we drop that duplicate (the common, non-warning path). When a ring
+ * does NOT close that way *and* is self-intersecting, its final vertex is a
+ * corrupted closing token: a coordinate typo in the source notice. Real case:
+ * veiðibann nr. 14/2026, where the closing "6104 N – 0700 W" was fat-fingered
+ * as "6014 N – 0700 W" (a digit transposition ~93 km too far south), leaving
+ * the ring unclosed and self-crossing so it rendered as a degenerate shape.
+ * Dropping that phantom vertex recovers the intended simple polygon; we return
+ * a `warning` so the source typo can be flagged to Vørn.
+ *
+ * The repair is deliberately conservative: it fires only when the ring is
+ * actually broken (self-intersecting) *and* dropping the offending vertex
+ * demonstrably yields a simple polygon — a genuine non-repeating but valid ring
+ * is never touched.
+ */
+export function normalizeVornRing(raw: ClosurePoint[]): {
+  points: ClosurePoint[];
+  warning: RingNormalization | null;
+} {
+  const points = [...raw];
+  if (points.length <= 2) return { points, warning: null };
+  const first = points[0];
+  const last = points[points.length - 1];
+  const closesByRepeat = first.lat === last.lat && first.lng === last.lng;
+  if (closesByRepeat) {
+    points.pop();
+    return { points, warning: null };
+  }
+  // Unclosed ring — an anomaly, since every real Vørn ban closes by repeat.
+  // Only intervene when the geometry is genuinely broken.
+  if (!ringSelfIntersects(points)) return { points, warning: null };
+  const repaired = points.slice(0, -1);
+  if (repaired.length >= 3 && !ringSelfIntersects(repaired)) {
+    return {
+      points: repaired,
+      warning: {
+        code: "typo-unclosed-ring-repaired",
+        message: `unclosed ring — final vertex ${fmtPoint(last)} does not repeat the first ${fmtPoint(first)} and the ring self-intersects; dropped it as a corrupted closing token (likely a coordinate typo in the source notice)`,
+        droppedPoint: last,
+        firstPoint: first,
+        lastPoint: last,
+      },
+    };
+  }
+  return {
+    points,
+    warning: {
+      code: "unclosed-ring-unrepairable",
+      message: `self-intersecting ring that does not close on its first vertex ${fmtPoint(first)} (last ${fmtPoint(last)}); could not auto-repair — drawing as-is`,
+      firstPoint: first,
+      lastPoint: last,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 🇫🇴 Vørn — bráðfeingis veiðibann (emergency trawl bans). Coords in raw HTML
 // as DDMM, e.g. "6244 N – 0630 W" = 62°44′N 6°30′W.
@@ -105,7 +205,7 @@ export function parseVornBan(url: string, html: string): ClosureRecord {
     .replace(/\s+/g, " ")
     .trim();
 
-  const points: ClosurePoint[] = [];
+  const rawPoints: ClosurePoint[] = [];
   for (const m of html.matchAll(VORN_COORD_RE)) {
     const latDeg = Number(m[1]);
     const latMin = Number(m[2]);
@@ -117,15 +217,18 @@ export function parseVornBan(url: string, html: string): ClosureRecord {
     let lng = lngDeg + lngMin / 60;
     if (ns === "S") lat = -lat;
     if (ew === "W" || ew === "V") lng = -lng;
-    points.push({ lat, lng });
+    rawPoints.push({ lat, lng });
   }
-  // Vørn repeats the first vertex to close the ring — drop the trailing dup.
-  if (
-    points.length > 2 &&
-    points[0].lat === points[points.length - 1].lat &&
-    points[0].lng === points[points.length - 1].lng
-  ) {
-    points.pop();
+  // Vørn closes every ban ring by repeating the first vertex as the last. The
+  // normaliser drops that duplicate — and recovers from a typo'd closing vertex
+  // (see normalizeVornRing / nr 14-2026). A non-null `warning` means we had to
+  // repair a malformed source ring: log it so the typo can be flagged to Vørn.
+  const { points, warning } = normalizeVornRing(rawPoints);
+  if (warning) {
+    console.warn(
+      `[Vorn] closure geometry normalized: ${vornSourceKey(url)} — ${warning.message}`,
+      { sourceKey: vornSourceKey(url), url, ...warning },
+    );
   }
 
   const gear = (text.match(/\b(trol|línu|lína|nót|garn|teinur)\b/i) || [])[1];
