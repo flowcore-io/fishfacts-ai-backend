@@ -7,6 +7,7 @@ import {
   areasToWkt,
   parseJmeldingGeo,
 } from "./geo-parser";
+import { normalizeVornAreas } from "./vorn-ring";
 
 export type GeoProjectionResult = {
   jmNumber: string;
@@ -53,12 +54,28 @@ export class JMeldingGeoProjector {
 
     // FO/IS collectors supply pre-parsed geometry; Norwegian announcements
     // parse coords out of the body via the existing parser.
+    let areas = item.areas;
+    // Faroese (Vørn) rings are hand-transcribed point lists that close by
+    // repeating the first vertex — the raw event keeps them verbatim (incl.
+    // typos), so clean them here in the read-model transformer: drop the
+    // closing dup and repair a typo'd/self-intersecting ring. A warning means a
+    // source typo we should report to Vørn (monitored in Groundcover).
+    if (areas && areas.length > 0 && item.region === "FO") {
+      const normalized = normalizeVornAreas(areas);
+      areas = normalized.areas;
+      for (const w of normalized.warnings) {
+        console.warn(
+          `[Vorn] closure geometry normalized: ${jmNumber} — ${w.message}`,
+          { jmNumber, url: item.url, ...w },
+        );
+      }
+    }
     const parsed =
-      item.areas && item.areas.length > 0
+      areas && areas.length > 0
         ? {
-            areas: item.areas,
-            bbox: bboxFromAreas(item.areas),
-            hasGeo: item.areas.some((a) => a.points.length > 0),
+            areas,
+            bbox: bboxFromAreas(areas),
+            hasGeo: areas.some((a) => a.points.length > 0),
           }
         : parseJmeldingGeo(item.bodyMarkdown);
     const geojson = areasToFeatureCollection(parsed.areas);

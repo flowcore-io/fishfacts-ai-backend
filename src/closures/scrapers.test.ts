@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ClosurePoint } from "./scrapers";
-import {
-  matchVornBanUrls,
-  normalizeVornRing,
-  ringSelfIntersects,
-  vornSourceKey,
-} from "./scrapers";
+import { matchVornBanUrls, parseVornBan, vornSourceKey } from "./scrapers";
 
 // Vørn typo's the ban slug per-announcement. The five current 2026 ban pages
 // (live on vorn.fo/sitemap.xml, captured 2026-06-29) use four different
@@ -55,76 +49,32 @@ describe("Vørn veiðibann URL discovery", () => {
   });
 });
 
-// DDMM (deg + arc-minutes) → decimal, W longitudes negative. Mirrors parseVornBan.
-const p = (
-  latD: number,
-  latM: number,
-  lngD: number,
-  lngM: number,
-): ClosurePoint => ({
-  lat: latD + latM / 60,
-  lng: -(lngD + lngM / 60),
-});
+describe("parseVornBan emits faithful raw geometry", () => {
+  // Ring cleanup lives in the geo projector (see jmelding/vorn-ring.ts) so the
+  // announcement event stays a lossless record of the source. The scraper must
+  // therefore keep every listed point verbatim — including the closing repeat
+  // and any typo.
+  const url =
+    "https://www.vorn.fo/fiskiveida/bradfeingis-veidibann/veidibann-nr-14-2026";
 
-describe("Vørn ring normalisation", () => {
-  test("drops the repeated closing vertex on a well-formed ring (no warning)", () => {
-    // nr 10/11/12/13 convention: Vørn repeats P1 as the last point to close.
-    const ring = [
-      p(62, 39, 5, 51),
-      p(62, 30, 6, 0),
-      p(62, 20, 5, 40),
-      p(62, 39, 5, 51),
-    ];
-    const { points, warning } = normalizeVornRing(ring);
-    expect(points).toHaveLength(3);
-    expect(warning).toBeNull();
+  test("keeps nr. 14's typo'd 6th vertex (no repair at scrape time)", () => {
+    const html = `<html><body><p>Við heimild í Løgtingslóg nr. 152 frá 23.
+      desember 2019, § 59, ásetir Fiskiveiðueftirlitið bráðfeingis veiðibann
+      fyri trol.</p><p>6104 N – 0700 W 6057 N – 0706 W 6045 N – 0700 W
+      6039 N – 0654 W 6045 N – 0636 W 6014 N – 0700 W</p></body></html>`;
+    const rec = parseVornBan(url, html);
+    expect(rec.points).toHaveLength(6); // all six, incl. the 6014 N typo
+    expect(rec.geometryType).toBe("polygon");
+    // Last point is the far-south typo vertex, kept verbatim.
+    expect(rec.points.at(-1)?.lat).toBeCloseTo(60 + 14 / 60, 5);
   });
 
-  test("repairs veiðibann nr. 14/2026's typo'd closing vertex", () => {
-    // Live source lists 6 points; the last, 6014 N – 0700 W, is a digit
-    // transposition of the first, 6104 N – 0700 W (the intended closing repeat).
-    const p1 = p(61, 4, 7, 0);
-    const p5 = p(60, 45, 6, 36);
-    const raw = [
-      p1,
-      p(60, 57, 7, 6),
-      p(60, 45, 7, 0),
-      p(60, 39, 6, 54),
-      p5,
-      p(60, 14, 7, 0), // ← typo: should have been 6104 N (== p1)
-    ];
-    expect(ringSelfIntersects(raw)).toBe(true);
-
-    const { points, warning } = normalizeVornRing(raw);
-    // Phantom vertex dropped → clean 5-point pentagon that closes on P1.
-    expect(points).toHaveLength(5);
-    expect(points.at(-1)).toEqual(p5);
-    expect(ringSelfIntersects(points)).toBe(false);
-    // Surfaced so the source typo can be flagged to Vørn.
-    expect(warning?.code).toBe("typo-unclosed-ring-repaired");
-    expect(warning?.droppedPoint).toEqual(p(60, 14, 7, 0));
-  });
-
-  test("leaves a genuine unclosed but simple ring untouched (no warning)", () => {
-    const ring = [p(62, 0, 7, 0), p(62, 0, 6, 30), p(61, 40, 6, 45)];
-    const { points, warning } = normalizeVornRing(ring);
-    expect(points).toHaveLength(3);
-    expect(warning).toBeNull();
-  });
-
-  test("leaves a ≥4-vertex unclosed but simple ring untouched (no warning)", () => {
-    // The conservative guarantee rests on the ≥4-vertex case: a simple ring
-    // that does not repeat P1 must pass through, since ringSelfIntersects only
-    // short-circuits below 4 vertices. Simple quadrilateral, unclosed.
-    const ring = [
-      p(62, 0, 7, 0),
-      p(62, 0, 6, 30),
-      p(61, 50, 6, 30),
-      p(61, 50, 7, 0),
-    ];
-    expect(ringSelfIntersects(ring)).toBe(false);
-    const { points, warning } = normalizeVornRing(ring);
-    expect(points).toHaveLength(4);
-    expect(warning).toBeNull();
+  test("keeps the repeated closing vertex verbatim (no dedup)", () => {
+    // nr 10/11/12/13 style: Vørn repeats P1 to close — the raw event keeps both.
+    const html = `<html><body><p>Við heimild.</p><p>6239 N – 0551 W
+      6230 N – 0510 W 6220 N – 0540 W 6239 N – 0551 W</p></body></html>`;
+    const rec = parseVornBan(url, html);
+    expect(rec.points).toHaveLength(4); // NOT deduped to 3
+    expect(rec.points[0]).toEqual(rec.points[3]);
   });
 });
