@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.22.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.2...v1.22.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* **vorn:** normalize closure rings in the geo projector, keep events faithful ([1ff8c9c](https://github.com/flowcore-io/fishfacts-ai-backend/commit/1ff8c9cb23eee90475f97f7cafa1322639985a32))
+* **vorn:** normalize closure rings in the geo projector, keep events faithful ([00c47b1](https://github.com/flowcore-io/fishfacts-ai-backend/commit/00c47b1f8d24b2d8ce57761b2fa211c0cdf4c040))
+
 ## [1.22.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.1...v1.22.2) (2026-07-08)
 
 
