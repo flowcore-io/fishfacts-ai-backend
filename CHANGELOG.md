@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.1...v1.22.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **vorn:** recover typo'd closing vertex in veiðibann rings ([98b7004](https://github.com/flowcore-io/fishfacts-ai-backend/commit/98b700484a90da1fe39ce7c13d71e8d0d629f5b2))
+
 ## [1.22.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.0...v1.22.1) (2026-07-06)
 
 
