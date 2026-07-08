@@ -1,9 +1,12 @@
 # Groundcover logs monitor — Vørn closure geometry typo detector
 # --------------------------------------------------------------
-# Fires when the Vørn veiðibann scraper has to auto-repair a malformed source
-# ring (see src/closures/scrapers.ts › normalizeVornRing). The backend emits:
+# Fires when the geo projector has to auto-repair a malformed Vørn ring while
+# building the read model (see src/jmelding/vorn-ring.ts › normalizeVornRing,
+# called from src/jmelding/geo-projector.ts). The raw announcement event stays
+# faithful; the cleanup — and this warning — happen on projection/replay. The
+# backend emits:
 #
-#   [Vorn] closure geometry normalized: <sourceKey> — <reason...>
+#   [Vorn] closure geometry normalized: <jmNumber> — <reason...>
 #
 # for both repaired (typo-unclosed-ring-repaired) and un-repairable
 # (unclosed-ring-unrepairable) cases. Each firing = a coordinate typo in a Vørn
