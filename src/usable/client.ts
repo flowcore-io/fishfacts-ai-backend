@@ -234,11 +234,12 @@ export class UsableApiClient {
   }
 
   /**
-   * Fetch one fragment by id. The list endpoint returns no frontmatter, so
-   * callers needing structured frontmatter (e.g. the POI gazetteer) fetch the
-   * fragment detail. Returns null ONLY on 404 (fragment gone — callers may
-   * safely skip it); any other failure throws so a transient Usable 5xx is
-   * distinguishable from a deletion.
+   * Fetch one fragment by id. List rows usually already carry frontmatter
+   * (parsed out of `content` by `normalizeFragment`), so this detail fetch is
+   * the fallback for rows whose content lacked the YAML block. Returns null
+   * ONLY on 404 (fragment gone — callers may safely skip it); any other
+   * failure throws so a transient Usable 5xx is distinguishable from a
+   * deletion.
    */
   async getFragmentById(fragmentId: string, workspaceId: string) {
     const params = new URLSearchParams({ workspaceId });

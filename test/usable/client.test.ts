@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { frontmatterFromContent } from "../../src/usable/client";
+import { afterEach, describe, expect, test } from "bun:test";
+import type { Env } from "../../src/env";
+import { frontmatterFromContent, UsableApiClient } from "../../src/usable/client";
 
 // Content shaped like a real POI fragment as the REST API returns it: the
 // YAML block is retained in `content`; the parsed `frontmatter` column is
@@ -45,5 +46,50 @@ describe("frontmatterFromContent", () => {
     expect(frontmatterFromContent("---\nkey: x\n...\nbody")).toEqual({
       key: "x",
     });
+  });
+});
+
+describe("UsableApiClient frontmatter wiring", () => {
+  const env = {
+    USABLE_API_BASE_URL: "https://usable.test/api",
+    USABLE_API_TOKEN: "test-token",
+  } as Env;
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  function stubListResponse(rows: unknown[]) {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ fragments: rows, count: rows.length, totalCount: rows.length }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+  }
+
+  test("REST-shaped list rows (YAML only in content) yield parsed frontmatter", async () => {
+    stubListResponse([{ id: "frag-1", title: "POI: Hanstholm fyr", content: POI_CONTENT }]);
+    const [fragment] = await new UsableApiClient(env).listFragments({
+      workspaceId: "ws",
+      fragmentTypeId: "type",
+    });
+    expect(fragment?.frontmatter?.key).toBe("hanstholm_fyr");
+    expect(fragment?.frontmatter?.lat).toBe(57.11269);
+  });
+
+  test("a pre-parsed frontmatter field wins over different YAML in content", async () => {
+    stubListResponse([
+      {
+        id: "frag-1",
+        content: POI_CONTENT, // says hanstholm_fyr
+        frontmatter: { key: "preparsed_fyr", lat: 1, lng: 2 },
+      },
+    ]);
+    const [fragment] = await new UsableApiClient(env).listFragments({
+      workspaceId: "ws",
+      fragmentTypeId: "type",
+    });
+    expect(fragment?.frontmatter).toEqual({ key: "preparsed_fyr", lat: 1, lng: 2 });
   });
 });
