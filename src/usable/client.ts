@@ -10,6 +10,7 @@ export type UsableFragment = {
   title?: string;
   content?: string;
   tags?: string[];
+  frontmatter?: JsonObject;
 };
 
 type CreateFragmentInput = {
@@ -53,6 +54,7 @@ function normalizeFragment(value: unknown): UsableFragment | null {
     tags: Array.isArray(obj.tags)
       ? obj.tags.filter((tag): tag is string => typeof tag === "string")
       : undefined,
+    frontmatter: asRecord(obj.frontmatter) ?? undefined,
   };
 }
 
@@ -157,12 +159,12 @@ export class UsableApiClient {
     );
   }
 
-  async listFragmentKeys(input: {
+  async listFragments(input: {
     workspaceId: string;
     fragmentTypeId: string;
     status?: string;
   }) {
-    const keys = new Set<string>();
+    const fragments: UsableFragment[] = [];
     const limit = 500;
     let offset = 0;
     let totalCount = Number.POSITIVE_INFINITY;
@@ -179,20 +181,47 @@ export class UsableApiClient {
       );
       const root = asRecord(json);
       const rows = Array.isArray(root?.fragments) ? root.fragments : [];
-      const fragments = rows
+      const page = rows
         .map((row) => normalizeFragment(row))
         .filter((fragment): fragment is UsableFragment => fragment != null);
-      for (const fragment of fragments) {
-        for (const key of keysFromFragment(fragment)) keys.add(key);
-      }
-      const count =
-        typeof root?.count === "number" ? root.count : fragments.length;
+      fragments.push(...page);
+      const count = typeof root?.count === "number" ? root.count : page.length;
       totalCount =
         typeof root?.totalCount === "number" ? root.totalCount : offset + count;
       if (count === 0) break;
       offset += count;
     }
+    return fragments;
+  }
+
+  async listFragmentKeys(input: {
+    workspaceId: string;
+    fragmentTypeId: string;
+    status?: string;
+  }) {
+    const keys = new Set<string>();
+    for (const fragment of await this.listFragments(input)) {
+      for (const key of keysFromFragment(fragment)) keys.add(key);
+    }
     return keys;
+  }
+
+  /**
+   * Fetch one fragment by id. The list endpoint returns no frontmatter, so
+   * callers needing structured frontmatter (e.g. the POI gazetteer) fetch the
+   * fragment detail. Returns null ONLY on 404 (fragment gone — callers may
+   * safely skip it); any other failure throws so a transient Usable 5xx is
+   * distinguishable from a deletion.
+   */
+  async getFragmentById(fragmentId: string, workspaceId: string) {
+    const params = new URLSearchParams({ workspaceId });
+    const resp = await this.request(
+      `/memory-fragments/${encodeURIComponent(fragmentId)}?${params.toString()}`,
+    );
+    if (resp.status === 404) return null;
+    const json = await readJson(resp);
+    const root = asRecord(json);
+    return normalizeFragment(root?.fragment ?? root?.data ?? json);
   }
 
   async createFragment(input: CreateFragmentInput) {
