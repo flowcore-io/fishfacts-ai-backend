@@ -37,11 +37,37 @@ function asRecord(value: unknown): JsonObject | null {
   return value as JsonObject;
 }
 
+/**
+ * Usable's REST responses do NOT include the parsed `frontmatter` JSONB
+ * column (it's an internal search projection; verified against usable's
+ * `getMemoryFragmentById` select) — but stored `content` retains the YAML
+ * block verbatim, so parse it out here. Mirrors usable's own
+ * `parseFrontmatter` (packages/core/src/utils/frontmatter.ts): first line
+ * exactly `---`, closed by a `---` (or `...`) line, YAML between.
+ */
+export function frontmatterFromContent(
+  content: string | undefined,
+): JsonObject | null {
+  if (!content) return null;
+  const lines = content.trim().split("\n");
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.findIndex(
+    (line, i) => i > 0 && (line.trim() === "---" || line.trim() === "..."),
+  );
+  if (end === -1) return null;
+  try {
+    return asRecord(Bun.YAML.parse(lines.slice(1, end).join("\n")));
+  } catch {
+    return null;
+  }
+}
+
 function normalizeFragment(value: unknown): UsableFragment | null {
   const obj = asRecord(value);
   if (!obj) return null;
   const id = typeof obj?.id === "string" ? obj.id : undefined;
   if (!id) return null;
+  const content = typeof obj.content === "string" ? obj.content : undefined;
   return {
     id,
     workspaceId:
@@ -50,11 +76,12 @@ function normalizeFragment(value: unknown): UsableFragment | null {
       typeof obj.fragmentTypeId === "string" ? obj.fragmentTypeId : undefined,
     key: typeof obj.key === "string" ? obj.key : undefined,
     title: typeof obj.title === "string" ? obj.title : undefined,
-    content: typeof obj.content === "string" ? obj.content : undefined,
+    content,
     tags: Array.isArray(obj.tags)
       ? obj.tags.filter((tag): tag is string => typeof tag === "string")
       : undefined,
-    frontmatter: asRecord(obj.frontmatter) ?? undefined,
+    frontmatter:
+      asRecord(obj.frontmatter) ?? frontmatterFromContent(content) ?? undefined,
   };
 }
 
@@ -207,11 +234,12 @@ export class UsableApiClient {
   }
 
   /**
-   * Fetch one fragment by id. The list endpoint returns no frontmatter, so
-   * callers needing structured frontmatter (e.g. the POI gazetteer) fetch the
-   * fragment detail. Returns null ONLY on 404 (fragment gone — callers may
-   * safely skip it); any other failure throws so a transient Usable 5xx is
-   * distinguishable from a deletion.
+   * Fetch one fragment by id. List rows usually already carry frontmatter
+   * (parsed out of `content` by `normalizeFragment`), so this detail fetch is
+   * the fallback for rows whose content lacked the YAML block. Returns null
+   * ONLY on 404 (fragment gone — callers may safely skip it); any other
+   * failure throws so a transient Usable 5xx is distinguishable from a
+   * deletion.
    */
   async getFragmentById(fragmentId: string, workspaceId: string) {
     const params = new URLSearchParams({ workspaceId });

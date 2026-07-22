@@ -55,10 +55,11 @@ function toPoiEntry(fragment: UsableFragment): PoiEntry | null {
 
 /**
  * Point-of-Interest gazetteer read model over the Usable POI fragments
- * (Fishfacts Knowledge workspace). The Usable list endpoint returns no
- * frontmatter, so each fragment is fetched for its structured coordinates;
- * malformed fragments are skipped so one bad edit can't take the gazetteer
- * down. Results are cached in-process with a short TTL (the store changes
+ * (Fishfacts Knowledge workspace). List rows usually carry frontmatter parsed
+ * from their `content` (Usable's REST API never serves the parsed column —
+ * see `frontmatterFromContent`); a per-fragment detail fetch is the fallback
+ * for rows whose content lacked the block. Malformed fragments are skipped so
+ * one bad edit can't take the gazetteer down. Results are cached in-process with a short TTL (the store changes
  * rarely and the FE caches per session anyway), refreshes are single-flight,
  * and a failed refresh serves the last good snapshot rather than erroring.
  */
