@@ -209,14 +209,16 @@ export class UsableApiClient {
   /**
    * Fetch one fragment by id. The list endpoint returns no frontmatter, so
    * callers needing structured frontmatter (e.g. the POI gazetteer) fetch the
-   * fragment detail. Returns null on any non-OK response.
+   * fragment detail. Returns null ONLY on 404 (fragment gone — callers may
+   * safely skip it); any other failure throws so a transient Usable 5xx is
+   * distinguishable from a deletion.
    */
   async getFragmentById(fragmentId: string, workspaceId: string) {
     const params = new URLSearchParams({ workspaceId });
     const resp = await this.request(
       `/memory-fragments/${encodeURIComponent(fragmentId)}?${params.toString()}`,
     );
-    if (!resp.ok) return null;
+    if (resp.status === 404) return null;
     const json = await readJson(resp);
     const root = asRecord(json);
     return normalizeFragment(root?.fragment ?? root?.data ?? json);

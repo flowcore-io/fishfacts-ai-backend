@@ -51,19 +51,43 @@ describe("PoiRepository", () => {
     expect(calls.get).toBe(1);
   });
 
-  test("skips malformed fragments but keeps valid ones", async () => {
+  test("skips malformed and deleted (404 → null) fragments but keeps valid ones", async () => {
     const { source } = makeSource({
       listFragments: async () => [
         { id: "ok", title: "POI: Hanstholm fyr", frontmatter: HANSTHOLM_FM },
         { id: "bad-key", frontmatter: { ...HANSTHOLM_FM, key: "BAD KEY" } },
         { id: "bad-lat", frontmatter: { ...HANSTHOLM_FM, lat: 999 } },
         { id: "no-coords", frontmatter: { key: "somewhere_fyr" } },
-        { id: "no-frontmatter-and-detail-missing" },
+        { id: "deleted-mid-refresh" },
       ],
+      // null = the client saw a 404 (fragment deleted) — skipping is correct.
       getFragmentById: async () => null,
     });
     const pois = await new PoiRepository(source, ENV).list();
     expect(pois.map((p) => p.key)).toEqual(["hanstholm_fyr"]);
+  });
+
+  test("a transient detail-fetch failure fails the refresh instead of shrinking the snapshot", async () => {
+    let nowMs = 0;
+    let failDetail = false;
+    const { source } = makeSource();
+    const getOk = source.getFragmentById;
+    source.getFragmentById = async (id, workspaceId) => {
+      if (failDetail) throw new Error("Usable API HTTP 502: bad gateway");
+      return getOk(id, workspaceId);
+    };
+    const repo = new PoiRepository(source, ENV, 1000, () => nowMs);
+
+    const good = await repo.list();
+    expect(good).toHaveLength(1);
+
+    failDetail = true;
+    nowMs = 1001; // TTL expired → refresh throws → complete snapshot survives
+    expect(await repo.list()).toEqual(good);
+
+    // With no snapshot at all the failure propagates (route answers 503).
+    const emptyRepo = new PoiRepository(source, ENV, 1000, () => nowMs);
+    await expect(emptyRepo.list()).rejects.toThrow("502");
   });
 
   test("caches within the TTL and refetches after it", async () => {

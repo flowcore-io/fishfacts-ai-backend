@@ -101,15 +101,23 @@ export class PoiRepository {
       fragmentTypeId: this.env.POI_FRAGMENT_TYPE_ID,
       status: "active",
     });
+    // Detail fetches run in parallel; a thrown fetch (any non-404 failure)
+    // rejects the whole refresh so list() keeps serving the previous COMPLETE
+    // snapshot — a transient Usable 5xx must not silently shrink the
+    // gazetteer. A null detail (404: fragment deleted mid-refresh) is skipped.
+    const full = await Promise.all(
+      fragments.map((fragment) =>
+        fragment.frontmatter
+          ? Promise.resolve(fragment)
+          : this.usable.getFragmentById(
+              fragment.id,
+              this.env.USABLE_WORKSPACE_ID,
+            ),
+      ),
+    );
     const pois: PoiEntry[] = [];
-    for (const fragment of fragments) {
-      const full = fragment.frontmatter
-        ? fragment
-        : await this.usable.getFragmentById(
-            fragment.id,
-            this.env.USABLE_WORKSPACE_ID,
-          );
-      const entry = full ? toPoiEntry(full) : null;
+    for (const fragment of full) {
+      const entry = fragment ? toPoiEntry(fragment) : null;
       if (entry) pois.push(entry);
     }
     this.cache = { pois, fetchedAt: this.now() };
