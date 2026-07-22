@@ -21,6 +21,12 @@ const envSchema = z.object({
     .string()
     .uuid()
     .default("68505bca-a549-45eb-bca6-965f87195b89"),
+  // "Point of Interest" fragments (Fishfacts Knowledge workspace) served as
+  // the landmark gazetteer by GET /api/poi.
+  POI_FRAGMENT_TYPE_ID: z
+    .string()
+    .uuid()
+    .default("b816fad2-4918-46c1-80de-68a20e68f9ad"),
   JOB_STATE_FRAGMENT_TYPE_ID: z
     .string()
     .uuid()

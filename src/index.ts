@@ -31,6 +31,7 @@ import { JobScheduler } from "./jobs/scheduler";
 import { seedJobStateFromUsable } from "./jobs/seed-from-usable";
 import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
+import { PoiRepository } from "./poi/repository";
 import { SildelagetCatchProjector } from "./sildelaget/projector";
 import { SildelagetCatchRepository } from "./sildelaget/repository";
 import { TilesRepository } from "./tiles/repository";
@@ -48,6 +49,7 @@ const gillnetProjector = new GillnetProjector(db);
 const gillnetRepository = new GillnetRepository(db);
 const gebcoProjector = new GebcoProjector(db);
 const gebcoRepository = new GebcoRepository(db);
+const poiRepository = new PoiRepository(usable, env);
 const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
@@ -125,6 +127,7 @@ const app = createApp({
   geoRepository,
   gillnetRepository,
   gebcoRepository,
+  poiRepository,
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
