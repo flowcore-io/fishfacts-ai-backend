@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Env } from "../../src/env";
-import { frontmatterFromContent, UsableApiClient } from "../../src/usable/client";
+import {
+  UsableApiClient,
+  frontmatterFromContent,
+} from "../../src/usable/client";
 
 // Content shaped like a real POI fragment as the REST API returns it: the
 // YAML block is retained in `content`; the parsed `frontmatter` column is
@@ -63,13 +66,19 @@ describe("UsableApiClient frontmatter wiring", () => {
   function stubListResponse(rows: unknown[]) {
     globalThis.fetch = (async () =>
       new Response(
-        JSON.stringify({ fragments: rows, count: rows.length, totalCount: rows.length }),
+        JSON.stringify({
+          fragments: rows,
+          count: rows.length,
+          totalCount: rows.length,
+        }),
         { status: 200 },
       )) as unknown as typeof fetch;
   }
 
   test("REST-shaped list rows (YAML only in content) yield parsed frontmatter", async () => {
-    stubListResponse([{ id: "frag-1", title: "POI: Hanstholm fyr", content: POI_CONTENT }]);
+    stubListResponse([
+      { id: "frag-1", title: "POI: Hanstholm fyr", content: POI_CONTENT },
+    ]);
     const [fragment] = await new UsableApiClient(env).listFragments({
       workspaceId: "ws",
       fragmentTypeId: "type",
@@ -90,6 +99,10 @@ describe("UsableApiClient frontmatter wiring", () => {
       workspaceId: "ws",
       fragmentTypeId: "type",
     });
-    expect(fragment?.frontmatter).toEqual({ key: "preparsed_fyr", lat: 1, lng: 2 });
+    expect(fragment?.frontmatter).toEqual({
+      key: "preparsed_fyr",
+      lat: 1,
+      lng: 2,
+    });
   });
 });
