@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.23.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.23.0...v1.23.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **poi:** parse frontmatter from fragment content — REST responses omit the frontmatter column ([dee8523](https://github.com/flowcore-io/fishfacts-ai-backend/commit/dee85239361464789733dbeb28ae1071ae978c7f))
+* **poi:** parse frontmatter from fragment content — REST responses omit the frontmatter column ([569d563](https://github.com/flowcore-io/fishfacts-ai-backend/commit/569d563ffc1a5994ec5cb14542c2d2e7b036b034))
+
 ## [1.23.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.3...v1.23.0) (2026-07-22)
 
 
