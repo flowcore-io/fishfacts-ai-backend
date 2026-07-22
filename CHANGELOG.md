@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.23.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.3...v1.23.0) (2026-07-22)
+
+
+### Features
+
+* **poi:** serve the Point-of-Interest gazetteer from Usable fragments ([9d142b3](https://github.com/flowcore-io/fishfacts-ai-backend/commit/9d142b3824a0abb2a5c8b3ba041a0406d0a00ddf))
+* **poi:** serve the Point-of-Interest gazetteer from Usable fragments ([d8008ab](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d8008abbe8b58503bdfe369622b5e938d07cd4af))
+
+
+### Bug Fixes
+
+* **poi:** fail refresh on transient detail-fetch errors; parallelize detail fetches ([d794b27](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d794b279998ff07b7c38f20fc528c7fbe1e272fd))
+
 ## [1.22.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.22.2...v1.22.3) (2026-07-08)
 
 
