@@ -37,11 +37,37 @@ function asRecord(value: unknown): JsonObject | null {
   return value as JsonObject;
 }
 
+/**
+ * Usable's REST responses do NOT include the parsed `frontmatter` JSONB
+ * column (it's an internal search projection; verified against usable's
+ * `getMemoryFragmentById` select) — but stored `content` retains the YAML
+ * block verbatim, so parse it out here. Mirrors usable's own
+ * `parseFrontmatter` (packages/core/src/utils/frontmatter.ts): first line
+ * exactly `---`, closed by a `---` (or `...`) line, YAML between.
+ */
+export function frontmatterFromContent(
+  content: string | undefined,
+): JsonObject | null {
+  if (!content) return null;
+  const lines = content.trim().split("\n");
+  if (lines[0]?.trim() !== "---") return null;
+  const end = lines.findIndex(
+    (line, i) => i > 0 && (line.trim() === "---" || line.trim() === "..."),
+  );
+  if (end === -1) return null;
+  try {
+    return asRecord(Bun.YAML.parse(lines.slice(1, end).join("\n")));
+  } catch {
+    return null;
+  }
+}
+
 function normalizeFragment(value: unknown): UsableFragment | null {
   const obj = asRecord(value);
   if (!obj) return null;
   const id = typeof obj?.id === "string" ? obj.id : undefined;
   if (!id) return null;
+  const content = typeof obj.content === "string" ? obj.content : undefined;
   return {
     id,
     workspaceId:
@@ -50,11 +76,12 @@ function normalizeFragment(value: unknown): UsableFragment | null {
       typeof obj.fragmentTypeId === "string" ? obj.fragmentTypeId : undefined,
     key: typeof obj.key === "string" ? obj.key : undefined,
     title: typeof obj.title === "string" ? obj.title : undefined,
-    content: typeof obj.content === "string" ? obj.content : undefined,
+    content,
     tags: Array.isArray(obj.tags)
       ? obj.tags.filter((tag): tag is string => typeof tag === "string")
       : undefined,
-    frontmatter: asRecord(obj.frontmatter) ?? undefined,
+    frontmatter:
+      asRecord(obj.frontmatter) ?? frontmatterFromContent(content) ?? undefined,
   };
 }
 
