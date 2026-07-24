@@ -146,6 +146,26 @@ describe("PoiFragmentProjector", () => {
     expect(invalidated).toBe(0);
   });
 
+  test("backslashes, quotes and newlines in source/aliases still round-trip (invalid-YAML-escape regression)", async () => {
+    const hostile = {
+      ...POI,
+      aliases: ['Skarvenes "lykt"', "back\\slash alias"],
+      source: 'C:\\registers\\NGA "115-5678"\nline two',
+    };
+    const { sink, calls } = makeSink({ existing: null });
+    const projector = new PoiFragmentProjector(ENV, sink);
+    await projector.project(hostile);
+    // A quote-only escape would emit `\r`-style invalid YAML escapes here and
+    // frontmatterFromContent would return null — the POI would be saved but
+    // silently unresolvable (the PR #108 failure class).
+    const fm = frontmatterFromContent(calls.create[0].content);
+    expect(fm).toMatchObject({
+      key: "skarvenes_lykt",
+      aliases: hostile.aliases,
+      source: hostile.source,
+    });
+  });
+
   test("aliases are optional — content omits the aliases block cleanly", async () => {
     const { sink, calls } = makeSink({ existing: null });
     const projector = new PoiFragmentProjector(ENV, sink);

@@ -1,27 +1,21 @@
 import { isAdmin, requireAdmin } from "@/auth/admin";
+import { poiCreatedSchema } from "@/events/contracts";
 import type { PathwayWriter } from "@/pathways";
 import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
-import { ZodError, z } from "zod";
+import { ZodError, type z } from "zod";
 import type { PoiRepository } from "./repository";
 
 /**
- * `verifiedBy`/`verifiedAt` are deliberately NOT accepted here — the route
- * stamps them from the authenticated admin + server clock, so a durable POI's
- * attribution can never be forged by the caller (the poisoning surface the
- * whole write path is designed around).
+ * The event payload minus the attribution: `verifiedBy`/`verifiedAt` are
+ * deliberately NOT accepted here — the route stamps them from the
+ * authenticated admin + server clock, so a durable POI's attribution can
+ * never be forged by the caller (the poisoning surface the whole write path
+ * is designed around).
  */
-const createInputSchema = z.object({
-  key: z
-    .string()
-    .regex(/^[a-z0-9_]+$/, "key must be snake_case ascii (e.g. skarvenes_lykt)")
-    .min(1)
-    .max(80),
-  title: z.string().min(1).max(120),
-  lat: z.number().min(-90).max(90),
-  lng: z.number().min(-180).max(180),
-  aliases: z.array(z.string().min(1).max(120)).max(20).optional(),
-  source: z.string().min(1).max(300),
+const createInputSchema = poiCreatedSchema.omit({
+  verifiedBy: true,
+  verifiedAt: true,
 });
 
 export type PoiRouterDeps = {

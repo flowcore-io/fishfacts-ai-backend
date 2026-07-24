@@ -1,9 +1,16 @@
 import type { Env } from "@/env";
 import type { PoiCreated } from "@/events/contracts";
 import type { UsableFragment } from "@/usable/client";
+import { POI_TITLE_PREFIX } from "./repository";
 
-function yamlEscape(value?: string) {
-  return (value ?? "").replace(/"/g, '\\"');
+/**
+ * JSON strings are valid YAML double-quoted scalars, and JSON.stringify
+ * escapes backslashes/quotes/newlines correctly — a hand-rolled quote-only
+ * escape would emit invalid YAML for a value like `C:\path`, silently
+ * dropping the POI from the gazetteer at read time.
+ */
+function yamlQuote(value: string) {
+  return JSON.stringify(value);
 }
 
 /** The slice of `UsableApiClient` the projector needs (narrow for tests). */
@@ -44,18 +51,15 @@ function buildMarkdown(poi: PoiCreated) {
   const lines = [
     "---",
     'kind: "point-of-interest"',
-    `key: "${yamlEscape(poi.key)}"`,
+    `key: ${yamlQuote(poi.key)}`,
     ...(poi.aliases && poi.aliases.length > 0
-      ? [
-          "aliases:",
-          ...poi.aliases.map((alias) => `  - "${yamlEscape(alias)}"`),
-        ]
+      ? ["aliases:", ...poi.aliases.map((alias) => `  - ${yamlQuote(alias)}`)]
       : []),
     `lat: ${poi.lat}`,
     `lng: ${poi.lng}`,
-    `source: "${yamlEscape(poi.source)}"`,
-    `verifiedBy: "${yamlEscape(poi.verifiedBy)}"`,
-    `verifiedAt: "${poi.verifiedAt}"`,
+    `source: ${yamlQuote(poi.source)}`,
+    `verifiedBy: ${yamlQuote(poi.verifiedBy)}`,
+    `verifiedAt: ${yamlQuote(poi.verifiedAt)}`,
     "---",
     "",
     `${poi.title} — Point-of-Interest gazetteer entry for narrative boundary`,
@@ -92,7 +96,7 @@ export class PoiFragmentProjector {
   ) {}
 
   async project(poi: PoiCreated) {
-    const title = `POI: ${poi.title}`;
+    const title = `${POI_TITLE_PREFIX}${poi.title}`;
     const summary = `Point-of-Interest gazetteer entry ${poi.key} (${poi.lat}, ${poi.lng}) — ${poi.source}, verified by ${poi.verifiedBy}.`;
     const content = buildMarkdown(poi);
     const tags = [

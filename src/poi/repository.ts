@@ -1,5 +1,11 @@
 import type { Env } from "@/env";
+import { POI_KEY_RE } from "@/events/contracts";
 import type { UsableFragment } from "@/usable/client";
+
+/** Canonical fragment-title prefix — written by `PoiFragmentProjector`,
+ * stripped back off below (the strip regex also tolerates loose whitespace
+ * for hand-authored fragments). */
+export const POI_TITLE_PREFIX = "POI: ";
 
 /**
  * One Point-of-Interest gazetteer entry served by `GET /api/poi` — named
@@ -28,8 +34,6 @@ export type PoiFragmentSource = {
     workspaceId: string,
   ): Promise<UsableFragment | null>;
 };
-
-const POI_KEY_RE = /^[a-z0-9_]+$/;
 
 function toPoiEntry(fragment: UsableFragment): PoiEntry | null {
   const fm = fragment.frontmatter;

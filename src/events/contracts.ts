@@ -231,12 +231,12 @@ export const POI_CREATED_PATHWAY =
  * context, never taken from the request body — durable POIs feed
  * `draw_regulation_boundary`, so attribution must be evidence, not a claim.
  */
+/** Stable snake_case resolver key — shared with the route input schema and
+ * the read model's fragment validation so the three can't drift. */
+export const POI_KEY_RE = /^[a-z0-9_]+$/;
+
 export const poiCreatedSchema = z.object({
-  key: z
-    .string()
-    .regex(/^[a-z0-9_]+$/)
-    .min(1)
-    .max(80),
+  key: z.string().regex(POI_KEY_RE).min(1).max(80),
   title: z.string().min(1).max(120),
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
