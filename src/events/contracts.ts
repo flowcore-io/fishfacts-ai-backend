@@ -220,6 +220,33 @@ export const areaDeletedSchema = z.object({
 });
 export type AreaDeleted = z.infer<typeof areaDeletedSchema>;
 
+export const POI_FLOW_TYPE = "fishfacts-poi.0" as const;
+export const POI_CREATED_EVENT_TYPE = "poi.created.0" as const;
+export const POI_CREATED_PATHWAY =
+  `${POI_FLOW_TYPE}/${POI_CREATED_EVENT_TYPE}` as const;
+
+/**
+ * An admin taught the Point-of-Interest gazetteer a coordinate (upsert by
+ * `key`). `verifiedBy`/`verifiedAt` are set by the route from the auth
+ * context, never taken from the request body — durable POIs feed
+ * `draw_regulation_boundary`, so attribution must be evidence, not a claim.
+ */
+/** Stable snake_case resolver key — shared with the route input schema and
+ * the read model's fragment validation so the three can't drift. */
+export const POI_KEY_RE = /^[a-z0-9_]+$/;
+
+export const poiCreatedSchema = z.object({
+  key: z.string().regex(POI_KEY_RE).min(1).max(80),
+  title: z.string().min(1).max(120),
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  aliases: z.array(z.string().min(1).max(120)).max(20).optional(),
+  source: z.string().min(1).max(300),
+  verifiedBy: z.string().min(1).max(120),
+  verifiedAt: z.string().datetime(),
+});
+export type PoiCreated = z.infer<typeof poiCreatedSchema>;
+
 export const AIS_FLOW_TYPE = "fishfacts-ais.0" as const;
 export const AIS_POSITION_FIX_OBSERVED_EVENT_TYPE =
   "ais.position.fix.observed.0" as const;

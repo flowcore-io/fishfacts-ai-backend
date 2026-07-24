@@ -1,5 +1,11 @@
 import type { Env } from "@/env";
+import { POI_KEY_RE } from "@/events/contracts";
 import type { UsableFragment } from "@/usable/client";
+
+/** Canonical fragment-title prefix — written by `PoiFragmentProjector`,
+ * stripped back off below (the strip regex also tolerates loose whitespace
+ * for hand-authored fragments). */
+export const POI_TITLE_PREFIX = "POI: ";
 
 /**
  * One Point-of-Interest gazetteer entry served by `GET /api/poi` — named
@@ -28,8 +34,6 @@ export type PoiFragmentSource = {
     workspaceId: string,
   ): Promise<UsableFragment | null>;
 };
-
-const POI_KEY_RE = /^[a-z0-9_]+$/;
 
 function toPoiEntry(fragment: UsableFragment): PoiEntry | null {
   const fm = fragment.frontmatter;
@@ -76,6 +80,17 @@ export class PoiRepository {
     private readonly ttlMs = 5 * 60 * 1000,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /**
+   * Drop the cached snapshot so the next `list()` refetches. Called by
+   * `PoiFragmentProjector` after a durable write lands — without this a new
+   * POI would stay unresolvable until the TTL rolls over. A refresh already
+   * in flight may still cache the pre-write state (it read Usable before the
+   * write landed); the TTL bounds that residual staleness.
+   */
+  invalidate(): void {
+    this.cache = null;
+  }
 
   async list(): Promise<PoiEntry[]> {
     if (this.cache && this.now() - this.cache.fetchedAt < this.ttlMs) {

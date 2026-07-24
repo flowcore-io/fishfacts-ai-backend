@@ -31,6 +31,7 @@ import type { JobStateStore } from "./jobs/state-store";
 import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
 import type { PoiRepository } from "./poi/repository";
+import { createPoiRouter } from "./poi/routes";
 import type { SildelagetCatchRepository } from "./sildelaget/repository";
 import { createSildelagetCatchRouter } from "./sildelaget/routes";
 import type { TilesRepository } from "./tiles/repository";
@@ -112,6 +113,16 @@ export function createApp({
     createAreasRouter({
       repository: areasRepository,
       writer: pathways.writer,
+    }),
+  );
+  // NOTE: /api/poi is NOT auth-blanketed above — GET is public reference
+  // data; the router applies authMiddleware + requireAdmin to the POST only.
+  app.route(
+    "/api/poi",
+    createPoiRouter({
+      repository: poiRepository,
+      writer: pathways.writer,
+      authMiddleware,
     }),
   );
   app.route(
@@ -367,23 +378,6 @@ export function createApp({
     const feature = await gebcoRepository.findById(c.req.param("featureId"));
     if (!feature) return c.json({ error: "not_found" }, 404);
     return c.json(feature);
-  });
-
-  // Point-of-Interest gazetteer — named lighthouses/landmarks the FE's
-  // draw_regulation_boundary resolves narrative boundary vertices against.
-  // Public reference data like /api/gebco; read from the editable Usable POI
-  // fragments (short in-process cache) so non-developers can extend the
-  // gazetteer without a code change + deploy.
-  app.get("/api/poi", async (c) => {
-    try {
-      const pois = await poiRepository.list();
-      return c.json({ pois, returned: pois.length });
-    } catch (error) {
-      console.error("[POI] gazetteer fetch failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return c.json({ error: "poi_unavailable" }, 503);
-    }
   });
 
   app.get("/api/jmeldinger/:jmNumber", async (c) => {

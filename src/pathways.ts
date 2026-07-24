@@ -39,6 +39,10 @@ import {
   JMELDING_ANNOUNCEMENT_DISCOVERED_EVENT_TYPE,
   JMELDING_ANNOUNCEMENT_PATHWAY,
   type JMeldingAnnouncementDiscovered,
+  POI_CREATED_EVENT_TYPE,
+  POI_CREATED_PATHWAY,
+  POI_FLOW_TYPE,
+  type PoiCreated,
   SILDELAGET_CATCHJOURNAL_FLOW_TYPE,
   SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE,
   SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY,
@@ -51,6 +55,7 @@ import {
   genericEventInputSchema,
   gillnetVesselObservedSchema,
   jmeldingAnnouncementDiscoveredSchema,
+  poiCreatedSchema,
   sildelagetCatchEntryObservedSchema,
 } from "./events/contracts";
 import { chunkAnnouncement } from "./events/jmelding-chunking";
@@ -58,6 +63,7 @@ import type { GenericEventRepository } from "./events/repository";
 import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
+import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { SildelagetCatchProjector } from "./sildelaget/projector";
 
 export interface PathwayWriter {
@@ -73,6 +79,7 @@ export interface PathwayWriter {
   writeAreaCreated(data: AreaCreated): Promise<string>;
   writeAreaUpdated(data: AreaUpdated): Promise<string>;
   writeAreaDeleted(data: AreaDeleted): Promise<string>;
+  writePoiCreated(data: PoiCreated): Promise<string>;
   /**
    * Emit one AIS position fix. `opts.eventTime` is set by the BACKFILL job
    * (= location.timestamp) so the event lands in its historical hour-bucket and
@@ -112,6 +119,7 @@ export function createPathwayRuntime(
   aisProjector: AisPositionProjector,
   gillnetProjector: GillnetProjector,
   gebcoProjector: GebcoProjector,
+  poiFragmentProjector: PoiFragmentProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -216,6 +224,22 @@ export function createPathwayRuntime(
       const envelope = event as { eventId: string; payload: unknown };
       const parsed = areaDeletedSchema.parse(envelope.payload);
       await areasProjector.handleDeleted({ eventId: envelope.eventId }, parsed);
+    });
+
+  pathways
+    .register({
+      flowType: POI_FLOW_TYPE,
+      eventType: POI_CREATED_EVENT_TYPE,
+      schema: poiCreatedSchema,
+      flowTypeDescription:
+        "FishFacts Point-of-Interest gazetteer (narrative boundary landmarks)",
+      description:
+        "An admin taught the POI gazetteer a named coordinate (upsert by key)",
+    })
+    .handle(POI_CREATED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = poiCreatedSchema.parse(envelope.payload);
+      await poiFragmentProjector.project(parsed);
     });
 
   pathways
@@ -396,6 +420,25 @@ export function createPathwayRuntime(
             source: "fishfacts-ai-backend-api",
             areaId: data.areaId,
             createdBy: data.createdBy,
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writePoiCreated(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof POI_CREATED_PATHWAY,
+            input: {
+              data: PoiCreated;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(POI_CREATED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            poiKey: data.key,
+            verifiedBy: data.verifiedBy,
           },
         });
         return Array.isArray(eventId) ? eventId[0] : eventId;

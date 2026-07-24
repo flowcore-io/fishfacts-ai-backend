@@ -31,6 +31,7 @@ import { JobScheduler } from "./jobs/scheduler";
 import { seedJobStateFromUsable } from "./jobs/seed-from-usable";
 import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
+import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { SildelagetCatchProjector } from "./sildelaget/projector";
 import { SildelagetCatchRepository } from "./sildelaget/repository";
@@ -50,6 +51,11 @@ const gillnetRepository = new GillnetRepository(db);
 const gebcoProjector = new GebcoProjector(db);
 const gebcoRepository = new GebcoRepository(db);
 const poiRepository = new PoiRepository(usable, env);
+// Invalidation hook: a durable POI write becomes servable on the next
+// GET /api/poi instead of waiting out the read cache's 5-min TTL.
+const poiFragmentProjector = new PoiFragmentProjector(env, usable, () =>
+  poiRepository.invalidate(),
+);
 const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
@@ -94,6 +100,7 @@ const pathways = createPathwayRuntime(
   aisProjector,
   gillnetProjector,
   gebcoProjector,
+  poiFragmentProjector,
 );
 const jobs = createJobDefinitions(
   env,
