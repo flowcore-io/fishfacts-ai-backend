@@ -77,6 +77,17 @@ export class PoiRepository {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /**
+   * Drop the cached snapshot so the next `list()` refetches. Called by
+   * `PoiFragmentProjector` after a durable write lands — without this a new
+   * POI would stay unresolvable until the TTL rolls over. A refresh already
+   * in flight may still cache the pre-write state (it read Usable before the
+   * write landed); the TTL bounds that residual staleness.
+   */
+  invalidate(): void {
+    this.cache = null;
+  }
+
   async list(): Promise<PoiEntry[]> {
     if (this.cache && this.now() - this.cache.fetchedAt < this.ttlMs) {
       return this.cache.pois;

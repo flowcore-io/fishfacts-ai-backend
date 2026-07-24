@@ -102,6 +102,17 @@ describe("PoiRepository", () => {
     expect(calls.list).toBe(2);
   });
 
+  test("invalidate() drops the snapshot so the next list() refetches inside the TTL", async () => {
+    const { source, calls } = makeSource();
+    const repo = new PoiRepository(source, ENV);
+    await repo.list();
+    await repo.list();
+    expect(calls.list).toBe(1);
+    repo.invalidate(); // what the fragment projector calls after a write
+    await repo.list();
+    expect(calls.list).toBe(2);
+  });
+
   test("serves the last good snapshot when a refresh fails, throws when there is none", async () => {
     let nowMs = 0;
     let fail = false;

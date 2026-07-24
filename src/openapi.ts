@@ -30,6 +30,11 @@ export const openApiDocument = {
         "Operator-curated areas (polygons / polylines). Reads are open to authenticated users; writes require the ADMIN authority.",
     },
     {
+      name: "POI",
+      description:
+        "Point-of-Interest gazetteer (named lighthouses/landmarks used as narrative boundary vertices). Reads are public reference data; writes require the ADMIN authority and are event-sourced into editable Usable fragments.",
+    },
+    {
       name: "AIS",
       description:
         "Read-only AIS vessel position tracks from the ClickHouse read model. Supports multiple vessels and time-window filters (preset window or explicit from/to), server-side downsampled per vessel.",
@@ -1067,6 +1072,82 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/poi": {
+      get: {
+        tags: ["POI"],
+        summary: "List the Point-of-Interest gazetteer",
+        description:
+          "Public reference data. Served from the editable Usable POI fragments through a short in-process cache; the FE resolves landmark names against these entries by exact key / exact alias only.",
+        responses: {
+          "200": {
+            description: "Gazetteer entries",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PoiListResponse" },
+              },
+            },
+          },
+          "503": {
+            description: "Gazetteer source unavailable and no cached snapshot",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        tags: ["POI"],
+        summary: "Teach the gazetteer a POI (ADMIN authority required)",
+        description:
+          "Emits a `fishfacts-poi.0/poi.created.0` Flowcore event; a projector upserts the POI fragment in Usable (by key) with `verifiedBy`/`verifiedAt` stamped server-side from the authenticated admin. Deleting the fragment reverts resolution of the name to the fail-safe ask.",
+        security: [{ FishfactsAuthToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/PoiCreateInput" },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "POI creation event accepted by Flowcore",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PoiWriteResponse" },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid payload",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/areas/{id}": {
       get: {
         tags: ["Areas"],
@@ -2009,6 +2090,75 @@ export const openApiDocument = {
             description:
               "Flowcore event id for the create/update/delete event emitted by this request.",
           },
+        },
+      },
+      PoiEntry: {
+        type: "object",
+        required: ["key", "lat", "lng"],
+        properties: {
+          key: {
+            type: "string",
+            pattern: "^[a-z0-9_]+$",
+            description: "Stable snake_case resolver key, e.g. hanstholm_fyr.",
+          },
+          lat: { type: "number", minimum: -90, maximum: 90 },
+          lng: { type: "number", minimum: -180, maximum: 180 },
+          title: { type: "string" },
+          aliases: { type: "array", items: { type: "string" } },
+          source: { type: "string" },
+        },
+      },
+      PoiListResponse: {
+        type: "object",
+        required: ["pois", "returned"],
+        properties: {
+          pois: {
+            type: "array",
+            items: { $ref: "#/components/schemas/PoiEntry" },
+          },
+          returned: { type: "integer" },
+        },
+      },
+      PoiCreateInput: {
+        type: "object",
+        required: ["key", "title", "lat", "lng", "source"],
+        additionalProperties: false,
+        description:
+          "verifiedBy/verifiedAt are NOT accepted — attribution is stamped server-side from the authenticated admin.",
+        properties: {
+          key: {
+            type: "string",
+            pattern: "^[a-z0-9_]+$",
+            minLength: 1,
+            maxLength: 80,
+          },
+          title: { type: "string", minLength: 1, maxLength: 120 },
+          lat: { type: "number", minimum: -90, maximum: 90 },
+          lng: { type: "number", minimum: -180, maximum: 180 },
+          aliases: {
+            type: "array",
+            maxItems: 20,
+            items: { type: "string", minLength: 1, maxLength: 120 },
+          },
+          source: {
+            type: "string",
+            minLength: 1,
+            maxLength: 300,
+            description:
+              "Where the coordinate comes from (official register reference, or who supplied it in chat).",
+          },
+        },
+      },
+      PoiWriteResponse: {
+        type: "object",
+        required: ["key", "eventId", "verifiedAt"],
+        properties: {
+          key: { type: "string" },
+          eventId: {
+            type: "string",
+            description: "Flowcore event id for the emitted poi.created event.",
+          },
+          verifiedAt: { type: "string", format: "date-time" },
         },
       },
       AisTrackPoint: {
