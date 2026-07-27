@@ -122,10 +122,9 @@ export function makeReportsClient(
       if (!fragment) return null;
       // The proxy serves Report fragments only — an arbitrary fragment id
       // from the same workspace (POI, job state, …) must 404, not leak.
-      if (
-        fragment.fragmentTypeId &&
-        fragment.fragmentTypeId !== config.fragmentTypeId
-      ) {
+      // Fail closed: a response missing fragmentTypeId is treated as a
+      // mismatch rather than silently disabling the scope check.
+      if (fragment.fragmentTypeId !== config.fragmentTypeId) {
         return null;
       }
       return { ...toListItem(fragment), content: fragment.content ?? "" };

@@ -26,40 +26,48 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
   // 5 MB is far above the FE's clipped capture (~1.5 MB worst case) but
   // stops an authenticated client from posting a default-limit (128 MB)
   // body that would be fully parsed before truncation.
-  app.post("/", bodyLimit({ maxSize: 5 * 1024 * 1024 }), async (c) => {
-    if (!deps.reports) {
-      return c.json({ error: "reports_not_configured" }, 503);
-    }
-    const body = await c.req.json().catch(() => null);
-    const parsed = reportSubmissionSchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json(
-        { error: "invalid_payload", issues: parsed.error.issues },
-        400,
-      );
-    }
-    // Oversized captures are truncated, never rejected (PRD §6.3).
-    const { submission, truncation } = truncateSubmission(parsed.data);
-    const reportId = randomUUID();
-    const draft = buildReportFragment({
-      reportId,
-      submission,
-      truncation,
-      reporter: c.get("auth").user,
-      receivedAt: new Date().toISOString(),
-    });
-    try {
-      const { fragmentId } = await deps.reports.create(draft);
-      return c.json({ reportId, fragmentId, status: "reported" }, 201);
-    } catch (error) {
-      // Log the upstream detail server-side only — Usable error bodies can
-      // echo workspace/fragment-type internals (same posture as the GETs).
-      console.error("[Reports] create failed", {
-        message: error instanceof Error ? error.message : String(error),
+  app.post(
+    "/",
+    bodyLimit({
+      maxSize: 5 * 1024 * 1024,
+      // Same JSON error shape as every other failure on this route.
+      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+    }),
+    async (c) => {
+      if (!deps.reports) {
+        return c.json({ error: "reports_not_configured" }, 503);
+      }
+      const body = await c.req.json().catch(() => null);
+      const parsed = reportSubmissionSchema.safeParse(body);
+      if (!parsed.success) {
+        return c.json(
+          { error: "invalid_payload", issues: parsed.error.issues },
+          400,
+        );
+      }
+      // Oversized captures are truncated, never rejected (PRD §6.3).
+      const { submission, truncation } = truncateSubmission(parsed.data);
+      const reportId = randomUUID();
+      const draft = buildReportFragment({
+        reportId,
+        submission,
+        truncation,
+        reporter: c.get("auth").user,
+        receivedAt: new Date().toISOString(),
       });
-      return c.json({ error: "usable_write_failed" }, 502);
-    }
-  });
+      try {
+        const { fragmentId } = await deps.reports.create(draft);
+        return c.json({ reportId, fragmentId, status: "reported" }, 201);
+      } catch (error) {
+        // Log the upstream detail server-side only — Usable error bodies can
+        // echo workspace/fragment-type internals (same posture as the GETs).
+        console.error("[Reports] create failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return c.json({ error: "usable_write_failed" }, 502);
+      }
+    },
+  );
 
   app.get("/", requireAdmin, async (c) => {
     if (!deps.reports) {

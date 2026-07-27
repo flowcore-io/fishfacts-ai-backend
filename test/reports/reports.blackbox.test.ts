@@ -235,6 +235,19 @@ describe("Reports black-box", () => {
     expect(usable.fragments.size).toBe(0);
   });
 
+  test("a body beyond the 5 MB capture limit is 413 with the JSON error shape", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      messages: Array.from({ length: 70 }, (_, i) => ({
+        role: "user",
+        content: `${i}-${"x".repeat(90_000)}`,
+      })),
+    });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "payload_too_large" });
+    expect(usable.fragments.size).toBe(0);
+  });
+
   test("GET /api/reports as non-admin is 403 (proxy is admin-only)", async () => {
     const response = await app.fetch("/api/reports", {
       headers: { "x-auth-token": USER_TOKEN },
@@ -286,6 +299,28 @@ describe("Reports black-box", () => {
     });
     // List rows never include the raw capture body.
     expect(report.content).toBeUndefined();
+  });
+
+  test("GET /api/reports lists newest first", async () => {
+    const seed = (id: string, reportedAt: string) =>
+      usable.fragments.set(id, {
+        id,
+        workspaceId: WORKSPACE_ID,
+        fragmentTypeId: REPORT_FRAGMENT_TYPE_ID,
+        title: `Report ${reportedAt}`,
+        content: `---\nstatus: reported\nreportedAt: "${reportedAt}"\n---\n`,
+      });
+    seed("aaaaaaaa-1111-4111-8111-111111111111", "2026-01-01T00:00:00.000Z");
+    seed("bbbbbbbb-2222-4222-8222-222222222222", "2026-06-01T00:00:00.000Z");
+
+    const response = await app.fetch("/api/reports", {
+      headers: { "x-auth-token": ADMIN_TOKEN },
+    });
+    const body = await response.json();
+    expect(body.reports.map((row: { id: string }) => row.id)).toEqual([
+      "bbbbbbbb-2222-4222-8222-222222222222",
+      "aaaaaaaa-1111-4111-8111-111111111111",
+    ]);
   });
 
   test("GET /api/reports?status= filters on the lifecycle status", async () => {

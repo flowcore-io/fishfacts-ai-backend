@@ -37,6 +37,17 @@ function yamlString(value: string): string {
  * and smuggle live markdown into the report — e.g. a forged section that
  * mimics the server-verified metadata block.
  */
+/**
+ * Sanitiser for short user-controlled scalars rendered OUTSIDE fenced blocks
+ * (roles, timestamps, tool names, error lines): newlines and backticks are
+ * what let a value break its line/code-span and forge report structure —
+ * collapse them. Long payloads (message content, tool JSON, descriptions)
+ * are fenced with fencedBlock instead.
+ */
+function inline(text: string): string {
+  return text.replace(/[\r\n`]+/g, " ");
+}
+
 function fencedBlock(text: string, lang = ""): string {
   const longestRun = text
     .match(/`+/g)
@@ -111,8 +122,8 @@ function buildSummary(input: ReportFragmentInput): string {
 function messageSection(submission: ReportSubmission): string[] {
   if (submission.messages.length === 0) return ["_No messages captured._"];
   return submission.messages.map((message) => {
-    const stamp = message.createdAt ? ` (${message.createdAt})` : "";
-    return `**${message.role}**${stamp}:\n\n${fencedBlock(message.content)}`;
+    const stamp = message.createdAt ? ` (${inline(message.createdAt)})` : "";
+    return `**${inline(message.role)}**${stamp}:\n\n${fencedBlock(message.content)}`;
   });
 }
 
@@ -122,9 +133,9 @@ function toolCallSection(
 ): string[] {
   if (submission.toolCalls.length === 0) return ["_No tool calls captured._"];
   return submission.toolCalls.map((call, index) => {
-    const lines = [`### ${index + 1}. \`${call.tool}\``];
+    const lines = [`### ${index + 1}. \`${inline(call.tool)}\``];
     const meta: string[] = [];
-    if (call.calledAt) meta.push(`at ${call.calledAt}`);
+    if (call.calledAt) meta.push(`at ${inline(call.calledAt)}`);
     if (call.durationMs !== undefined) meta.push(`${call.durationMs}ms`);
     if (meta.length > 0) lines.push(meta.join(" · "));
     const args = toolJsonAsText(call.args, counter);
@@ -153,10 +164,10 @@ function networkSection(submission: ReportSubmission): string[] {
           : "?";
     const duration =
       request.durationMs !== undefined ? `${request.durationMs}ms` : "";
-    const error = request.error ? ` — ${request.error}` : "";
+    const error = request.error ? ` — ${inline(request.error)}` : "";
     // Backticks stripped so a crafted url can't break the inline code span.
     const url = request.url.replace(/`/g, "'");
-    return `- \`${request.method} ${url}\` → ${status} ${duration}${error}`;
+    return `- \`${inline(request.method)} ${url}\` → ${status} ${duration}${error}`;
   });
   return rows;
 }
@@ -192,15 +203,25 @@ export function buildReportFragment(
     summary,
     "",
     "## User description",
-    submission.userDescription ?? "_None provided._",
+    // Fenced like the chat log — a description can forge report structure
+    // just as easily as a message can.
+    submission.userDescription
+      ? fencedBlock(submission.userDescription)
+      : "_None provided._",
     "",
     "## Session metadata",
     [
       `- Reported by: ${reporter.username} (FishFacts user ${reporter.id}, verified via auth token)`,
       `- Received at: ${input.receivedAt}`,
-      submission.capturedAt ? `- Captured at: ${submission.capturedAt}` : null,
-      submission.appVersion ? `- App version: ${submission.appVersion}` : null,
-      submission.userAgent ? `- User agent: ${submission.userAgent}` : null,
+      submission.capturedAt
+        ? `- Captured at: ${inline(submission.capturedAt)}`
+        : null,
+      submission.appVersion
+        ? `- App version: ${inline(submission.appVersion)}`
+        : null,
+      submission.userAgent
+        ? `- User agent: ${inline(submission.userAgent)}`
+        : null,
       submission.viewport
         ? `- Viewport: ${submission.viewport.width}×${submission.viewport.height}`
         : null,

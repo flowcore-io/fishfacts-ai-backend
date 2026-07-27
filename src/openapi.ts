@@ -1186,6 +1186,14 @@ export const openApiDocument = {
             },
           },
           "401": { description: "Missing or invalid x-auth-token" },
+          "413": {
+            description: "Body exceeds the 5 MB capture limit",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
           "502": {
             description: "Usable write failed",
             content: {
