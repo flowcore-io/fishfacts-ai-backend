@@ -33,6 +33,7 @@ import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
 import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
+import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
 import { SildelagetCatchProjector } from "./sildelaget/projector";
 import { SildelagetCatchRepository } from "./sildelaget/repository";
 import { TilesRepository } from "./tiles/repository";
@@ -124,6 +125,10 @@ const aisBackfillSupervisor = new AisBackfillSupervisor(
 );
 const fishfactsClient = new FishfactsApiClient(env);
 const authCache = new TokenCache(env.AUTH_CACHE_TTL_MS);
+const reportsConfig = reportsConfigFromEnv(env);
+const reportsClient = reportsConfig
+  ? makeReportsClient(usable, reportsConfig)
+  : null;
 const app = createApp({
   repository,
   pathways,
@@ -142,6 +147,7 @@ const app = createApp({
   aisRepository: aisChRepo,
   aisIngestState,
   aisSource: aisBackfillSource,
+  reportsClient,
   db,
 });
 

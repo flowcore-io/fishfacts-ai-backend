@@ -31,6 +31,13 @@ const envSchema = z.object({
     .string()
     .uuid()
     .default("11da02d0-b033-43a4-acd1-96f9e193cc86"),
+  // In-chat issue reports (PRD: In-Chat Issue Reporting & Session Capture)
+  // land as fragments of a dedicated Report fragment type, ideally in a
+  // support-scoped workspace. Both optional: without a fragment type id the
+  // /api/reports routes answer 503 instead of the service failing boot;
+  // without a workspace id reports fall back to USABLE_WORKSPACE_ID.
+  REPORT_WORKSPACE_ID: z.string().uuid().optional(),
+  REPORT_FRAGMENT_TYPE_ID: z.string().uuid().optional(),
   JOB_SCHEDULER_ENABLED: z
     .enum(["true", "false"])
     .default("false")

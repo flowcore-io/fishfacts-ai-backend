@@ -103,8 +103,8 @@ export class FakeUsableServer {
     });
   }
 
-  async stop() {
-    await this.server?.stop();
+  async stop(force = false) {
+    await this.server?.stop(force);
     this.server = undefined;
   }
 }

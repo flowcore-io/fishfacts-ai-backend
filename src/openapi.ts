@@ -35,6 +35,11 @@ export const openApiDocument = {
         "Point-of-Interest gazetteer (named lighthouses/landmarks used as narrative boundary vertices). Reads are public reference data; writes require the ADMIN authority and are event-sourced into editable Usable fragments.",
     },
     {
+      name: "Reports",
+      description:
+        "In-chat issue reports: consented session captures from the FishFacts chat (chat log, parent tool calls, FE network requests) relayed into Usable Report fragments. Submission is open to any authenticated user; list/detail are ADMIN-only proxies over the Usable API.",
+    },
+    {
       name: "AIS",
       description:
         "Read-only AIS vessel position tracks from the ClickHouse read model. Supports multiple vessels and time-window filters (preset window or explicit from/to), server-side downsampled per vessel.",
@@ -1148,6 +1153,145 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/reports": {
+      post: {
+        tags: ["Reports"],
+        summary: "Submit an in-chat issue report",
+        description:
+          "Receives the consented session capture from the FishFacts chat UI (chat log, parent tool calls, FE network requests), stamps the reporter server-side from the auth token, truncates oversized captures instead of rejecting them, and creates a Usable Report fragment (`status: reported`).",
+        security: [{ FishfactsAuthToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/ReportSubmission" },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Report fragment created in Usable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ReportSubmitResponse" },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid payload",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": {
+            description: "Usable write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "503": {
+            description: "Reports feature not configured",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+      get: {
+        tags: ["Reports"],
+        summary: "List issue reports (ADMIN authority required)",
+        description:
+          "Proxies the Usable Report fragment list — the FE never talks to the Usable API directly. Newest first; optional `status` filter on the report lifecycle (reported | triaged | reproducing | fixed | wontfix | closed).",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Filter by lifecycle status, e.g. `reported`.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Report list",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ReportListResponse" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "503": {
+            description: "Usable unavailable or reports not configured",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/reports/{id}": {
+      get: {
+        tags: ["Reports"],
+        summary: "Fetch one issue report (ADMIN authority required)",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+            description: "Usable fragment id returned by list/submit.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Full report incl. the raw capture content",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ReportDetail" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown report id" },
+          "503": {
+            description: "Usable unavailable or reports not configured",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/areas/{id}": {
       get: {
         tags: ["Areas"],
@@ -2160,6 +2304,143 @@ export const openApiDocument = {
           },
           verifiedAt: { type: "string", format: "date-time" },
         },
+      },
+      ReportSubmission: {
+        type: "object",
+        required: ["sessionId"],
+        properties: {
+          sessionId: { type: "string" },
+          userDescription: {
+            type: "string",
+            description: "Optional 'What went wrong?' text from the user.",
+          },
+          contactEmail: {
+            type: "string",
+            format: "email",
+            description:
+              "Optional follow-up email (fallback — FishFacts tokens don't expose an email).",
+          },
+          appVersion: { type: "string" },
+          userAgent: { type: "string" },
+          viewport: {
+            type: "object",
+            properties: {
+              width: { type: "integer" },
+              height: { type: "integer" },
+            },
+          },
+          capturedAt: { type: "string", format: "date-time" },
+          messages: {
+            type: "array",
+            description: "Chat log, oldest first.",
+            items: {
+              type: "object",
+              required: ["role", "content"],
+              properties: {
+                id: { type: "string" },
+                role: { type: "string" },
+                content: { type: "string" },
+                createdAt: { type: "string" },
+              },
+            },
+          },
+          toolCalls: {
+            type: "array",
+            description: "Parent tool calls (TOOL_CALL/TOOL_RESPONSE).",
+            items: {
+              type: "object",
+              required: ["tool"],
+              properties: {
+                tool: { type: "string" },
+                args: {},
+                result: {},
+                error: { type: "string" },
+                calledAt: { type: "string" },
+                durationMs: { type: "number" },
+              },
+            },
+          },
+          networkRequests: {
+            type: "array",
+            description: "FE-originated fetches (FE-visible scope only).",
+            items: {
+              type: "object",
+              required: ["method", "url"],
+              properties: {
+                method: { type: "string" },
+                url: { type: "string" },
+                status: { type: "integer" },
+                ok: { type: "boolean" },
+                error: { type: "string" },
+                startedAt: { type: "string" },
+                durationMs: { type: "number" },
+              },
+            },
+          },
+        },
+      },
+      ReportSubmitResponse: {
+        type: "object",
+        required: ["reportId", "fragmentId", "status"],
+        properties: {
+          reportId: { type: "string", format: "uuid" },
+          fragmentId: {
+            type: "string",
+            description: "Usable fragment id of the created report.",
+          },
+          status: { type: "string", enum: ["reported"] },
+        },
+      },
+      ReportListItem: {
+        type: "object",
+        required: ["id", "title", "status", "reporter"],
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          status: { type: "string" },
+          reportedAt: { type: "string", format: "date-time" },
+          sessionId: { type: "string" },
+          reporter: {
+            type: "object",
+            properties: {
+              fishfactsUserId: { type: "integer" },
+              username: { type: "string" },
+              email: { type: "string" },
+            },
+          },
+          appVersion: { type: "string" },
+          capturedMessageCount: { type: "integer" },
+          capturedToolCallCount: { type: "integer" },
+          capturedNetworkRequestCount: { type: "integer" },
+          truncated: { type: "boolean" },
+        },
+      },
+      ReportListResponse: {
+        type: "object",
+        required: ["reports", "returned"],
+        properties: {
+          reports: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ReportListItem" },
+          },
+          returned: { type: "integer" },
+        },
+      },
+      ReportDetail: {
+        allOf: [
+          { $ref: "#/components/schemas/ReportListItem" },
+          {
+            type: "object",
+            required: ["content"],
+            properties: {
+              content: {
+                type: "string",
+                description:
+                  "Full report fragment markdown (frontmatter + chat log + tool calls + network requests).",
+              },
+            },
+          },
+        ],
       },
       AisTrackPoint: {
         type: "object",
