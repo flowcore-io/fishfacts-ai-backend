@@ -2402,11 +2402,16 @@ export const openApiDocument = {
           sessionId: { type: "string" },
           reporter: {
             type: "object",
+            description: "Server-verified identity from the auth token.",
             properties: {
               fishfactsUserId: { type: "integer" },
               username: { type: "string" },
-              email: { type: "string" },
             },
+          },
+          contactEmail: {
+            type: "string",
+            description:
+              "User-supplied follow-up address — NOT a verified identity field.",
           },
           appVersion: { type: "string" },
           capturedMessageCount: { type: "integer" },
