@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { requireAdmin } from "@/auth/admin";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { ReportsClient } from "./client";
 import { reportSubmissionSchema, truncateSubmission } from "./contracts";
 import { buildReportFragment } from "./fragment";
@@ -22,7 +23,10 @@ export type ReportsRouterDeps = {
 export function createReportsRouter(deps: ReportsRouterDeps): Hono {
   const app = new Hono();
 
-  app.post("/", async (c) => {
+  // 5 MB is far above the FE's clipped capture (~1.5 MB worst case) but
+  // stops an authenticated client from posting a default-limit (128 MB)
+  // body that would be fully parsed before truncation.
+  app.post("/", bodyLimit({ maxSize: 5 * 1024 * 1024 }), async (c) => {
     if (!deps.reports) {
       return c.json({ error: "reports_not_configured" }, 503);
     }
@@ -48,8 +52,12 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
       const { fragmentId } = await deps.reports.create(draft);
       return c.json({ reportId, fragmentId, status: "reported" }, 201);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return c.json({ error: "usable_write_failed", message }, 502);
+      // Log the upstream detail server-side only — Usable error bodies can
+      // echo workspace/fragment-type internals (same posture as the GETs).
+      console.error("[Reports] create failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return c.json({ error: "usable_write_failed" }, 502);
     }
   });
 
@@ -73,8 +81,18 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
     if (!deps.reports) {
       return c.json({ error: "reports_not_configured" }, 503);
     }
+    // Fragment ids are UUIDs; rejecting anything else up front keeps
+    // arbitrary strings out of the upstream Usable URL entirely.
+    const id = c.req.param("id");
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id,
+      )
+    ) {
+      return c.json({ error: "not_found" }, 404);
+    }
     try {
-      const report = await deps.reports.get(c.req.param("id"));
+      const report = await deps.reports.get(id);
       if (!report) return c.json({ error: "not_found" }, 404);
       return c.json(report);
     } catch (error) {

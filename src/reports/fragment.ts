@@ -31,8 +31,25 @@ function yamlString(value: string): string {
   return JSON.stringify(value);
 }
 
-function frontmatterLines(input: ReportFragmentInput): string[] {
-  const { submission, reporter, truncation } = input;
+/**
+ * Fence with more backticks than the longest run inside the content, so a
+ * chat message (or tool payload) containing ``` cannot close the fence early
+ * and smuggle live markdown into the report — e.g. a forged section that
+ * mimics the server-verified metadata block.
+ */
+function fencedBlock(text: string, lang = ""): string {
+  const longestRun = text
+    .match(/`+/g)
+    ?.reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = "`".repeat(Math.max(3, (longestRun ?? 0) + 1));
+  return `${fence}${lang}\n${text}\n${fence}`;
+}
+
+function frontmatterLines(
+  input: ReportFragmentInput,
+  truncation: CaptureTruncation,
+): string[] {
+  const { submission, reporter } = input;
   const lines = [
     "---",
     "status: reported",
@@ -44,7 +61,7 @@ function frontmatterLines(input: ReportFragmentInput): string[] {
     `reporterName: ${yamlString(`${reporter.firstName} ${reporter.lastName}`.trim())}`,
   ];
   if (submission.contactEmail) {
-    lines.push(`reporterEmail: ${yamlString(submission.contactEmail)}`);
+    lines.push(`contactEmail: ${yamlString(submission.contactEmail)}`);
   }
   if (submission.appVersion) {
     lines.push(`appVersion: ${yamlString(submission.appVersion)}`);
@@ -83,7 +100,10 @@ function buildSummary(input: ReportFragmentInput): string {
     parts.push(`${failedRequests} network request(s) failed.`);
   }
   if (submission.userDescription) {
-    parts.push(`User description: ${submission.userDescription}`);
+    // Collapse whitespace — the summary is one-line fragment metadata.
+    parts.push(
+      `User description: ${submission.userDescription.replace(/\s+/g, " ")}`,
+    );
   }
   return parts.join(" ");
 }
@@ -92,8 +112,7 @@ function messageSection(submission: ReportSubmission): string[] {
   if (submission.messages.length === 0) return ["_No messages captured._"];
   return submission.messages.map((message) => {
     const stamp = message.createdAt ? ` (${message.createdAt})` : "";
-    // Fence the content so chat markdown can't restructure the report.
-    return `**${message.role}**${stamp}:\n\n\`\`\`\n${message.content}\n\`\`\``;
+    return `**${message.role}**${stamp}:\n\n${fencedBlock(message.content)}`;
   });
 }
 
@@ -109,12 +128,14 @@ function toolCallSection(
     if (call.durationMs !== undefined) meta.push(`${call.durationMs}ms`);
     if (meta.length > 0) lines.push(meta.join(" · "));
     const args = toolJsonAsText(call.args, counter);
-    if (args !== undefined) lines.push(`Input:\n\n\`\`\`json\n${args}\n\`\`\``);
+    if (args !== undefined) {
+      lines.push(`Input:\n\n${fencedBlock(args, "json")}`);
+    }
     const result = toolJsonAsText(call.result, counter);
     if (result !== undefined) {
-      lines.push(`Result:\n\n\`\`\`json\n${result}\n\`\`\``);
+      lines.push(`Result:\n\n${fencedBlock(result, "json")}`);
     }
-    if (call.error) lines.push(`Error: \`${call.error}\``);
+    if (call.error) lines.push(`Error:\n\n${fencedBlock(call.error)}`);
     return lines.join("\n\n");
   });
 }
@@ -133,7 +154,9 @@ function networkSection(submission: ReportSubmission): string[] {
     const duration =
       request.durationMs !== undefined ? `${request.durationMs}ms` : "";
     const error = request.error ? ` — ${request.error}` : "";
-    return `- \`${request.method} ${request.url}\` → ${status} ${duration}${error}`;
+    // Backticks stripped so a crafted url can't break the inline code span.
+    const url = request.url.replace(/`/g, "'");
+    return `- \`${request.method} ${url}\` → ${status} ${duration}${error}`;
   });
   return rows;
 }
@@ -150,10 +173,20 @@ export function buildReportFragment(
   input: ReportFragmentInput,
 ): ReportFragmentDraft {
   const { submission, reporter } = input;
+  // Body sections are built BEFORE the frontmatter: tool-JSON clipping
+  // happens while rendering them, and its count must land in the same
+  // `truncated`/`clippedValues` accounting the frontmatter reports.
   const counter = { clipped: 0 };
+  const chatLog = messageSection(submission);
+  const toolCalls = toolCallSection(submission, counter);
+  const networkRequests = networkSection(submission);
+  const truncation: CaptureTruncation = {
+    ...input.truncation,
+    clippedValues: input.truncation.clippedValues + counter.clipped,
+  };
   const summary = buildSummary(input);
   const sections = [
-    ...frontmatterLines(input),
+    ...frontmatterLines(input, truncation),
     "",
     "## Summary",
     summary,
@@ -178,16 +211,16 @@ export function buildReportFragment(
       .filter((line): line is string => line !== null)
       .join("\n"),
     "",
-    ...truncationNote(input.truncation),
+    ...truncationNote(truncation),
     "",
     "## Chat log",
-    ...messageSection(submission),
+    ...chatLog,
     "",
     "## Tool calls",
-    ...toolCallSection(submission, counter),
+    ...toolCalls,
     "",
     "## Network requests",
-    ...networkSection(submission),
+    ...networkRequests,
     "",
     "## Backend trace",
     // Honest V1 scope (PRD §6.2): chat inference runs in the usable-chat

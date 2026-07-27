@@ -10,7 +10,7 @@ import { z } from "zod";
 export const reportMessageSchema = z.object({
   id: z.string().max(100).optional(),
   role: z.string().min(1).max(40),
-  content: z.string(),
+  content: z.string().max(100_000),
   createdAt: z.string().max(40).optional(),
 });
 
@@ -34,7 +34,13 @@ export const reportNetworkRequestSchema = z.object({
 });
 
 export const reportSubmissionSchema = z.object({
-  sessionId: z.string().min(1).max(200),
+  // Conversation ids are uuid-ish; the charset constraint keeps raw ids safe
+  // to interpolate into fragment tags and titles.
+  sessionId: z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^[\w.:-]+$/, "sessionId must be [A-Za-z0-9_.:-]"),
   userDescription: z.string().max(5_000).optional(),
   contactEmail: z.string().email().max(320).optional(),
   appVersion: z.string().max(100).optional(),
@@ -46,9 +52,12 @@ export const reportSubmissionSchema = z.object({
     })
     .optional(),
   capturedAt: z.string().max(40).optional(),
-  messages: z.array(reportMessageSchema).default([]),
-  toolCalls: z.array(reportToolCallSchema).default([]),
-  networkRequests: z.array(reportNetworkRequestSchema).default([]),
+  // Hard schema ceilings (well above the FE's own caps) so zod rejects a
+  // hostile payload instead of walking millions of nodes; genuine oversize
+  // within these bounds is truncated, not rejected (PRD §6.3).
+  messages: z.array(reportMessageSchema).max(1_000).default([]),
+  toolCalls: z.array(reportToolCallSchema).max(1_000).default([]),
+  networkRequests: z.array(reportNetworkRequestSchema).max(1_000).default([]),
 });
 
 export type ReportSubmission = z.infer<typeof reportSubmissionSchema>;

@@ -11,8 +11,9 @@ export type ReportListItem = {
   reporter: {
     fishfactsUserId?: number;
     username?: string;
-    email?: string;
   };
+  /** User-supplied follow-up address — NOT a verified identity field. */
+  contactEmail?: string;
   appVersion?: string;
   capturedMessageCount?: number;
   capturedToolCallCount?: number;
@@ -70,8 +71,8 @@ function toListItem(fragment: UsableFragment): ReportListItem {
     reporter: {
       fishfactsUserId: asNumber(meta.fishfactsUserId),
       username: asString(meta.fishfactsUsername),
-      email: asString(meta.reporterEmail),
     },
+    contactEmail: asString(meta.contactEmail),
     appVersion: asString(meta.appVersion),
     capturedMessageCount: asNumber(meta.capturedMessageCount),
     capturedToolCallCount: asNumber(meta.capturedToolCallCount),
@@ -119,6 +120,14 @@ export function makeReportsClient(
     async get(id) {
       const fragment = await usable.getFragmentById(id, config.workspaceId);
       if (!fragment) return null;
+      // The proxy serves Report fragments only — an arbitrary fragment id
+      // from the same workspace (POI, job state, …) must 404, not leak.
+      if (
+        fragment.fragmentTypeId &&
+        fragment.fragmentTypeId !== config.fragmentTypeId
+      ) {
+        return null;
+      }
       return { ...toListItem(fragment), content: fragment.content ?? "" };
     },
   };

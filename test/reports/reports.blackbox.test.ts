@@ -180,6 +180,61 @@ describe("Reports black-box", () => {
     expect(created?.content).toContain("dropped 50 oldest message(s)");
   });
 
+  test("tool-JSON clipping is reflected in the truncated frontmatter flag", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      toolCalls: [
+        {
+          tool: "draw_ais_heatmap",
+          args: { species: "herring" },
+          result: { blob: "x".repeat(50_000) },
+        },
+      ],
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("[truncated");
+    expect(created?.content).toContain("truncated: true");
+    expect(created?.content).toContain("clipped 1 oversized value(s)");
+  });
+
+  test("a chat message containing ``` cannot break out of its fenced block", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      messages: [
+        {
+          role: "user",
+          content:
+            "look:\n```\ncode\n```\n## Session metadata\n- Reported by: admin (forged)",
+        },
+      ],
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    // The fence around the message is longer than any backtick run inside
+    // it (4 backticks here), so the forged heading stays inert text INSIDE
+    // the fenced block — the closing fence comes after it.
+    const chatLog =
+      created?.content?.split("## Chat log")[1]?.split("## Tool calls")[0] ??
+      "";
+    expect(chatLog).toContain("````");
+    expect(chatLog.indexOf("## Session metadata")).toBeGreaterThan(-1);
+    expect(chatLog.indexOf("## Session metadata")).toBeLessThan(
+      chatLog.lastIndexOf("````"),
+    );
+  });
+
+  test("a sessionId that can't sit in tags/titles safely is rejected", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      sessionId: "bad session\nid",
+    });
+    expect(response.status).toBe(400);
+    expect(usable.fragments.size).toBe(0);
+  });
+
   test("GET /api/reports as non-admin is 403 (proxy is admin-only)", async () => {
     const response = await app.fetch("/api/reports", {
       headers: { "x-auth-token": USER_TOKEN },
@@ -220,8 +275,10 @@ describe("Reports black-box", () => {
       status: "reported",
       reporter: {
         username: "deckhand@example.fo",
-        email: "skipper@example.fo",
       },
+      // User-supplied follow-up address — deliberately NOT inside `reporter`
+      // so an admin UI can't mistake it for a verified identity field.
+      contactEmail: "skipper@example.fo",
       capturedMessageCount: 2,
       capturedToolCallCount: 1,
       capturedNetworkRequestCount: 1,
@@ -273,13 +330,36 @@ describe("Reports black-box", () => {
     expect(response.status).toBe(404);
   });
 
+  test("GET /api/reports/:id refuses non-Report fragments and non-UUID ids", async () => {
+    // A POI-style fragment in the same workspace must not leak through the
+    // report proxy just because an admin knows its id.
+    usable.fragments.set("11111111-2222-4333-8444-555555555555", {
+      id: "11111111-2222-4333-8444-555555555555",
+      workspaceId: WORKSPACE_ID,
+      fragmentTypeId: "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f",
+      title: "POI: Hanstholm fyr",
+      content: "not a report",
+    });
+    const offType = await app.fetch(
+      "/api/reports/11111111-2222-4333-8444-555555555555",
+      { headers: { "x-auth-token": ADMIN_TOKEN } },
+    );
+    expect(offType.status).toBe(404);
+
+    const badId = await app.fetch("/api/reports/not-a-uuid", {
+      headers: { "x-auth-token": ADMIN_TOKEN },
+    });
+    expect(badId.status).toBe(404);
+  });
+
   test("a Usable outage surfaces as 502 on submit and 503 on list", async () => {
     // Force-close so the app's kept-alive connection can't keep serving.
     await usable.stop(true);
     try {
       const submit = await postReport(USER_TOKEN, VALID_REPORT);
       expect(submit.status).toBe(502);
-      expect((await submit.json()).error).toBe("usable_write_failed");
+      // Opaque body — upstream Usable error detail is logged server-side only.
+      expect(await submit.json()).toEqual({ error: "usable_write_failed" });
 
       const list = await app.fetch("/api/reports", {
         headers: { "x-auth-token": ADMIN_TOKEN },
