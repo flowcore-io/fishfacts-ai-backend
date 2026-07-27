@@ -31,7 +31,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
     bodyLimit({
       maxSize: 5 * 1024 * 1024,
       // Same JSON error shape as every other failure on this route.
-      onError: (c) => c.json({ error: "payload_too_large" }, 413),
+      // The unread body MUST be cancelled before responding: answering
+      // with megabytes still in flight tears down the whole Bun server
+      // (silent process death observed on bun 1.3.3).
+      onError: async (c) => {
+        await c.req.raw.arrayBuffer().catch(() => {});
+        return c.json({ error: "payload_too_large" }, 413);
+      },
     }),
     async (c) => {
       if (!deps.reports) {
