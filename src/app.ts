@@ -32,6 +32,8 @@ import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
 import type { PoiRepository } from "./poi/repository";
 import { createPoiRouter } from "./poi/routes";
+import type { ReportsClient } from "./reports/client";
+import { createReportsRouter } from "./reports/routes";
 import type { SildelagetCatchRepository } from "./sildelaget/repository";
 import { createSildelagetCatchRouter } from "./sildelaget/routes";
 import type { TilesRepository } from "./tiles/repository";
@@ -55,6 +57,8 @@ export type AppDependencies = {
   aisRepository: AisClickhouseRepository;
   aisIngestState: AisIngestStateRepository;
   aisSource: AisSource;
+  /** null = reports feature unconfigured (no REPORT_FRAGMENT_TYPE_ID). */
+  reportsClient: ReportsClient | null;
   db: Database;
 };
 
@@ -76,6 +80,7 @@ export function createApp({
   aisRepository,
   aisIngestState,
   aisSource,
+  reportsClient,
   db,
 }: AppDependencies) {
   const app = new Hono();
@@ -106,6 +111,8 @@ export function createApp({
   app.use("/api/financials", authMiddleware);
   app.use("/api/financials/*", authMiddleware);
   app.use("/api/ais/*", authMiddleware);
+  app.use("/api/reports", authMiddleware);
+  app.use("/api/reports/*", authMiddleware);
 
   app.route("/api/tiles", createTilesRouter({ tilesRepository }));
   app.route(
@@ -134,6 +141,10 @@ export function createApp({
     createFinancialsRouter({ repository: financialsRepository }),
   );
   app.route("/api/ais", createAisRouter({ repository: aisRepository }));
+  // In-chat issue reports: POST open to any authenticated user (consented
+  // session capture → Usable Report fragment); list/detail are ADMIN-only
+  // proxies for the FE admin screen (Usable token never reaches the browser).
+  app.route("/api/reports", createReportsRouter({ reports: reportsClient }));
 
   app.post("/api/events", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => null);
