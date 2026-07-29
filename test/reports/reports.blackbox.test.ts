@@ -207,6 +207,26 @@ describe("Reports black-box", () => {
     );
   });
 
+  test("string tool results render verbatim, not double-serialised", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      toolCalls: [
+        {
+          tool: "search_regulations",
+          result: 'row 1\nrow 2 with "quotes"… [truncated 18369 chars]',
+        },
+      ],
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    // The FE pre-clips big payloads into plain strings — they must land as
+    // readable text, not an escaped JSON string-in-a-string.
+    expect(created?.content).toContain('row 1\nrow 2 with "quotes"');
+    expect(created?.content).not.toContain("\\n");
+    expect(created?.content).not.toContain('\\"');
+  });
+
   test("browser-side clipping (feClippedValues) marks the report truncated", async () => {
     const response = await postReport(USER_TOKEN, {
       ...VALID_REPORT,

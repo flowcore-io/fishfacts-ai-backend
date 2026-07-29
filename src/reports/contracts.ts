@@ -55,7 +55,7 @@ export const reportSubmissionSchema = z.object({
   // Clips the FE already applied at capture time (ring-buffer clipping) —
   // folded into the fragment's truncated/clippedValues accounting so the
   // frontmatter stays honest about browser-side truncation too.
-  feClippedValues: z.number().int().nonnegative().optional(),
+  feClippedValues: z.number().int().nonnegative().max(1_000_000).optional(),
   // Hard schema ceilings (well above the FE's own caps) so zod rejects a
   // hostile payload instead of walking millions of nodes; genuine oversize
   // within these bounds is truncated, not rejected (PRD §6.3).

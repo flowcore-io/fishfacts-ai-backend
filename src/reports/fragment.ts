@@ -94,7 +94,11 @@ function frontmatterLines(
  */
 function buildSummary(input: ReportFragmentInput): string {
   const { submission, reporter } = input;
-  const toolNames = [...new Set(submission.toolCalls.map((call) => call.tool))];
+  // Tool names are unconstrained strings — inline() them so a crafted name
+  // can't inject structure through the (unfenced) summary line.
+  const toolNames = [
+    ...new Set(submission.toolCalls.map((call) => inline(call.tool))),
+  ];
   const failedCalls = submission.toolCalls.filter((call) => call.error).length;
   const failedRequests = submission.networkRequests.filter(
     (request) => request.error || (request.status ?? 0) >= 400,
@@ -111,7 +115,7 @@ function buildSummary(input: ReportFragmentInput): string {
       ...new Set(
         submission.toolCalls
           .filter((call) => call.error)
-          .map((call) => call.tool),
+          .map((call) => inline(call.tool)),
       ),
     ];
     parts.push(
