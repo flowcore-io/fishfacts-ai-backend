@@ -53,6 +53,8 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
       }
       // Oversized captures are truncated, never rejected (PRD §6.3).
       const { submission, truncation } = truncateSubmission(parsed.data);
+      // Browser-side ring-buffer clips count toward the same accounting.
+      truncation.clippedValues += parsed.data.feClippedValues ?? 0;
       const reportId = randomUUID();
       const draft = buildReportFragment({
         reportId,
