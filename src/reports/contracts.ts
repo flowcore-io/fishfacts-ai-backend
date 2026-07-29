@@ -52,6 +52,10 @@ export const reportSubmissionSchema = z.object({
     })
     .optional(),
   capturedAt: z.string().max(40).optional(),
+  // Clips the FE already applied at capture time (ring-buffer clipping) —
+  // folded into the fragment's truncated/clippedValues accounting so the
+  // frontmatter stays honest about browser-side truncation too.
+  feClippedValues: z.number().int().nonnegative().max(1_000_000).optional(),
   // Hard schema ceilings (well above the FE's own caps) so zod rejects a
   // hostile payload instead of walking millions of nodes; genuine oversize
   // within these bounds is truncated, not rejected (PRD §6.3).
@@ -120,6 +124,11 @@ export function toolJsonAsText(
   counter: { clipped: number },
 ): string | undefined {
   if (value === undefined) return undefined;
+  // FE-clipped payloads arrive as plain strings — render them verbatim
+  // instead of re-stringifying into escaped (double-serialised) JSON.
+  if (typeof value === "string") {
+    return clipText(value, CAPTURE_LIMITS.maxToolJsonChars, counter);
+  }
   let serialised: string;
   try {
     serialised = JSON.stringify(value, null, 2) ?? "undefined";

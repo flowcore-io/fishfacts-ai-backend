@@ -94,7 +94,11 @@ function frontmatterLines(
  */
 function buildSummary(input: ReportFragmentInput): string {
   const { submission, reporter } = input;
-  const toolNames = [...new Set(submission.toolCalls.map((call) => call.tool))];
+  // Tool names are unconstrained strings — inline() them so a crafted name
+  // can't inject structure through the (unfenced) summary line.
+  const toolNames = [
+    ...new Set(submission.toolCalls.map((call) => inline(call.tool))),
+  ];
   const failedCalls = submission.toolCalls.filter((call) => call.error).length;
   const failedRequests = submission.networkRequests.filter(
     (request) => request.error || (request.status ?? 0) >= 400,
@@ -106,7 +110,18 @@ function buildSummary(input: ReportFragmentInput): string {
   if (toolNames.length > 0) {
     parts.push(`Tools used: ${toolNames.slice(0, 8).join(", ")}.`);
   }
-  if (failedCalls > 0) parts.push(`${failedCalls} tool call(s) errored.`);
+  if (failedCalls > 0) {
+    const failedTools = [
+      ...new Set(
+        submission.toolCalls
+          .filter((call) => call.error)
+          .map((call) => inline(call.tool)),
+      ),
+    ];
+    parts.push(
+      `${failedCalls} tool call(s) errored (${failedTools.join(", ")}).`,
+    );
+  }
   if (failedRequests > 0) {
     parts.push(`${failedRequests} network request(s) failed.`);
   }
@@ -133,7 +148,8 @@ function toolCallSection(
 ): string[] {
   if (submission.toolCalls.length === 0) return ["_No tool calls captured._"];
   return submission.toolCalls.map((call, index) => {
-    const lines = [`### ${index + 1}. \`${inline(call.tool)}\``];
+    const failed = call.error ? " — FAILED" : "";
+    const lines = [`### ${index + 1}. \`${inline(call.tool)}\`${failed}`];
     const meta: string[] = [];
     if (call.calledAt) meta.push(`at ${inline(call.calledAt)}`);
     if (call.durationMs !== undefined) meta.push(`${call.durationMs}ms`);
@@ -167,7 +183,8 @@ function networkSection(submission: ReportSubmission): string[] {
     const error = request.error ? ` — ${inline(request.error)}` : "";
     // Backticks stripped so a crafted url can't break the inline code span.
     const url = request.url.replace(/`/g, "'");
-    return `- \`${inline(request.method)} ${url}\` → ${status} ${duration}${error}`;
+    const startedAt = request.startedAt ? `${inline(request.startedAt)} ` : "";
+    return `- ${startedAt}\`${inline(request.method)} ${url}\` → ${status} ${duration}${error}`;
   });
   return rows;
 }

@@ -180,6 +180,65 @@ describe("Reports black-box", () => {
     expect(created?.content).toContain("dropped 50 oldest message(s)");
   });
 
+  test("failed tool calls are marked in headings and named in the summary", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      toolCalls: [
+        ...VALID_REPORT.toolCalls,
+        {
+          tool: "set_base_layer",
+          args: { layer: "wind" },
+          error: "weather overlay did not finish loading",
+          calledAt: "2026-07-27T14:01:00.000Z",
+          durationMs: 10113,
+        },
+      ],
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("`set_base_layer` — FAILED");
+    expect(created?.content).toContain(
+      "1 tool call(s) errored (set_base_layer).",
+    );
+    // Network requests carry their timestamp so failures can be correlated.
+    expect(created?.content).toContain(
+      "- 2026-07-27T14:00:05.000Z `GET https://fishfacts-ai.usable.dev/api/catch?species=herring`",
+    );
+  });
+
+  test("string tool results render verbatim, not double-serialised", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      toolCalls: [
+        {
+          tool: "search_regulations",
+          result: 'row 1\nrow 2 with "quotes"… [truncated 18369 chars]',
+        },
+      ],
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    // The FE pre-clips big payloads into plain strings — they must land as
+    // readable text, not an escaped JSON string-in-a-string.
+    expect(created?.content).toContain('row 1\nrow 2 with "quotes"');
+    expect(created?.content).not.toContain("\\n");
+    expect(created?.content).not.toContain('\\"');
+  });
+
+  test("browser-side clipping (feClippedValues) marks the report truncated", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      feClippedValues: 2,
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("truncated: true");
+    expect(created?.content).toContain("clipped 2 oversized value(s)");
+  });
+
   test("tool-JSON clipping is reflected in the truncated frontmatter flag", async () => {
     const response = await postReport(USER_TOKEN, {
       ...VALID_REPORT,
