@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.25.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.24.0...v1.25.0) (2026-07-29)
+
+
+### Features
+
+* **reports:** agent-readability round — clip accounting, failure markers, timestamps ([0165768](https://github.com/flowcore-io/fishfacts-ai-backend/commit/01657683781eaf130062b238b2e4c4d9689b4289))
+* **reports:** agent-readability round — FE clip accounting, failure markers, timestamps ([c160d95](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c160d95356ea746027bed6844030a8bd3cf8807f))
+
+
+### Bug Fixes
+
+* **reports:** PR-review round — inline tool names in summary, cap feClippedValues, verbatim-string test ([a041660](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a0416609152be7e6e9d5fae59f70deadf6910cfc))
+
 ## [1.24.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.23.1...v1.24.0) (2026-07-29)
 
 
