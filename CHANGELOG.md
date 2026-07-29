@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.24.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.23.1...v1.24.0) (2026-07-29)
+
+
+### Features
+
+* **poi:** admin-gated durable POI write — POST /api/poi via poi.created.0 event + fragment projector ([1daaf6e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/1daaf6e8220f6057fa8d71fd61a2d39e070c5a2b))
+* **poi:** admin-gated durable POI write (POST /api/poi, event-sourced) ([9cfca3f](https://github.com/flowcore-io/fishfacts-ai-backend/commit/9cfca3f7c6c0f537248ba93d92e72ca8394c288a))
+* **reports:** in-chat issue report ingest + admin Usable proxy routes ([34e1b9e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/34e1b9e3bf9e5919884af9589979df8d1f7b12ca))
+* **reports:** in-chat issue report ingest + admin Usable proxy routes ([f6a0cf4](https://github.com/flowcore-io/fishfacts-ai-backend/commit/f6a0cf4a0a39f7394d4105a51da7874eac95198a))
+
+
+### Bug Fixes
+
+* **poi:** review fixes — JSON.stringify YAML scalars, single-source key regex + title prefix ([8031e91](https://github.com/flowcore-io/fishfacts-ai-backend/commit/8031e91bb159d17f2e0e9cd6a661ad91d0311ab3))
+* **reports:** drain oversized bodies before the 413 response ([dc9aabf](https://github.com/flowcore-io/fishfacts-ai-backend/commit/dc9aabf419b7a2c21307ce1b3586b37de673d0f6))
+* **reports:** PR-review round — sanitise unfenced scalars, fail-closed type check, JSON 413 ([01c877b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/01c877b434457385671cefad7e1836399cb55b3d))
+* **reports:** review-pass hardening — leak, fences, scope, limits ([a2c06f1](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a2c06f1eb6ad8958cb490d3f973a39885cbb7fe1))
+
 ## [1.23.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.23.0...v1.23.1) (2026-07-22)
 
 
