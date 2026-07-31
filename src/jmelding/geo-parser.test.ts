@@ -148,6 +148,39 @@ Det er forbudt å fiske etter sei med not i et område på Lopphavet i Troms og 
 
 1. Nord 70 grader 19.500 minutter  Øst 020 grader 40.900 minutter 2. Nord 70 grader 22.900 minutter  Øst 020 grader 35.400 minutter 3. Nord 70 grader 27.700 minutter  Øst 020 grader 39.800 minutter 4. Nord 70 grader 27.900 minutter  Øst 021 grader 08.400 minutter 5. Nord 70 grader 27.400 minutter  Øst 021 grader 10.900 minutter 5. Nord 70 grader 19.400 minutter  Øst 020 grader 49.600 minutter Herfra videre til posisjon 1.`;
 
+// Constructed, not from a notice: J-125-2026's real typo repeats a number,
+// this transposes two. Both are one ring numbered wrong, and only a return to
+// 1 means the notice has moved on.
+const TRANSPOSED_ORDINALS = `Det er forbudt å fiske i et område på Mistfjorden i Nordland avgrenset av rette linjer mellom følgende posisjoner.
+
+1. Nord 67 grader 26,900 minutter. Øst 014 grader 48,700 minutter. 2. Nord 67 grader 27,400 minutter. Øst 014 grader 48,700 minutter. 4. Nord 67 grader 26,700 minutter. Øst 014 grader 56,900 minutter. 3. Nord 67 grader 25,900 minutter. Øst 014 grader 56,300 minutter.`;
+
+test("a backwards position number that is not 1 does not split the ring", () => {
+  const parsed = parseJmeldingGeo(TRANSPOSED_ORDINALS);
+  expect(parsed.areas).toHaveLength(1);
+  expect(parsed.areas[0].points).toHaveLength(4);
+});
+
+// Constructed: a closure whose gap still carries prose naming the place of the
+// one before it. The label has to come from the lead-in nearest the positions.
+const TRAILING_PLACE_PROSE = `Det er forbudt å fiske etter reker med trål på Varanger i Troms og Finnmark i et område avgrenset av rette linjer mellom følgende posisjoner:
+
+1. Nord 70 grader 03,5 minutter. Øst 029 grader 06,7 minutter. 2. Nord 70 grader 06,8 minutter. Øst 029 grader 11,7 minutter. Herfra videre til posisjon 1.
+
+Fisket på Varanger i Troms og Finnmark kan gjenopptas når området åpnes.
+
+Det er det forbudt å fiske reker med trål i et område ved Kjøtta i Troms i et område avgrenset av rette linjer mellom følgende posisjoner:
+
+1. Nord 68 grader 51,000 minutter. Øst 016 grader 48,000 minutter. 2. Nord 68 grader 54,500 minutter. Øst 016 grader 46,000 minutter.`;
+
+test("labels a closure from the nearest lead-in, not the previous one's prose", () => {
+  const parsed = parseJmeldingGeo(TRAILING_PLACE_PROSE);
+  expect(parsed.areas.map((a) => a.name)).toEqual([
+    "Varanger i Troms og Finnmark",
+    "Kjøtta i Troms",
+  ]);
+});
+
 test("a repeated position number does not split the ring", () => {
   const parsed = parseJmeldingGeo(J_125_2026_SECTION_12);
   expect(parsed.areas).toHaveLength(1);

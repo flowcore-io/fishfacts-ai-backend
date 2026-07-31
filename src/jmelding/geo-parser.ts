@@ -51,8 +51,8 @@ const CLOSURE_LEAD_IN_RE =
 // "… på Gåsværfjorden og Mesøyfjorden i Nordland avgrenset av …" — the place a
 // lead-in names, taken from the source's own capitalisation rather than a
 // gazetteer. Used only to label an area; nothing renders off it.
-const PLACE_IN_COUNTY_RE =
-  /\b(?:på|ved|i)\s+(\p{Lu}[\p{L}-]*(?:\s+og\s+\p{Lu}[\p{L}-]*)*)\s+i\s+(\p{Lu}[\p{L}-]*(?:\s+og\s+\p{Lu}[\p{L}-]*)*)/u;
+const PLACE_IN_COUNTY_RE_G =
+  /\b(?:på|ved|i)\s+(\p{Lu}[\p{L}-]*(?:\s+og\s+\p{Lu}[\p{L}-]*)*)\s+i\s+(\p{Lu}[\p{L}-]*(?:\s+og\s+\p{Lu}[\p{L}-]*)*)/gu;
 /** "Område A" / "Område B" — the label some notices give a ring instead of a §. */
 const AREA_LABEL_RE_G = /^\s*Område\s+[^\n]{1,20}$/gm;
 const LEAD_IN_TAIL_CHARS = 400;
@@ -297,15 +297,11 @@ function startsNewArea(
   previousHeading: string | null,
   currentHeading: string | null,
 ): boolean {
-  // A restart, not merely a repeat: J-125-2026 § 12 numbers its last two
-  // corners "5." and "5." — a source typo inside one ring, not a new closure.
-  if (
-    previous.ordinal !== null &&
-    current.ordinal !== null &&
-    (current.ordinal === 1 || current.ordinal < previous.ordinal)
-  ) {
-    return true;
-  }
+  // Only a return to 1 counts as a restart, because that is what every notice
+  // does. Any other backwards step is a numbering typo inside one ring — the
+  // kind J-125-2026 § 12 makes when it numbers its last two corners "5." and
+  // "5." — and splitting on it would cut a real closure in half.
+  if (previous.ordinal !== null && current.ordinal === 1) return true;
   if (RING_TERMINATOR_RE.test(gap)) return true;
   if (SECTION_MARKER_RE.test(gap)) return true;
   if (CLOSURE_LEAD_IN_RE.test(gap)) return true;
@@ -323,7 +319,9 @@ function areaNameFor(gap: string, heading: string | null): string | null {
   const tail = gap.slice(-LEAD_IN_TAIL_CHARS);
   const labels = tail.match(AREA_LABEL_RE_G);
   if (labels) return labels.at(-1)?.trim() ?? null;
-  const place = tail.match(PLACE_IN_COUNTY_RE);
+  // The LAST lead-in in the gap, not the first: the tail can still carry prose
+  // trailing the previous closure, whose place would otherwise win.
+  const place = [...tail.matchAll(PLACE_IN_COUNTY_RE_G)].at(-1);
   if (place) return `${place[1]} i ${place[2]}`;
   const sections = tail.match(SECTION_MARKER_RE_G);
   return sections?.at(-1) ?? null;
