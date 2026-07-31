@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.26.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.26.0...v1.26.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **jmeldinger:** address review — reachable statuses, parseable dates, honest runbook ([46efebd](https://github.com/flowcore-io/fishfacts-ai-backend/commit/46efebd11250b49581949fe88cf8e636e614835c))
+* **jmeldinger:** decide "current" against the clock, not a keyword ([c73f7e9](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c73f7e9a77cf8acf0dc4ebe65751aa1b6033b076))
+* **jmeldinger:** decide "current" against the clock, not a keyword ([0d84cd3](https://github.com/flowcore-io/fishfacts-ai-backend/commit/0d84cd3adff25d04fbddf303186cef6fd4d7ee98))
+* **jmeldinger:** re-derive stored FO geometry without replaying the pathway ([a382e39](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a382e398ad920bd9fc08ca4374904f56edc59a4b))
+
 ## [1.26.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.25.0...v1.26.0) (2026-07-31)
 
 
