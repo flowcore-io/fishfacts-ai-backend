@@ -89,14 +89,19 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
         // The image is a bonus on top of a report that is already written and
         // safe. If the upload fails the report stands, minus the picture —
         // the same stance the FE takes when the capture itself fails.
-        let screenshot: "attached" | "failed" | undefined;
+        //
+        // "accepted", not "attached": Usable's upload is asynchronous, so a
+        // 200 proves it took the bytes, not that the attachment is servable.
+        // Whether it landed is answered by the attachment list on GET, which
+        // is the only thing that actually knows.
+        let screenshot: "accepted" | "failed" | undefined;
         if (submission.screenshot) {
           try {
             await deps.reports.attachScreenshot(
               fragmentId,
               submission.screenshot,
             );
-            screenshot = "attached";
+            screenshot = "accepted";
           } catch (error) {
             console.error("[Reports] screenshot upload failed", {
               fragmentId,

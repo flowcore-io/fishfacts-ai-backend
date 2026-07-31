@@ -288,8 +288,11 @@ export class UsableApiClient {
    * token posts here directly.
    *
    * The upload is asynchronous on Usable's side — a 200 means "accepted",
-   * with `status: "uploading"`, and the bytes land shortly after. Poll
-   * `getFileStatus` if a caller needs to know it finished.
+   * with `status: "uploading"`, and the bytes land shortly after. Callers must
+   * not read a 200 as "the file is servable": the attachment row carries its
+   * own status (see `listFragmentAttachments`), and that is what knows.
+   * (`GET /files/:id/status` also exists upstream if a caller ever needs to
+   * block on completion — deliberately not wrapped until something does.)
    */
   async uploadFile(input: {
     workspaceId: string;
@@ -322,18 +325,6 @@ export class UsableApiClient {
     return {
       fileId,
       status: typeof root?.status === "string" ? root.status : "uploading",
-    };
-  }
-
-  /** Upload progress: `uploading` → `processing` → `complete`. */
-  async getFileStatus(fileId: string) {
-    const json = await readJson(
-      await this.request(`/files/${encodeURIComponent(fileId)}/status`),
-    );
-    const status = asRecord(asRecord(json)?.status);
-    return {
-      status: typeof status?.status === "string" ? status.status : "unknown",
-      progress: typeof status?.progress === "number" ? status.progress : 0,
     };
   }
 

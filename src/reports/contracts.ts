@@ -126,10 +126,31 @@ export const MAX_SCREENSHOT_BASE64_CHARS = 3_000_000;
  * 10–125 KB of markdown and a base64 JPEG in the body would wreck it and
  * every listing that renders it.
  */
+/**
+ * The image formats a report may carry, and the file extension each is stored
+ * under. One map, because three things must agree: what the schema below
+ * accepts, what the uploaded file is *named*, and what content-type the admin
+ * proxy is willing to serve back. Split across files, adding a format
+ * half-lands — the write path keeps working while the read path quietly
+ * degrades to an octet-stream download prompt.
+ */
+export const SCREENSHOT_MIME_EXTENSIONS = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+} as const;
+
+export type ScreenshotMimeType = keyof typeof SCREENSHOT_MIME_EXTENSIONS;
+
+const SCREENSHOT_MIME_TYPES = Object.keys(SCREENSHOT_MIME_EXTENSIONS) as [
+  ScreenshotMimeType,
+  ...ScreenshotMimeType[],
+];
+
 export const reportScreenshotSchema = z.object({
   // Allowlist, not a free string: this value names the Blob type on upload.
   // Usable sniffs the actual bytes anyway and rejects a mismatch.
-  mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  mimeType: z.enum(SCREENSHOT_MIME_TYPES),
   width: z.number().int().positive().max(20_000),
   height: z.number().int().positive().max(20_000),
   data: z

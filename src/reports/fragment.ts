@@ -342,7 +342,11 @@ function screenshotSection(submission: ReportSubmission): string[] {
     "",
     "The chat panel is not in the picture: it renders in a cross-origin iframe, which the capture cannot read. The conversation is in the chat log below.",
     "",
-    "_If this fragment has no attachment, the upload to Usable failed after the report was written — the report itself is unaffected._",
+    // Deliberately vague about *where* it failed: this text is written before
+    // the upload is even attempted, and the upload is asynchronous on Usable's
+    // side, so the failure could be the POST, their processing, or a byte
+    // sniff — this line cannot know which. It only knows the report is fine.
+    "_If this fragment has no attachment, the image did not make it into Usable — the report itself is unaffected._",
   ];
 }
 

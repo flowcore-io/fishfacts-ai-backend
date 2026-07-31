@@ -575,7 +575,9 @@ describe("Reports black-box", () => {
     });
     expect(response.status).toBe(201);
     const body = await response.json();
-    expect(body.screenshot).toBe("attached");
+    // "accepted", not "attached" — Usable's upload is asynchronous, so the
+    // 200 we got only proves it took the bytes.
+    expect(body.screenshot).toBe("accepted");
 
     const stored = Array.from(usable.files.values());
     expect(stored).toHaveLength(1);
@@ -662,9 +664,16 @@ describe("Reports black-box", () => {
       })
     ).json();
     expect(detail.attachments).toHaveLength(1);
+    // Consent is recorded on the fragment itself, so it survives a failed
+    // attachment read; the listing tells us the file is actually there.
+    expect(detail.screenshotSubmitted).toBe(true);
+    expect(detail.attachmentsUnavailable).toBeUndefined();
     const [attachment] = detail.attachments;
     expect(attachment.mimeType).toBe("image/jpeg");
     expect(attachment.sizeBytes).toBeGreaterThan(0);
+    // Upload state is carried through — an in-flight row must not read as
+    // ready, or the admin gets an image that will not load.
+    expect(attachment.status).toBe("active");
 
     const image = await app.fetch(
       `/api/reports/${submitted.fragmentId}/attachments/${attachment.fileId}`,
@@ -676,6 +685,68 @@ describe("Reports black-box", () => {
     expect(Buffer.from(await image.arrayBuffer()).toString("base64")).toBe(
       JPEG_BASE64,
     );
+  });
+
+  test("a failed attachment listing reads as 'could not check', not 'no screenshot'", async () => {
+    const submitted = await (
+      await postReport(USER_TOKEN, { ...VALID_REPORT, screenshot: SCREENSHOT })
+    ).json();
+
+    usable.failAttachmentList = true;
+    try {
+      const detail = await (
+        await app.fetch(`/api/reports/${submitted.fragmentId}`, {
+          headers: { "x-auth-token": ADMIN_TOKEN },
+        })
+      ).json();
+      // The report still opens — a failed listing is decorative.
+      expect(detail.content).toContain("show me herring catches");
+      // But an empty list here would be a lie about a screenshot sitting in
+      // Usable perfectly intact, so it has to be distinguishable.
+      expect(detail.attachments).toEqual([]);
+      expect(detail.attachmentsUnavailable).toBe(true);
+      expect(detail.screenshotSubmitted).toBe(true);
+    } finally {
+      usable.failAttachmentList = false;
+    }
+  });
+
+  test("'sent but missing' is distinguishable from 'never sent'", async () => {
+    usable.failUploads = true;
+    let missing: { fragmentId: string };
+    try {
+      missing = await (
+        await postReport(USER_TOKEN, {
+          ...VALID_REPORT,
+          screenshot: SCREENSHOT,
+        })
+      ).json();
+    } finally {
+      usable.failUploads = false;
+    }
+    const neverSent = await (
+      await postReport(USER_TOKEN, {
+        ...VALID_REPORT,
+        sessionId: "conv_nopic",
+      })
+    ).json();
+
+    const detailOf = async (id: string) =>
+      (
+        await app.fetch(`/api/reports/${id}`, {
+          headers: { "x-auth-token": ADMIN_TOKEN },
+        })
+      ).json();
+
+    // Both have zero attachments; only the frontmatter flag tells them apart,
+    // and it is stamped at write time so it cannot be lost to a failed read.
+    const lost = await detailOf(missing.fragmentId);
+    expect(lost.attachments).toEqual([]);
+    expect(lost.screenshotSubmitted).toBe(true);
+
+    const none = await detailOf(neverSent.fragmentId);
+    expect(none.attachments).toEqual([]);
+    expect(none.screenshotSubmitted).toBeUndefined();
   });
 
   test("the attachment route is admin-only and scoped to its own report", async () => {
@@ -708,11 +779,17 @@ describe("Reports black-box", () => {
     );
     expect(crossReport.status).toBe(404);
 
+    // A 404 alone would prove nothing here — an unknown id 404s on the
+    // membership check above regardless of its charset. Asserting that Usable
+    // was never asked is what pins the up-front FILE_ID guard: delete the
+    // regex and this is the assertion that goes red.
+    usable.calls.length = 0;
     const badFileId = await app.fetch(
       `/api/reports/${mine.fragmentId}/attachments/..%2F..%2Fsecret`,
       { headers: { "x-auth-token": ADMIN_TOKEN } },
     );
     expect(badFileId.status).toBe(404);
+    expect(usable.calls).toHaveLength(0);
   });
 
   test("GET /api/reports as non-admin is 403 (proxy is admin-only)", async () => {

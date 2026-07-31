@@ -29,6 +29,8 @@ export class FakeUsableServer {
   readonly calls: Array<{ method: string; path: string; body?: unknown }> = [];
   /** Set to make `POST /files/upload` fail, to exercise the degraded path. */
   failUploads = false;
+  /** Set to make the attachment listing fail (a transient upstream 5xx). */
+  failAttachmentList = false;
 
   constructor(private readonly port: number) {}
 
@@ -41,6 +43,7 @@ export class FakeUsableServer {
     this.fragments.clear();
     this.files.clear();
     this.failUploads = false;
+    this.failAttachmentList = false;
     this.calls.length = 0;
     this.server = Bun.serve({
       port: this.port,
@@ -149,6 +152,9 @@ export class FakeUsableServer {
         if (attachmentsMatch && request.method === "GET") {
           const fragmentId = decodeURIComponent(attachmentsMatch[1]);
           this.calls.push({ method: "GET", path: url.pathname });
+          if (this.failAttachmentList) {
+            return Response.json({ error: "upstream" }, { status: 503 });
+          }
           const attachments = Array.from(this.files.values())
             .filter((file) => file.fragmentId === fragmentId)
             .map((file) => ({
