@@ -90,17 +90,29 @@ export function vornSourceKey(url: string): string {
  * with a cross-reference to a prior ban, so the in-text regex picks the wrong
  * number. The URL NUMBER is authoritative.
  *
- * The URL YEAR is not: Vørn published nr 15 as `-nr-15-20206`, and a title of
- * "Veiðibann nr. 15 - 20206" (or, worse, a silently truncated "- 2020") is
- * what the user reads in the map popup. So the caller passes the year from the
- * validity sentence when it parsed — that is the one place on the page where
- * the year is unambiguous. The body at large is NOT safe to scan: nr 15 cites
- * "Løgtingslóg nr. 152 frá 23. desember 2019", so a naive first-year-in-body
- * would title it 2019. Falls back to the URL year when validity is unreadable.
+ * A WELL-FORMED URL year is authoritative too, and deliberately beats the
+ * validity window: ban numbers reset annually, so the year in the title is the
+ * ban's NUMBERING year, not the year it happens to be in force. A ban
+ * published in December and effective from January would otherwise be retitled
+ * into the next year and collide with that year's ban of the same number.
+ *
+ * Only a MALFORMED year defers to the body. Vørn published nr 15 as
+ * `-nr-15-20206`, and "Veiðibann nr. 15 - 20206" (or, worse, a silently
+ * truncated "- 2020") is what the user reads in the map popup. The validity
+ * sentence is the one place on the page where the year is unambiguous — the
+ * body at large is NOT safe to scan, since nr 15 cites "Løgtingslóg nr. 152
+ * frá 23. desember 2019" and a naive first-year-in-body would title it 2019.
+ * Falls back to the raw slug year when validity is unreadable too.
  */
-function vornTitleFromUrl(url: string, year?: string): string | undefined {
+function vornTitleFromUrl(
+  url: string,
+  validityYear?: string,
+): string | undefined {
   const m = url.toLowerCase().match(VORN_NR_RE);
-  return m ? `Veiðibann nr. ${m[1]} - ${year ?? m[2]}` : undefined;
+  if (!m) return undefined;
+  const slugYear = m[2];
+  const year = /^\d{4}$/.test(slugYear) ? slugYear : (validityYear ?? slugYear);
+  return `Veiðibann nr. ${m[1]} - ${year}`;
 }
 
 /** Extract the unique Vørn ban-page URLs from a sitemap XML body. Pure +

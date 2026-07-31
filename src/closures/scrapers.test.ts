@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { withExpiry } from "@/jmelding/validity";
 import { matchVornBanUrls, parseVornBan, vornSourceKey } from "./scrapers";
 
 // Vørn typo's the ban slug per-announcement. The five current 2026 ban pages
@@ -138,13 +139,46 @@ describe("parseVornBan titles nr 15 from the body, not Vørn's typo'd slug", () 
     expect(rec.points[0].lng).toBeCloseTo(-(5 + 20 / 60), 5);
   });
 
-  test("is in force on 31 Jul 2026 and archived after its window closes", () => {
+  test("recovers the validity window the 404 cost us", () => {
     const rec = parseVornBan(url, html);
     expect(rec.validFrom).toBe("2026-07-07T19:00:00.000Z");
     expect(rec.validTo).toBe("2026-08-04T19:00:00.000Z");
+  });
+
+  test("is in force during its window and archived once it closes", () => {
+    const rec = parseVornBan(url, html);
+    // Assert the expiry DECISION against an explicit clock rather than
+    // `rec.status`: `parseVornBan` resolves status through `withExpiry`, which
+    // reads the wall clock, so a bare `toBe("active")` would silently flip to
+    // "archived" on 2026-08-04 and start failing the suite.
+    expect(
+      withExpiry("active", rec.validTo, new Date("2026-07-31T00:00:00Z")),
+    ).toBe("active");
+    expect(
+      withExpiry("active", rec.validTo, new Date("2026-08-05T00:00:00Z")),
+    ).toBe("archived");
     // The old behaviour stored no end date at all, and an absent end never
     // expires — so this ban would have stayed "active" forever.
-    expect(rec.status).toBe("active");
+    expect(withExpiry("active", undefined, new Date("2030-01-01Z"))).toBe(
+      "active",
+    );
+  });
+
+  test("a WELL-FORMED slug year beats the validity window", () => {
+    // Ban numbers reset annually, so the title year is the ban's NUMBERING
+    // year, not the year it is in force. A ban published in December and
+    // effective from January must stay "nr. 30 - 2026" — retitling it 2027
+    // would collide with 2027's own nr. 30.
+    const decemberUrl =
+      "https://www.vorn.fo/fiskiveida/bradfeingis-veidibann/veidibann-nr-30-2026";
+    const spansNewYear = `<html><body><p>Við heimild.</p><p>6232 N – 0520 W
+      6230 N – 0506 W 6227 N – 0510 W</p><p>Veiðibannið er galdandi frá
+      28. desember 2026 klokkan 19:00 til 25. januar 2027 klokkan
+      19:00.</p></body></html>`;
+    const rec = parseVornBan(decemberUrl, spansNewYear);
+    expect(rec.validFrom).toBe("2026-12-28T19:00:00.000Z");
+    expect(rec.validTo).toBe("2027-01-25T19:00:00.000Z");
+    expect(rec.title).toBe("Veiðibann nr. 30 - 2026"); // NOT 2027
   });
 
   test("falls back to the slug year when the validity sentence is unreadable", () => {
