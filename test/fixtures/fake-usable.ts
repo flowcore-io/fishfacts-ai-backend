@@ -12,10 +12,23 @@ type Fragment = {
   createdAt?: string;
 };
 
+type StoredFile = {
+  fileId: string;
+  workspaceId: string;
+  fragmentId?: string;
+  name: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  tags: string[];
+};
+
 export class FakeUsableServer {
   private server?: Bun.Server<unknown>;
   readonly fragments = new Map<string, Fragment>();
+  readonly files = new Map<string, StoredFile>();
   readonly calls: Array<{ method: string; path: string; body?: unknown }> = [];
+  /** Set to make `POST /files/upload` fail, to exercise the degraded path. */
+  failUploads = false;
 
   constructor(private readonly port: number) {}
 
@@ -26,6 +39,8 @@ export class FakeUsableServer {
   async start() {
     await this.stop();
     this.fragments.clear();
+    this.files.clear();
+    this.failUploads = false;
     this.calls.length = 0;
     this.server = Bun.serve({
       port: this.port,
@@ -97,6 +112,70 @@ export class FakeUsableServer {
           const updated = { ...existing, ...body, id };
           this.fragments.set(id, updated);
           return Response.json({ success: true, fragment: updated });
+        }
+        // --- Files (upload-and-attach, list, download) --------------------
+        // Mirrors Usable's real routes: one multipart POST both stores the
+        // file and attaches it when `fragmentId` is present; attachments are
+        // read from `/fragments/:id/files`, NOT from the fragment itself.
+        if (path === "/files/upload" && request.method === "POST") {
+          this.calls.push({ method: "POST", path: url.pathname });
+          if (this.failUploads) {
+            return Response.json({ error: "upload_failed" }, { status: 500 });
+          }
+          const form = await request.formData();
+          const file = form.get("file");
+          if (!(file instanceof File)) {
+            return Response.json({ error: "file required" }, { status: 400 });
+          }
+          const fileId = randomUUID().replace(/-/g, "").slice(0, 12);
+          const tags = form.get("tags");
+          this.files.set(fileId, {
+            fileId,
+            workspaceId: String(form.get("workspaceId") ?? ""),
+            fragmentId: (form.get("fragmentId") as string | null) ?? undefined,
+            name: file.name,
+            mimeType: file.type,
+            bytes: new Uint8Array(await file.arrayBuffer()),
+            tags: typeof tags === "string" ? JSON.parse(tags) : [],
+          });
+          return Response.json({
+            success: true,
+            fileId,
+            status: "uploading",
+            message: "File upload initiated",
+          });
+        }
+        const attachmentsMatch = path.match(/^\/fragments\/([^/]+)\/files$/);
+        if (attachmentsMatch && request.method === "GET") {
+          const fragmentId = decodeURIComponent(attachmentsMatch[1]);
+          this.calls.push({ method: "GET", path: url.pathname });
+          const attachments = Array.from(this.files.values())
+            .filter((file) => file.fragmentId === fragmentId)
+            .map((file) => ({
+              id: randomUUID(),
+              fileId: file.fileId,
+              fragmentId,
+              status: "active",
+              displayOrder: 0,
+              file: {
+                id: file.fileId,
+                name: file.name,
+                mimeType: file.mimeType,
+                sizeBytes: file.bytes.byteLength,
+                tags: file.tags,
+              },
+            }));
+          return Response.json({ success: true, attachments });
+        }
+        const downloadMatch = path.match(/^\/files\/([^/]+)\/download$/);
+        if (downloadMatch && request.method === "GET") {
+          const file = this.files.get(decodeURIComponent(downloadMatch[1]));
+          this.calls.push({ method: "GET", path: url.pathname });
+          if (!file)
+            return Response.json({ error: "not_found" }, { status: 404 });
+          return new Response(file.bytes, {
+            headers: { "content-type": file.mimeType },
+          });
         }
         return Response.json({ error: "not_found" }, { status: 404 });
       },

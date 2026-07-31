@@ -6,6 +6,12 @@ import type { ReportsClient } from "./client";
 import { reportSubmissionSchema, truncateSubmission } from "./contracts";
 import { buildReportFragment } from "./fragment";
 
+/** Usable fragment id. */
+const FRAGMENT_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Usable file id — a nanoid, so the URL-safe alphabet plus a length bound. */
+const FILE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 export type ReportsRouterDeps = {
   /** null = feature not configured (no REPORT_FRAGMENT_TYPE_ID) — routes
    * answer 503 instead of the service failing boot. */
@@ -65,7 +71,29 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
       });
       try {
         const { fragmentId } = await deps.reports.create(draft);
-        return c.json({ reportId, fragmentId, status: "reported" }, 201);
+        // The image is a bonus on top of a report that is already written and
+        // safe. If the upload fails the report stands, minus the picture —
+        // the same stance the FE takes when the capture itself fails.
+        let screenshot: "attached" | "failed" | undefined;
+        if (submission.screenshot) {
+          try {
+            await deps.reports.attachScreenshot(
+              fragmentId,
+              submission.screenshot,
+            );
+            screenshot = "attached";
+          } catch (error) {
+            console.error("[Reports] screenshot upload failed", {
+              fragmentId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+            screenshot = "failed";
+          }
+        }
+        return c.json(
+          { reportId, fragmentId, status: "reported", screenshot },
+          201,
+        );
       } catch (error) {
         // Log the upstream detail server-side only — Usable error bodies can
         // echo workspace/fragment-type internals (same posture as the GETs).
@@ -93,6 +121,39 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
     }
   });
 
+  // Screenshot bytes, proxied so the admin browser never holds a Usable
+  // token. Registered before `/:id` because Hono matches in insertion order.
+  app.get("/:id/attachments/:fileId", requireAdmin, async (c) => {
+    if (!deps.reports) {
+      return c.json({ error: "reports_not_configured" }, 503);
+    }
+    const id = c.req.param("id");
+    const fileId = c.req.param("fileId");
+    // Usable file ids are nanoids; same up-front charset discipline as the
+    // fragment id, so neither reaches the upstream URL unvalidated.
+    if (!FRAGMENT_ID.test(id) || !FILE_ID.test(fileId)) {
+      return c.json({ error: "not_found" }, 404);
+    }
+    try {
+      const file = await deps.reports.getAttachment(id, fileId);
+      if (!file) return c.json({ error: "not_found" }, 404);
+      return new Response(file.body, {
+        headers: {
+          "content-type": file.mimeType,
+          // Never render a stored file as a document in the admin origin.
+          "content-security-policy": "default-src 'none'; sandbox",
+          "x-content-type-options": "nosniff",
+          "cache-control": "private, max-age=300",
+        },
+      });
+    } catch (error) {
+      console.error("[Reports] attachment fetch failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return c.json({ error: "reports_unavailable" }, 503);
+    }
+  });
+
   app.get("/:id", requireAdmin, async (c) => {
     if (!deps.reports) {
       return c.json({ error: "reports_not_configured" }, 503);
@@ -100,11 +161,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
     // Fragment ids are UUIDs; rejecting anything else up front keeps
     // arbitrary strings out of the upstream Usable URL entirely.
     const id = c.req.param("id");
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-        id,
-      )
-    ) {
+    if (!FRAGMENT_ID.test(id)) {
       return c.json({ error: "not_found" }, 404);
     }
     try {

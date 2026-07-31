@@ -108,6 +108,42 @@ export const reportMapStateSchema = z
   })
   .passthrough();
 
+/**
+ * Base64 ceiling for the screenshot: ~2.25 MB of image, which is well above
+ * the FE's own 1.5 MB cap and still leaves room under the route's 5 MB body
+ * limit for a maximal capture alongside it.
+ */
+export const MAX_SCREENSHOT_BASE64_CHARS = 3_000_000;
+
+/**
+ * Map screenshot from the FE's consent dialog — the one part of a report that
+ * shows what the user actually saw (a clipped popup, a layer that is on in
+ * Redux but not drawn) rather than what the state says they should have.
+ *
+ * Carried as base64 with no `data:` prefix, so getting at the bytes never
+ * involves parsing (or trusting) a data URL. It is stored as a fragment FILE
+ * attachment, never inlined into the fragment body: a report is already
+ * 10–125 KB of markdown and a base64 JPEG in the body would wreck it and
+ * every listing that renders it.
+ */
+export const reportScreenshotSchema = z.object({
+  // Allowlist, not a free string: this value names the Blob type on upload.
+  // Usable sniffs the actual bytes anyway and rejects a mismatch.
+  mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  width: z.number().int().positive().max(20_000),
+  height: z.number().int().positive().max(20_000),
+  data: z
+    .string()
+    .min(1)
+    .max(MAX_SCREENSHOT_BASE64_CHARS)
+    // Standard base64, as `canvas.toDataURL` emits it — no whitespace, no
+    // URL-safe alphabet. Rejecting anything else here means the decode below
+    // cannot be fed a hostile string.
+    .regex(/^[A-Za-z0-9+/]+={0,2}$/, "data must be standard base64"),
+});
+
+export type ReportScreenshot = z.infer<typeof reportScreenshotSchema>;
+
 export const reportSubmissionSchema = z.object({
   // Conversation ids are uuid-ish; the charset constraint keeps raw ids safe
   // to interpolate into fragment tags and titles.
@@ -144,6 +180,10 @@ export const reportSubmissionSchema = z.object({
   // arriving in an unexpected shape — the likelier drift, and the exact bug
   // that modelled `mapAreas` as a flat list during development.)
   mapState: reportMapStateSchema.nullish().catch(undefined),
+  // Fails closed for the same reason as `mapState`, and more so: an oversized
+  // or malformed image must cost the picture, never the chat log and tool
+  // calls that came with it.
+  screenshot: reportScreenshotSchema.nullish().catch(undefined),
   capturedAt: z.string().max(40).optional(),
   // Clips the FE already applied at capture time (ring-buffer clipping) —
   // folded into the fragment's truncated/clippedValues accounting so the

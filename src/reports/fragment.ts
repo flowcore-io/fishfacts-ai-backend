@@ -82,6 +82,13 @@ function frontmatterLines(
   if (submission.route) {
     lines.push(`route: ${yamlString(submission.route)}`);
   }
+  // What the user consented to send, which is knowable here. Whether the
+  // image actually landed is NOT: the upload happens after this fragment is
+  // created, so the attachment list on the fragment is the only ground truth
+  // for that (see the Screenshot section below).
+  if (submission.screenshot) {
+    lines.push("screenshotSubmitted: true");
+  }
   lines.push(
     `capturedMessageCount: ${submission.messages.length}`,
     `capturedToolCallCount: ${submission.toolCalls.length}`,
@@ -320,6 +327,25 @@ function mapStateSection(
   ];
 }
 
+/**
+ * Pointer, not payload. The image is a file attachment on this fragment —
+ * base64 in the body would add megabytes to every read of a report that is
+ * already 10–125 KB of markdown.
+ */
+function screenshotSection(submission: ReportSubmission): string[] {
+  const shot = submission.screenshot;
+  if (!shot) {
+    return ["_No screenshot — not captured, or the reporter opted out._"];
+  }
+  return [
+    `A ${shot.width}×${shot.height} ${shot.mimeType} screenshot of the map was sent with this report and is stored as a **file attachment** on this fragment.`,
+    "",
+    "The chat panel is not in the picture: it renders in a cross-origin iframe, which the capture cannot read. The conversation is in the chat log below.",
+    "",
+    "_If this fragment has no attachment, the upload to Usable failed after the report was written — the report itself is unaffected._",
+  ];
+}
+
 function networkSection(submission: ReportSubmission): string[] {
   if (submission.networkRequests.length === 0) {
     return ["_No network requests captured._"];
@@ -407,6 +433,9 @@ export function buildReportFragment(
     "",
     // Before the chat log: it is the cheapest context for "what was the user
     // looking at?", and the chat log below can run to thousands of lines.
+    "## Screenshot",
+    ...screenshotSection(submission),
+    "",
     "## Map state",
     ...mapState,
     "",

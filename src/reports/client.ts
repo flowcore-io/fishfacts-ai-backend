@@ -1,5 +1,6 @@
 import type { Env } from "@/env";
 import type { UsableApiClient, UsableFragment } from "@/usable/client";
+import type { ReportScreenshot } from "./contracts";
 import type { ReportFragmentDraft } from "./fragment";
 
 export type ReportListItem = {
@@ -23,14 +24,41 @@ export type ReportListItem = {
   truncated?: boolean;
 };
 
+/** A file attached to a report — in practice the map screenshot. */
+export type ReportAttachment = {
+  fileId: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+};
+
 export type ReportDetail = ReportListItem & {
   content: string;
+  /** Ground truth for "did the screenshot land", read off the fragment. */
+  attachments: ReportAttachment[];
 };
 
 export type ReportsClient = {
   create(draft: ReportFragmentDraft): Promise<{ fragmentId: string }>;
+  /** Upload the map screenshot and attach it to the report fragment. */
+  attachScreenshot(
+    fragmentId: string,
+    screenshot: ReportScreenshot,
+  ): Promise<{ fileId: string }>;
   list(input?: { status?: string }): Promise<ReportListItem[]>;
   get(id: string): Promise<ReportDetail | null>;
+  /**
+   * Stream one attachment's bytes. Scoped to a report on purpose: the id pair
+   * must belong together, so this can never become a proxy for arbitrary
+   * workspace files.
+   */
+  getAttachment(
+    reportId: string,
+    fileId: string,
+  ): Promise<{
+    body: ReadableStream<Uint8Array> | null;
+    mimeType: string;
+  } | null>;
 };
 
 export type ReportsConfig = {
@@ -84,6 +112,42 @@ function toListItem(fragment: UsableFragment): ReportListItem {
   };
 }
 
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
+
+function extensionFor(mimeType: string): string {
+  return IMAGE_EXTENSIONS[mimeType] ?? "bin";
+}
+
+/**
+ * Only ever an image type. This value becomes the `content-type` the admin
+ * browser renders the attachment with, so echoing an arbitrary upstream
+ * header here would let a stored file choose how it is interpreted;
+ * `application/octet-stream` downloads instead of executing.
+ */
+function imageMimeOrDefault(mimeType: string | null | undefined): string {
+  return mimeType && mimeType in IMAGE_EXTENSIONS
+    ? mimeType
+    : "application/octet-stream";
+}
+
+/** Attachments carrying a usable file id, in the order Usable returns them. */
+async function listReportAttachments(
+  usable: UsableApiClient,
+  fragmentId: string,
+): Promise<ReportAttachment[]> {
+  const rows = await usable.listFragmentAttachments(fragmentId);
+  return rows.map((row) => ({
+    fileId: row.fileId,
+    fileName: row.fileName,
+    mimeType: row.mimeType,
+    sizeBytes: row.sizeBytes,
+  }));
+}
+
 export function makeReportsClient(
   usable: UsableApiClient,
   config: ReportsConfig,
@@ -103,6 +167,21 @@ export function makeReportsClient(
         throw new Error("Usable createFragment returned no fragment id");
       }
       return { fragmentId: created.id };
+    },
+
+    async attachScreenshot(fragmentId, screenshot) {
+      // Upload and attach in one call — `fragmentId` on the upload is
+      // Usable's own attach-on-upload path, so there is no window where an
+      // orphan file exists without the report pointing at it.
+      const { fileId } = await usable.uploadFile({
+        workspaceId: config.workspaceId,
+        fragmentId,
+        fileName: `report-${fragmentId}-map.${extensionFor(screenshot.mimeType)}`,
+        mimeType: screenshot.mimeType,
+        bytes: Buffer.from(screenshot.data, "base64"),
+        tags: ["report", "screenshot", "map"],
+      });
+      return { fileId };
     },
 
     async list(input) {
@@ -130,7 +209,50 @@ export function makeReportsClient(
       if (fragment.fragmentTypeId !== config.fragmentTypeId) {
         return null;
       }
-      return { ...toListItem(fragment), content: fragment.content ?? "" };
+      // Attachments are a separate read (they are not part of the fragment
+      // payload) and are decorative: a report must still open if that call
+      // fails.
+      let attachments: ReportAttachment[] = [];
+      try {
+        attachments = await listReportAttachments(usable, id);
+      } catch (error) {
+        console.error("[Reports] attachment list failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return {
+        ...toListItem(fragment),
+        content: fragment.content ?? "",
+        attachments,
+      };
+    },
+
+    async getAttachment(reportId, fileId) {
+      // Confirm the fragment is a Report AND that this file hangs off it,
+      // before any byte is fetched. Without both checks an admin could pull
+      // any file in the support workspace through this route.
+      const fragment = await usable.getFragmentById(
+        reportId,
+        config.workspaceId,
+      );
+      if (!fragment || fragment.fragmentTypeId !== config.fragmentTypeId) {
+        return null;
+      }
+      const attachments = await listReportAttachments(usable, reportId);
+      const match = attachments.find(
+        (attachment) => attachment.fileId === fileId,
+      );
+      if (!match) return null;
+      const resp = await usable.downloadFile(fileId);
+      if (!resp.ok) return null;
+      return {
+        body: resp.body,
+        // Trust the stored metadata over the upstream header, and fall back
+        // to a type a browser will not execute.
+        mimeType: imageMimeOrDefault(
+          match.mimeType ?? resp.headers.get("content-type"),
+        ),
+      };
     },
   };
 }

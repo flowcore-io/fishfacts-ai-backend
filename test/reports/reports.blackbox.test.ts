@@ -110,6 +110,7 @@ describe("Reports black-box", () => {
 
   beforeEach(() => {
     usable.fragments.clear();
+    usable.files.clear();
     usable.calls.length = 0;
   });
 
@@ -555,6 +556,163 @@ describe("Reports black-box", () => {
     expect(response.status).toBe(413);
     expect(await response.json()).toEqual({ error: "payload_too_large" });
     expect(usable.fragments.size).toBe(0);
+  });
+
+  // A 1×1 JPEG, base64 as `canvas.toDataURL` emits it (no `data:` prefix).
+  const JPEG_BASE64 =
+    "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
+  const SCREENSHOT = {
+    mimeType: "image/jpeg",
+    width: 1200,
+    height: 800,
+    data: JPEG_BASE64,
+  };
+
+  test("a submitted screenshot is attached as a file, never inlined (AC1)", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      screenshot: SCREENSHOT,
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.screenshot).toBe("attached");
+
+    const stored = Array.from(usable.files.values());
+    expect(stored).toHaveLength(1);
+    // Attached to this report, and byte-identical to what was submitted.
+    expect(stored[0]?.fragmentId).toBe(body.fragmentId);
+    expect(stored[0]?.mimeType).toBe("image/jpeg");
+    expect(Buffer.from(stored[0]?.bytes ?? []).toString("base64")).toBe(
+      JPEG_BASE64,
+    );
+
+    // The body points at the attachment; the base64 never enters it. That is
+    // the whole reason for the file API — a report body is markdown a human
+    // and an agent read, and megabytes of base64 would wreck both.
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("## Screenshot");
+    expect(created?.content).toContain("1200×800 image/jpeg");
+    expect(created?.content).toContain("screenshotSubmitted: true");
+    expect(created?.content).not.toContain(JPEG_BASE64.slice(0, 40));
+  });
+
+  test("a report without a screenshot says so and uploads nothing", async () => {
+    const body = await (await postReport(USER_TOKEN, VALID_REPORT)).json();
+    expect(body.screenshot).toBeUndefined();
+    expect(usable.files.size).toBe(0);
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("_No screenshot");
+    expect(created?.content).not.toContain("screenshotSubmitted");
+  });
+
+  test("a failed screenshot upload still writes the report", async () => {
+    usable.failUploads = true;
+    try {
+      const response = await postReport(USER_TOKEN, {
+        ...VALID_REPORT,
+        screenshot: SCREENSHOT,
+      });
+      // The picture is a bonus on top of a report that is already stored.
+      expect(response.status).toBe(201);
+      const body = await response.json();
+      expect(body.screenshot).toBe("failed");
+      const created = usable.fragments.get(body.fragmentId);
+      expect(created?.content).toContain("show me herring catches");
+      expect(usable.files.size).toBe(0);
+    } finally {
+      usable.failUploads = false;
+    }
+  });
+
+  test("a malformed or oversized screenshot costs the picture, not the report", async () => {
+    for (const screenshot of [
+      // Not base64 — the charset guard.
+      { ...SCREENSHOT, data: "<script>alert(1)</script>" },
+      // Past the base64 ceiling.
+      { ...SCREENSHOT, data: "A".repeat(3_000_004) },
+      // A type we will not store.
+      { ...SCREENSHOT, mimeType: "image/svg+xml" },
+      // Shape drift in a known field.
+      { ...SCREENSHOT, width: "wide" },
+    ]) {
+      usable.fragments.clear();
+      usable.files.clear();
+      const response = await postReport(USER_TOKEN, {
+        ...VALID_REPORT,
+        screenshot,
+      });
+      expect(response.status).toBe(201);
+      const body = await response.json();
+      expect(usable.files.size).toBe(0);
+      // Everything else in the capture is untouched.
+      const created = usable.fragments.get(body.fragmentId);
+      expect(created?.content).toContain("show me herring catches");
+      expect(created?.content).toContain("draw_catch_bubbles");
+    }
+  });
+
+  test("GET /api/reports/:id lists the attachment and streams its bytes", async () => {
+    const submitted = await (
+      await postReport(USER_TOKEN, { ...VALID_REPORT, screenshot: SCREENSHOT })
+    ).json();
+
+    const detail = await (
+      await app.fetch(`/api/reports/${submitted.fragmentId}`, {
+        headers: { "x-auth-token": ADMIN_TOKEN },
+      })
+    ).json();
+    expect(detail.attachments).toHaveLength(1);
+    const [attachment] = detail.attachments;
+    expect(attachment.mimeType).toBe("image/jpeg");
+    expect(attachment.sizeBytes).toBeGreaterThan(0);
+
+    const image = await app.fetch(
+      `/api/reports/${submitted.fragmentId}/attachments/${attachment.fileId}`,
+      { headers: { "x-auth-token": ADMIN_TOKEN } },
+    );
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/jpeg");
+    expect(image.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(Buffer.from(await image.arrayBuffer()).toString("base64")).toBe(
+      JPEG_BASE64,
+    );
+  });
+
+  test("the attachment route is admin-only and scoped to its own report", async () => {
+    const mine = await (
+      await postReport(USER_TOKEN, { ...VALID_REPORT, screenshot: SCREENSHOT })
+    ).json();
+    const other = await (
+      await postReport(USER_TOKEN, {
+        ...VALID_REPORT,
+        sessionId: "conv_other",
+        screenshot: SCREENSHOT,
+      })
+    ).json();
+    const otherFileId = Array.from(usable.files.values()).find(
+      (file) => file.fragmentId === other.fragmentId,
+    )?.fileId;
+    expect(otherFileId).toBeDefined();
+
+    const asUser = await app.fetch(
+      `/api/reports/${mine.fragmentId}/attachments/${otherFileId}`,
+      { headers: { "x-auth-token": USER_TOKEN } },
+    );
+    expect(asUser.status).toBe(403);
+
+    // Admin, valid ids, but the file belongs to a different report — this
+    // route must never become a general file proxy over the workspace.
+    const crossReport = await app.fetch(
+      `/api/reports/${mine.fragmentId}/attachments/${otherFileId}`,
+      { headers: { "x-auth-token": ADMIN_TOKEN } },
+    );
+    expect(crossReport.status).toBe(404);
+
+    const badFileId = await app.fetch(
+      `/api/reports/${mine.fragmentId}/attachments/..%2F..%2Fsecret`,
+      { headers: { "x-auth-token": ADMIN_TOKEN } },
+    );
+    expect(badFileId.status).toBe(404);
   });
 
   test("GET /api/reports as non-admin is 403 (proxy is admin-only)", async () => {
