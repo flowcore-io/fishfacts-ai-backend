@@ -57,6 +57,21 @@ export function createReportsRouter(deps: ReportsRouterDeps): Hono {
           400,
         );
       }
+      // The screenshot's `.catch(undefined)` turns a malformed or oversized
+      // image into no image, which is the right trade for the report but is
+      // otherwise silent: the fragment ends up saying "no screenshot" for a
+      // user who ticked the box. Say it here, where it can be diagnosed.
+      if (
+        typeof body === "object" &&
+        body !== null &&
+        "screenshot" in body &&
+        (body as { screenshot?: unknown }).screenshot &&
+        !parsed.data.screenshot
+      ) {
+        console.warn("[Reports] screenshot rejected by schema, dropping it", {
+          sessionId: parsed.data.sessionId,
+        });
+      }
       // Oversized captures are truncated, never rejected (PRD §6.3).
       const { submission, truncation } = truncateSubmission(parsed.data);
       // Browser-side ring-buffer clips count toward the same accounting.

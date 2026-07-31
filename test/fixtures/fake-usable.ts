@@ -173,7 +173,7 @@ export class FakeUsableServer {
           this.calls.push({ method: "GET", path: url.pathname });
           if (!file)
             return Response.json({ error: "not_found" }, { status: 404 });
-          return new Response(file.bytes, {
+          return new Response(new Uint8Array(file.bytes), {
             headers: { "content-type": file.mimeType },
           });
         }
