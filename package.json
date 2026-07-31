@@ -19,6 +19,7 @@
     "ch:migrate": "bun scripts/ch-migrate.ts",
     "jmelding:backfill-validity": "bun scripts/jmelding-backfill-validity.ts",
     "jmelding:reproject-geometry": "bun scripts/jmelding-reproject-geometry.ts",
+    "jmelding:sync-fragments": "bun scripts/jmelding-sync-fragments.ts",
     "ais:backfill": "bun scripts/ais-backfill.ts",
     "ais:backfill:status": "bun scripts/ais-backfill-status.ts",
     "ais:stream": "bun scripts/ais-stream.ts",

@@ -3,6 +3,9 @@ import type { JMeldingAnnouncementDiscovered } from "@/events/contracts";
 import type { UsableApiClient } from "@/usable/client";
 
 const MAX_CONTENT_CHARS = 60000;
+const BODY_HEADING = "## Announcement";
+const TRUNCATION_NOTICE =
+  "_This announcement was truncated to fit storage limits._";
 
 function yamlEscape(value?: string) {
   return (value ?? "").replace(/"/g, '\\"');
@@ -137,14 +140,32 @@ function buildMarkdown(input: {
     `- **Source URL:** ${item.url}`,
     `- **Last checked:** ${item.checkedAt}`,
     "",
-    "## Announcement",
+    BODY_HEADING,
     "",
     body,
     "",
   ];
   const content = sanitizeText(lines.join("\n"));
   if (content.length <= MAX_CONTENT_CHARS) return content;
-  return `${content.slice(0, MAX_CONTENT_CHARS - 80).trimEnd()}\n\n_This announcement was truncated to fit storage limits._\n`;
+  return `${content.slice(0, MAX_CONTENT_CHARS - 80).trimEnd()}\n\n${TRUNCATION_NOTICE}\n`;
+}
+
+/**
+ * The inverse of the body section above: recover the announcement text from a
+ * fragment this projector wrote, so a fragment can be rebuilt from a corrected
+ * record without re-fetching the source page (see
+ * `scripts/jmelding-sync-fragments.ts`). The truncation notice is dropped — it
+ * belongs to the rendering, not to the announcement, and would otherwise stack
+ * up one copy per rebuild.
+ */
+export function announcementBodyFromContent(content: string | undefined) {
+  if (!content) return "";
+  const marker = content.indexOf(`\n${BODY_HEADING}`);
+  if (marker === -1) return "";
+  return content
+    .slice(marker + BODY_HEADING.length + 1)
+    .replace(TRUNCATION_NOTICE, "")
+    .trim();
 }
 
 export class JMeldingFragmentProjector {
