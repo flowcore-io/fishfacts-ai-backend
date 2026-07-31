@@ -25,7 +25,9 @@
  *
  * Only fragments whose status or window actually differ are written: an update
  * re-embeds the fragment, so touching all of them to change none would be an
- * expensive no-op.
+ * expensive no-op. That comparison, and the record each rebuild is fed, live in
+ * `src/jmelding/fragment-sync.ts` so they are typechecked and unit-tested —
+ * `scripts/` is neither. What is left here is the wiring: env, query, loop.
  *
  *   bun scripts/jmelding-sync-fragments.ts                  # dry run (differences only)
  *   bun scripts/jmelding-sync-fragments.ts --region NO      # scope by jurisdiction
@@ -37,12 +39,14 @@
  */
 import { createDb } from "../src/db/client";
 import { loadEnv } from "../src/env";
-import type { JMeldingAnnouncementDiscovered } from "../src/events/contracts";
 import {
-  JMeldingFragmentProjector,
-  announcementBodyFromContent,
-} from "../src/jobs/jmelding-fragments";
-import { UsableApiClient, frontmatterFromContent } from "../src/usable/client";
+  type JMeldingGeoSyncRow,
+  decideFragmentSync,
+  isoInstant,
+  parseLimitFlag,
+} from "../src/jmelding/fragment-sync";
+import { JMeldingFragmentProjector } from "../src/jobs/jmelding-fragments";
+import { UsableApiClient } from "../src/usable/client";
 
 const APPLY = process.argv.includes("--apply");
 const flagValue = (flag: string) => {
@@ -53,63 +57,12 @@ const REGION = flagValue("--region")?.toUpperCase();
 if (REGION && !["NO", "FO", "IS"].includes(REGION)) {
   throw new Error(`--region must be one of NO, FO, IS (got "${REGION}")`);
 }
-const LIMIT = Number(flagValue("--limit") ?? Number.POSITIVE_INFINITY);
+const LIMIT = parseLimitFlag(flagValue("--limit"));
 
 const env = loadEnv();
-const url = process.env.DATABASE_URL ?? env.DATABASE_URL;
 
-type Row = {
-  jm_number: string;
-  fragment_key: string;
-  title: string;
-  status: JMeldingAnnouncementDiscovered["status"];
-  region: "NO" | "FO" | "IS";
-  category: string | null;
-  url: string;
-  signature: string;
-  valid_from: Date | null;
-  valid_to: Date | null;
-};
-
-const iso = (value: Date | null) => value?.toISOString();
-
-/**
- * The row, back in the shape the fragment projector consumes: authoritative
- * fields from the database, everything the database does not keep (body,
- * published date, content hash) carried across from the fragment as it stands.
- */
-function toAnnouncement(
-  row: Row,
-  frontmatter: Record<string, unknown>,
-  body: string,
-): JMeldingAnnouncementDiscovered {
-  const text = (key: string) => {
-    const value = frontmatter[key];
-    return typeof value === "string" && value.length > 0 ? value : undefined;
-  };
-  return {
-    signature: row.signature,
-    title: row.title,
-    url: row.url,
-    status: row.status,
-    region: row.region,
-    jmNumber: row.jm_number,
-    category: row.category ?? undefined,
-    validFrom: iso(row.valid_from),
-    validTo: iso(row.valid_to),
-    publishedAt: text("published_at"),
-    createdAt: text("announcement_created_at"),
-    contentHash: text("content_hash"),
-    bodyMarkdown: body,
-    checkedAt: new Date().toISOString(),
-  };
-}
-
-const { client } = createDb(url);
-const usable = new UsableApiClient(
-  env.USABLE_API_BASE_URL,
-  env.USABLE_API_TOKEN,
-);
+const { client } = createDb(env.DATABASE_URL);
+const usable = new UsableApiClient(env);
 const projector = new JMeldingFragmentProjector(env, usable);
 
 try {
@@ -119,7 +72,7 @@ try {
     FROM jmelding_geo
     ${REGION ? client`WHERE region = ${REGION}` : client``}
     ORDER BY jm_number DESC
-  `) as unknown as Row[];
+  `) as unknown as JMeldingGeoSyncRow[];
 
   console.log(
     `[SyncFragments] ${rows.length} rows in the read model${REGION ? ` (region ${REGION})` : ""}`,
@@ -127,6 +80,7 @@ try {
 
   let checked = 0;
   let missing = 0;
+  let unrecoverable = 0;
   let synced = 0;
   const samples: string[] = [];
 
@@ -141,27 +95,31 @@ try {
       missing += 1;
       continue;
     }
-    const frontmatter = frontmatterFromContent(fragment.content) ?? {};
-    const differs =
-      frontmatter.status !== row.status ||
-      (frontmatter.valid_from || undefined) !== iso(row.valid_from) ||
-      (frontmatter.valid_to || undefined) !== iso(row.valid_to);
-    if (!differs) continue;
+
+    const decision = decideFragmentSync(row, fragment.content);
+    if (decision.action === "in-sync") continue;
+    // Reported in the dry run too: a fragment that cannot be rebuilt without
+    // losing its announcement is exactly what you want to hear about before
+    // deciding to write anything.
+    if (decision.action === "unrecoverable") {
+      unrecoverable += 1;
+      console.warn(
+        `[SyncFragments] ${row.jm_number}: ${decision.reason} (${row.fragment_key}) — skipped`,
+      );
+      continue;
+    }
 
     synced += 1;
     if (samples.length < 5) {
       samples.push(
-        `  ${row.jm_number}: status ${frontmatter.status} → ${row.status}, valid_to ${frontmatter.valid_to || "—"} → ${iso(row.valid_to) ?? "—"}`,
+        `  ${row.jm_number}: status ${decision.claims.status ?? "—"} → ${row.status}, valid_to ${decision.claims.validTo ?? "—"} → ${isoInstant(row.valid_to) ?? "—"}`,
       );
     }
-    if (APPLY) {
-      const body = announcementBodyFromContent(fragment.content);
-      await projector.project(toAnnouncement(row, frontmatter, body));
-    }
+    if (APPLY) await projector.project(decision.announcement);
   }
 
   console.log(
-    `[SyncFragments] checked ${checked}, ${missing} with no fragment, ${synced} ${APPLY ? "rewritten" : "out of sync"}`,
+    `[SyncFragments] checked ${checked}, ${missing} with no fragment, ${unrecoverable} unrecoverable, ${synced} ${APPLY ? "rewritten" : "out of sync"}`,
   );
   for (const sample of samples) console.log(sample);
   if (!APPLY) {
