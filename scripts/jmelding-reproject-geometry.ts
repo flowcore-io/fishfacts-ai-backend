@@ -17,7 +17,7 @@
  *   bun scripts/jmelding-reproject-geometry.ts --apply  # write
  *   bun scripts/jmelding-reproject-geometry.ts --region IS --apply
  */
-import { createDb } from "../src/db/client";
+import { createDb, timestampToIso } from "../src/db/client";
 import type { JMeldingAnnouncementDiscovered } from "../src/events/contracts";
 import {
   JMeldingGeoProjector,
@@ -48,8 +48,9 @@ type Row = {
   category: string | null;
   url: string;
   signature: string;
-  valid_from: Date | null;
-  valid_to: Date | null;
+  // Date down some driver paths, a string down others — see `timestampToIso`.
+  valid_from: Date | string | null;
+  valid_to: Date | string | null;
   areas: Array<{
     name: string | null;
     points: Array<{ lat: number; lon: number }>;
@@ -84,8 +85,8 @@ function toAnnouncement(row: Row): JMeldingAnnouncementDiscovered {
     region: row.region,
     jmNumber: row.jm_number,
     category: row.category ?? undefined,
-    validFrom: row.valid_from?.toISOString(),
-    validTo: row.valid_to?.toISOString(),
+    validFrom: timestampToIso(row.valid_from),
+    validTo: timestampToIso(row.valid_to),
     areas: row.areas,
     // Only read when `areas` is empty, which is never true for the rows this
     // script selects.

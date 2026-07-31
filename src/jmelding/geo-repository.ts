@@ -1,4 +1,4 @@
-import type { Database } from "@/db/client";
+import { type Database, timestampToIso } from "@/db/client";
 import { type SQL, sql } from "drizzle-orm";
 
 export type GeoBbox = [number, number, number, number];
@@ -149,17 +149,9 @@ function decodeCursor(cursor: string | null | undefined): string | null {
   }
 }
 
-/**
- * Timestamps come back from `db.execute` either as a Date or as Postgres' own
- * rendering ("2025-06-19 00:00:00+00") depending on the driver path. Callers
- * get ISO 8601 either way; an unparseable value is passed through rather than
- * dropped.
- */
+/** Row timestamps as ISO, `null` where the column is empty. */
 function toIso(value: Date | string | null | undefined): string | null {
-  if (value === null || value === undefined) return null;
-  if (value instanceof Date) return value.toISOString();
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
+  return timestampToIso(value) ?? null;
 }
 
 function toListRow(row: ListDbRow): GeoListRow {

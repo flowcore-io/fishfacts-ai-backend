@@ -26,6 +26,7 @@
  * later re-scrape writing the raw string back still compares equal, so the
  * corpus holding both formats causes no churn.
  */
+import { timestampToIso } from "@/db/client";
 import type { JMeldingAnnouncementDiscovered } from "@/events/contracts";
 import { announcementBodyFromContent } from "@/jobs/jmelding-fragments";
 import { frontmatterFromContent } from "@/usable/client";
@@ -41,8 +42,9 @@ export type JMeldingGeoSyncRow = {
   category: string | null;
   url: string;
   signature: string;
-  valid_from: Date | null;
-  valid_to: Date | null;
+  // The driver hands these back as a Date or as a string; see `timestampToIso`.
+  valid_from: Date | string | null;
+  valid_to: Date | string | null;
 };
 
 /** The window and status a fragment currently claims, verbatim, for reporting. */
@@ -66,8 +68,14 @@ export type FragmentSyncDecision =
       claims: FragmentClaims;
     };
 
-export const isoInstant = (value: Date | null | undefined) =>
-  value?.toISOString();
+/**
+ * A row timestamp as an instant. The driver returns these as a `Date` or as
+ * Postgres' own rendering depending on the path, so it goes through the shared
+ * normaliser — reading `.toISOString()` off one directly is what crashed the
+ * first production run of this script.
+ */
+export const isoInstant = (value: Date | string | null | undefined) =>
+  timestampToIso(value);
 
 function frontmatterText(
   frontmatter: Record<string, unknown>,

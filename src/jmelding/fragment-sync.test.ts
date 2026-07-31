@@ -88,9 +88,56 @@ function geoRow(
   };
 }
 
+/**
+ * The same row as the driver actually delivers it. `postgres` returns a
+ * `timestamptz` as Postgres' own rendering on this path, not as a `Date` —
+ * verified against production. Building fixtures only from `new Date(...)` is
+ * what let `value?.toISOString()` ship and crash on its first real run.
+ */
+function geoRowAsDriverReturnsIt(
+  overrides: Partial<JMeldingGeoSyncRow> = {},
+): JMeldingGeoSyncRow {
+  return geoRow({
+    valid_from: "2023-07-07 00:00:00+00",
+    valid_to: "2023-07-31 23:59:59.999+00",
+    ...overrides,
+  });
+}
+
 const frontmatterOf = (
   fields: Partial<Record<string, string>>,
 ): Record<string, unknown> => fields;
+
+describe("string-shaped timestamps from the driver", () => {
+  test("a row whose columns arrive as strings compares like one with Dates", () => {
+    const frontmatter = frontmatterOf({
+      status: "archived",
+      valid_from: "07.07.2023",
+      valid_to: "31.07.2023",
+    });
+    expect(fragmentDiffers(frontmatter, geoRowAsDriverReturnsIt())).toBe(false);
+    expect(fragmentDiffers(frontmatter, geoRow())).toBe(false);
+  });
+
+  test("building the announcement does not throw on a string column", () => {
+    // The exact production failure: `value?.toISOString is not a function`.
+    const announcement = announcementFromRow(
+      geoRowAsDriverReturnsIt(),
+      frontmatterOf({}),
+      BODY,
+    );
+    expect(announcement.validFrom).toBe("2023-07-07T00:00:00.000Z");
+    expect(announcement.validTo).toBe("2023-07-31T23:59:59.999Z");
+  });
+
+  test("decides the same way regardless of which shape arrives", () => {
+    const content = fragmentContent({ status: "current" });
+    const fromString = decideFragmentSync(geoRowAsDriverReturnsIt(), content);
+    const fromDate = decideFragmentSync(geoRow(), content);
+    expect(fromString.action).toBe("rewrite");
+    expect(fromString).toEqual(fromDate);
+  });
+});
 
 describe("fragmentDiffers", () => {
   test("a raw day-first window matches the instants derived from it", () => {
