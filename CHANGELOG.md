@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.28.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.27.0...v1.28.0) (2026-07-31)
+
+
+### Features
+
+* **jmeldinger:** sync Usable fragments from the repaired read model ([50b430b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/50b430b1b195ba56f8e95611cbcfb6400b519c2e))
+* **jmeldinger:** sync Usable fragments from the repaired read model ([e7c8ec2](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e7c8ec24a6a8167e22a7b345526846b70b969777))
+
+
+### Bug Fixes
+
+* **jmeldinger:** make the fragment sync runnable, correct, and testable ([23497ad](https://github.com/flowcore-io/fishfacts-ai-backend/commit/23497ad837f4eb88d5d71034e032ab148c424699))
+* **jmeldinger:** say when a --limit dry run is not a corpus-wide count ([ee76cc5](https://github.com/flowcore-io/fishfacts-ai-backend/commit/ee76cc53248cb62da97f70d59ac899c7aadfd3ac))
+
 ## [1.27.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.26.1...v1.27.0) (2026-07-31)
 
 
