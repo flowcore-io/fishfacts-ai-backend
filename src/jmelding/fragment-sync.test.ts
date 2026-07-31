@@ -132,8 +132,17 @@ describe("string-shaped timestamps from the driver", () => {
 
   test("decides the same way regardless of which shape arrives", () => {
     const content = fragmentContent({ status: "current" });
-    const fromString = decideFragmentSync(geoRowAsDriverReturnsIt(), content);
-    const fromDate = decideFragmentSync(geoRow(), content);
+    // `now` is passed explicitly to both: each call would otherwise default to
+    // its own `new Date()`, and the comparison would only hold because this
+    // fixture happens to carry `last_checked_at` so the clock is never
+    // consulted. Drop that field and the test flakes on a millisecond boundary.
+    const now = new Date("2024-01-01T00:00:00.000Z");
+    const fromString = decideFragmentSync(
+      geoRowAsDriverReturnsIt(),
+      content,
+      now,
+    );
+    const fromDate = decideFragmentSync(geoRow(), content, now);
     expect(fromString.action).toBe("rewrite");
     expect(fromString).toEqual(fromDate);
   });

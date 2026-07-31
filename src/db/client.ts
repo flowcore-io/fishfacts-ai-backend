@@ -25,11 +25,19 @@ export function createDb(connectionString: string) {
  * An unparseable value is passed through unchanged rather than dropped: losing
  * a date silently is worse than surfacing one we cannot interpret.
  */
+export function timestampToIso(value: Date | string): string;
+export function timestampToIso(
+  value: Date | string | null | undefined,
+): string | undefined;
 export function timestampToIso(
   value: Date | string | null | undefined,
 ): string | undefined {
   if (value === null || value === undefined) return undefined;
   if (value instanceof Date) return value.toISOString();
   const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
+  if (!Number.isNaN(parsed)) return new Date(parsed).toISOString();
+  // Unreachable for a `timestamptz`, which Postgres renders itself — so if it
+  // ever fires, something upstream is not the column we think it is.
+  console.warn("[Db] uninterpretable timestamp passed through", { value });
+  return value;
 }

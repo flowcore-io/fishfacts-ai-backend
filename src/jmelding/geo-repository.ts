@@ -185,14 +185,12 @@ function toFullRecord(row: FullDbRow): GeoFullRecord {
     signature: row.signature,
     areas: row.areas,
     geojson: row.geojson ?? row.geom_geojson ?? null,
-    createdAt:
-      typeof row.created_at === "string"
-        ? row.created_at
-        : row.created_at.toISOString(),
-    updatedAt:
-      typeof row.updated_at === "string"
-        ? row.updated_at
-        : row.updated_at.toISOString(),
+    // NOT NULL in `jmeldingGeo`, so the non-nullable overload applies and
+    // these are `string`. Routed through the shared normaliser like their
+    // neighbours: the inline version returned Postgres' rendering verbatim, so
+    // one record could carry an ISO `validFrom` beside a non-ISO `createdAt`.
+    createdAt: timestampToIso(row.created_at),
+    updatedAt: timestampToIso(row.updated_at),
   };
 }
 
