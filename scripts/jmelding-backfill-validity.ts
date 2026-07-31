@@ -13,9 +13,20 @@
  * `/api/jmeldinger?region=NO&status=current` was returning.
  *
  * Faroese and Icelandic rows carry no dates in their titles (Vørn states the
- * window in the page prose, Fiskistofa in a WFS attribute), so they are
- * reported as un-derivable here and are repaired by the next collector run —
- * both corpora are small and re-scraped whole.
+ * window in the page prose, Fiskistofa in a WFS attribute) and `jmelding_geo`
+ * keeps no body text to re-derive one from, so this script reports them as
+ * un-derivable and cannot repair them. They need a **forced** re-scrape —
+ * forced, because neither collector revisits what it has already seen:
+ *
+ *   POST /api/jobs/run  { "jobId": "vorn-veidibann",          "args": { "refreshExisting": true } }
+ *   POST /api/jobs/run  { "jobId": "fiskistofa-wfs-closures", "args": { "refreshExisting": true } }
+ *
+ * Vørn skips every URL whose fragment key already exists unless
+ * `refreshExisting` is set. Fiskistofa re-emits its whole result set, but only
+ * for features still present in the `virkar_*` layers — a closure that has
+ * already dropped out of a layer is reached by neither route and keeps
+ * `valid_to = NULL`, which by design keeps it in `?status=current`. Sweep any
+ * of those by hand.
  *
  *   bun scripts/jmelding-backfill-validity.ts          # dry run (counts + sample)
  *   bun scripts/jmelding-backfill-validity.ts --apply  # write

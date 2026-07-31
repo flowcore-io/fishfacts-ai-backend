@@ -30,6 +30,11 @@ const regionFlag = process.argv.indexOf("--region");
 const REGION = (
   regionFlag === -1 ? "FO" : (process.argv[regionFlag + 1] ?? "FO")
 ).toUpperCase();
+if (!["NO", "FO", "IS"].includes(REGION)) {
+  // Catches `--region --apply`, which would otherwise select region "--APPLY"
+  // and report a reassuring "0 rows".
+  throw new Error(`--region must be one of NO, FO, IS (got "${REGION}")`);
+}
 const url =
   process.env.DATABASE_URL ??
   "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend";
@@ -64,6 +69,11 @@ function storedBbox(row: Row) {
     : ([row.min_lon, row.min_lat, row.max_lon, row.max_lat] as const);
 }
 
+/** The areas as the projector would store them today. */
+function normalized(row: Row) {
+  return REGION === "FO" ? normalizeVornAreas(row.areas).areas : row.areas;
+}
+
 /** The row, back in the shape the projector consumes. */
 function toAnnouncement(row: Row): JMeldingAnnouncementDiscovered {
   return {
@@ -95,34 +105,42 @@ try {
       AND areas <> '[]'::jsonb
   `) as unknown as Row[];
 
+  // Compare the points, not only the extent: dropping the closing duplicate —
+  // or a typo'd vertex that sits inside the hull — rewrites the geometry
+  // without moving the bbox, and those rows need reprojecting just as much.
   const changed = rows.filter((row) => {
-    const before = storedBbox(row);
-    const after = bboxFromAreas(
-      REGION === "FO" ? normalizeVornAreas(row.areas).areas : row.areas,
+    const after = normalized(row);
+    return (
+      JSON.stringify(after) !== JSON.stringify(row.areas) ||
+      JSON.stringify(bboxFromAreas(after)) !== JSON.stringify(storedBbox(row))
     );
-    return JSON.stringify(before) !== JSON.stringify(after);
   });
 
   console.log(
-    `[ReprojectGeometry] ${REGION}: ${rows.length} rows with geometry, ${changed.length} whose bbox changes`,
+    `[ReprojectGeometry] ${REGION}: ${rows.length} rows with geometry, ${changed.length} to reproject`,
   );
   for (const row of changed) {
-    const after = bboxFromAreas(
-      REGION === "FO" ? normalizeVornAreas(row.areas).areas : row.areas,
-    );
+    const before = JSON.stringify(storedBbox(row));
+    const after = JSON.stringify(bboxFromAreas(normalized(row)));
     console.log(
-      `  ${row.jm_number}: ${JSON.stringify(storedBbox(row))} → ${JSON.stringify(after)}`,
+      `  ${row.jm_number}: ${
+        before === after
+          ? `bbox unchanged ${after}, points rewritten`
+          : `${before} → ${after}`
+      }`,
     );
   }
 
   if (!APPLY) {
     console.log("[ReprojectGeometry] dry run — pass --apply to write");
   } else {
+    // Exactly the rows the dry run listed — an untouched row should not get a
+    // fresh `updated_at` from a maintenance script.
     const projector = new JMeldingGeoProjector(db);
-    for (const row of rows) {
+    for (const row of changed) {
       await projector.project(toAnnouncement(row), row.fragment_id);
     }
-    console.log(`[ReprojectGeometry] reprojected ${rows.length} rows`);
+    console.log(`[ReprojectGeometry] reprojected ${changed.length} rows`);
   }
 } finally {
   await client.end();

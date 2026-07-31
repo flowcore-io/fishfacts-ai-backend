@@ -231,14 +231,32 @@ function paginate<T extends { jmNumber: string }>(
  * captured, open-ended regulations) is left in: absence of a date is not
  * evidence of expiry. Run `scripts/jmelding-backfill-validity.ts` to fill the
  * dates in for rows already stored.
+ *
+ * `current`, `archived` and `upcoming` are meant to cover the corpus between
+ * them, so no row is unreachable from every filter.
  */
 function statusConditions(status: string): SQL[] {
-  const conditions: SQL[] = [sql`status = ${status}`];
   if (status === "current") {
-    conditions.push(sql`(valid_to IS NULL OR valid_to >= now())`);
-    conditions.push(sql`(valid_from IS NULL OR valid_from <= now())`);
+    return [
+      sql`status = ${status}`,
+      sql`(valid_to IS NULL OR valid_to >= now())`,
+      sql`(valid_from IS NULL OR valid_from <= now())`,
+    ];
   }
-  return conditions;
+  if (status === "archived") {
+    // The complement of in-force, not a second literal match on the word. A
+    // notice that expired while still stored as `current` — every row the
+    // backfill has not reached yet — would otherwise be returned by neither
+    // filter, so "which regulations have expired" would come back short.
+    return [sql`(status = ${status} OR valid_to < now())`];
+  }
+  if (status === "upcoming") {
+    // Adopted, not yet in force ("Kommende"): live and not superseded, so it
+    // is stored as current, and `current` deliberately excludes it. This is
+    // the query that reaches it.
+    return [sql`status = 'current'`, sql`valid_from > now()`];
+  }
+  return [sql`status = ${status}`];
 }
 
 export class JMeldingGeoRepository {

@@ -160,6 +160,20 @@ describe("JMeldingGeoProjector + repository", () => {
     expect(returned).not.toContain("test-70-2099");
     // Adopted but not yet started — also not in force right now.
     expect(returned).not.toContain("test-72-2099");
+
+    // …and neither of them falls off the edge of the world: every row stays
+    // reachable from some filter, or "which regulations have expired" would
+    // silently come back short for exactly the rows this fix is about.
+    const archived = await repository.list({ status: "archived", limit: 100 });
+    expect(archived.rows.map((r) => r.jmNumber)).toContain("test-70-2099");
+
+    const upcomingPage = await repository.list({
+      status: "upcoming",
+      limit: 100,
+    });
+    const upcomingRows = upcomingPage.rows.map((r) => r.jmNumber);
+    expect(upcomingRows).toContain("test-72-2099");
+    expect(upcomingRows).not.toContain("test-71-2099");
   });
 
   test("persists the validity window and exposes it on the row", async () => {

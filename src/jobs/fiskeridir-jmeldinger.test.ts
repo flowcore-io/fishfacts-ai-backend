@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { withExpiry } from "@/jmelding/validity";
+import {
+  parseValidityEnd,
+  parseValidityStart,
+  withExpiry,
+} from "@/jmelding/validity";
 import {
   detectStatus,
   extractDataListValue,
   extractValidity,
+  firstParseable,
 } from "./fiskeridir-jmeldinger";
 
 // The metadata header that opens every J-melding page, verbatim from
@@ -108,6 +113,33 @@ describe("extractDataListValue", () => {
   test("is absent rather than wrong when the label is not on the page", () => {
     expect(
       extractDataListValue(J_99_2025_HEADER, "Gyldig til og med"),
+    ).toBeUndefined();
+  });
+});
+
+describe("firstParseable", () => {
+  test("a date cell that renders prose does not beat the listing's real date", () => {
+    // `extractDataListValue` falls back to the rendered text when a `<dd>`
+    // carries no `<time datetime>`. Taking that just because it is non-empty
+    // would leave valid_to unparseable — i.e. unable to contradict the status
+    // word, which is this whole PR's failure mode.
+    expect(
+      firstParseable(parseValidityEnd, "Ikkje tidsavgrensa", "31.12.2023"),
+    ).toBe("31.12.2023");
+    expect(firstParseable(parseValidityEnd, "—", undefined, "31.12.2023")).toBe(
+      "31.12.2023",
+    );
+  });
+
+  test("takes the first candidate when it does parse", () => {
+    expect(firstParseable(parseValidityStart, "2025-06-19", "01.01.2020")).toBe(
+      "2025-06-19",
+    );
+  });
+
+  test("stores nothing rather than something unusable", () => {
+    expect(
+      firstParseable(parseValidityEnd, "Ikkje tidsavgrensa", "í dag, hin 1"),
     ).toBeUndefined();
   });
 });

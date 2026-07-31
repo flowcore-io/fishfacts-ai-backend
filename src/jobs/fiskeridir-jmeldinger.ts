@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Env } from "@/env";
-import { withExpiry } from "@/jmelding/validity";
+import {
+  parseValidityEnd,
+  parseValidityStart,
+  withExpiry,
+} from "@/jmelding/validity";
 import type { PathwayWriter } from "@/pathways";
 import { jmeldingFragmentKey } from "./jmelding-fragments";
 import type { JobExecutionResult, JobLatestItem, JobState } from "./types";
@@ -138,6 +142,23 @@ export function extractDataListValue(
   if (!cell) return undefined;
   const isoDate = cell.match(/<time[^>]+datetime=["']([^"']+)["']/i)?.[1];
   return isoDate ?? (decodeEntities(stripTags(cell)) || undefined);
+}
+
+/**
+ * First candidate that actually parses as a date — not merely the first that
+ * exists. `extractDataListValue` falls back to the rendered cell text when a
+ * `<dd>` carries no `<time datetime>`, so it can return prose ("Ikkje
+ * tidsavgrensa", a spelled-out date, an em-dash), and a `??` chain would let
+ * that beat the day-first date the listing row already gave us. An end date we
+ * cannot parse is an end date that cannot contradict the status word — which
+ * is the whole failure this file exists to prevent. Nothing parseable means we
+ * store nothing rather than something unusable.
+ */
+export function firstParseable(
+  parse: (value?: string | null) => string | undefined,
+  ...candidates: Array<string | undefined>
+) {
+  return candidates.find((candidate) => parse(candidate) !== undefined);
 }
 
 function extractJMeldingNumber(text: string) {
@@ -363,8 +384,18 @@ async function fetchDetail(
     publishedAt = publishedAt ?? extractDate(bodyText);
     jmNumber = jmNumber ?? extractJMeldingNumber(`${item.title} ${bodyText}`);
     const validity = extractValidity(item.title);
-    validFrom = fieldValidFrom ?? validity.validFrom ?? validFrom;
-    validTo = fieldValidTo ?? validity.validTo ?? validTo;
+    validFrom = firstParseable(
+      parseValidityStart,
+      fieldValidFrom,
+      validity.validFrom,
+      validFrom,
+    );
+    validTo = firstParseable(
+      parseValidityEnd,
+      fieldValidTo,
+      validity.validTo,
+      validTo,
+    );
     pageStatus = withExpiry(
       detectStatus(fieldStatus ?? item.title, pageStatus),
       validTo,

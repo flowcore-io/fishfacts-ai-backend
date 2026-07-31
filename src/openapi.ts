@@ -823,10 +823,10 @@ export const openApiDocument = {
             name: "status",
             in: "query",
             description:
-              "`current` means in force right now: the stored status plus the published validity window (`validFrom` <= now <= `validTo`). A record with no window is included. Applies on every path, spatial queries included.",
+              "`current` means in force right now: the stored status plus the published validity window (`validFrom` <= now <= `validTo`). A record with no window is included. `archived` is the complement — stored as archived, or past its `validTo` whatever the source called it. `upcoming` returns adopted regulations whose window has not opened yet. Applies on every path, spatial queries included.",
             schema: {
               type: "string",
-              enum: ["current", "archived", "unknown"],
+              enum: ["current", "archived", "upcoming", "unknown"],
             },
           },
           {
