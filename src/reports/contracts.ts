@@ -91,6 +91,18 @@ export const reportMapStateSchema = z
       })
       .passthrough()
       .optional(),
+    // True selection sizes. Present only on report captures, where `selected`
+    // above is a capped identity-only sample and its lengths would understate
+    // a large selection.
+    selectedTotals: z
+      .object({
+        vessels: z.number().int().nonnegative().optional(),
+        areas: z.number().int().nonnegative().optional(),
+        cages: z.number().int().nonnegative().optional(),
+        services: z.number().int().nonnegative().optional(),
+      })
+      .passthrough()
+      .optional(),
     trackMode: z.string().max(60).nullish(),
     trackPeriod: z.string().max(60).nullish(),
   })

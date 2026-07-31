@@ -259,17 +259,32 @@ function mapStateSection(
     overlayCount !== undefined
       ? `- AI overlays: ${overlayCount}${mapState.aiOverlays?.isVisible === false ? " (hidden)" : ""}`
       : null;
-  const selected = mapState.selected
-    ? `- Selected: ${[
-        `${mapState.selected.vessels?.length ?? 0} vessel(s)`,
-        `${mapState.selected.areas?.length ?? 0} area(s)`,
-        `${mapState.selected.cages?.length ?? 0} cage(s)`,
-        `${mapState.selected.services?.length ?? 0} service(s)`,
-      ].join(", ")}`
+  // `selected` is a capped identity-only sample in report captures, so its
+  // array lengths are not the size of the selection — `selectedTotals` is.
+  // Fall back to the lengths for the assistant-shaped (uncapped) payload.
+  const selectedCount = (
+    category: "vessels" | "areas" | "cages" | "services",
+  ): number =>
+    countOf(mapState.selectedTotals?.[category]) ??
+    mapState.selected?.[category]?.length ??
+    0;
+  const selected =
+    mapState.selected || mapState.selectedTotals
+      ? `- Selected: ${[
+          `${selectedCount("vessels")} vessel(s)`,
+          `${selectedCount("areas")} area(s)`,
+          `${selectedCount("cages")} cage(s)`,
+          `${selectedCount("services")} service(s)`,
+        ].join(", ")}`
+      : null;
+  // Only meaningful with a viewport: the FE computes in-view counts as
+  // `bbox ? … : 0`, so without a bbox these zeros say "no map", not "empty
+  // map" — and the View line above already said that.
+  const inView = mapState.bbox
+    ? `- In view: ${countOf(mapState.vesselsInView?.total) ?? 0} vessel(s), ${
+        countOf(mapState.servicesInView?.returned) ?? 0
+      } service(s), ${countOf(mapState.farmsInView?.returned) ?? 0} farm(s)`
     : null;
-  const inView = `- In view: ${countOf(mapState.vesselsInView?.total) ?? 0} vessel(s), ${
-    countOf(mapState.servicesInView?.returned) ?? 0
-  } service(s), ${countOf(mapState.farmsInView?.returned) ?? 0} farm(s)`;
   const tracks = mapState.trackMode
     ? `- Tracks: mode ${inline(String(mapState.trackMode))}${
         mapState.trackPeriod

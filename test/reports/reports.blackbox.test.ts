@@ -228,7 +228,14 @@ describe("Reports black-box", () => {
         vesselsInView: { total: 142, returned: 0 },
         servicesInView: { returned: 0 },
         farmsInView: { returned: 2 },
-        selected: { vessels: [1, 2], areas: [], cages: [], services: [] },
+        selected: {
+          vessels: [{ id: 1, name: "Sille Marie" }],
+          areas: [],
+          cages: [],
+          services: [],
+        },
+        // Capped sample above; this is the real size of the selection.
+        selectedTotals: { vessels: 2, areas: 0, cages: 0, services: 0 },
         trackMode: "TRACK",
         trackPeriod: "LAST_24H",
         // Newer than this backend release — must survive into the dump.
@@ -288,22 +295,12 @@ describe("Reports black-box", () => {
     servicesInView: { returned: 0 },
     farmsInView: { returned: 0 },
     selected: {
-      vessels: [
-        {
-          id: 4288,
-          name: "Sille Marie",
-          flag: "NO",
-          type: 2,
-          latitude: 59.293603,
-          longitude: 3.60783,
-          speed: 3.1,
-          heading: 171,
-        },
-      ],
+      vessels: [{ id: 4288, name: "Sille Marie" }],
       areas: [],
       cages: [],
       services: [],
     },
+    selectedTotals: { vessels: 1, areas: 0, cages: 0, services: 0 },
     trackPeriod: "D3",
     fishingActivitySpeed: [1, 5.5],
   };
@@ -345,6 +342,32 @@ describe("Reports black-box", () => {
     expect(created?.content).toContain("_No map state captured");
   });
 
+  test("selection size comes from selectedTotals, not the capped sample", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/map",
+      mapState: {
+        center: { lat: 62, lng: -6.7 },
+        zoom: 7,
+        bbox: [-8, 61, -5, 63],
+        // What a marquee selection looks like after the FE cap: 50 identity
+        // refs standing in for 466 selected vessels.
+        selected: {
+          vessels: Array.from({ length: 50 }, (_, i) => ({
+            id: i,
+            name: `Vessel ${i}`,
+          })),
+        },
+        selectedTotals: { vessels: 466, areas: 0, cages: 0, services: 0 },
+      },
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("- Selected: 466 vessel(s)");
+    expect(created?.content).not.toContain("- Selected: 50 vessel(s)");
+  });
+
   test("a map state captured off-map keeps the settings and flags the null view", async () => {
     const response = await postReport(USER_TOKEN, {
       ...VALID_REPORT,
@@ -363,6 +386,9 @@ describe("Reports black-box", () => {
     const created = usable.fragments.get(body.fragmentId);
     expect(created?.content).toContain("- View: map not on screen");
     expect(created?.content).toContain("- Base layer: temperature");
+    // Without a bbox the in-view counts are structurally zero, not observed —
+    // printing them would read as "the map was empty".
+    expect(created?.content).not.toContain("- In view:");
     // No coordinates were captured, so the summary must not imply any.
     expect(created?.summary).toContain("Filed from /vessels.");
   });
