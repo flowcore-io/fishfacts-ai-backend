@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.26.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.25.0...v1.26.0) (2026-07-31)
+
+
+### Features
+
+* **reports:** accept and render the FE's map state and route ([c203cc6](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c203cc6881d6c2debfce2566a18d5a5faa0831ac))
+* **reports:** capture the map view and route in issue reports ([0eb7025](https://github.com/flowcore-io/fishfacts-ai-backend/commit/0eb70258c219a69fb7661ccb437c0c7721e9c547))
+
+
+### Bug Fixes
+
+* **reports:** map state fails closed; strip the query from route ([9a806d1](https://github.com/flowcore-io/fishfacts-ai-backend/commit/9a806d11a4f6c88888b30423a7665f0637585652))
+* **reports:** review pass — selectedTotals, and no zero in-view line off-map ([15fa594](https://github.com/flowcore-io/fishfacts-ai-backend/commit/15fa5945068a4115c9c73c294deae851bb0fe775))
+
 ## [1.25.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.24.0...v1.25.0) (2026-07-29)
 
 
