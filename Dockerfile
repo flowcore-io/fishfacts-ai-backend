@@ -18,6 +18,11 @@ COPY --from=deps --chown=fishfacts:fishfacts /app/node_modules ./node_modules
 COPY --chown=fishfacts:fishfacts package.json ./
 COPY --chown=fishfacts:fishfacts src ./src
 COPY --chown=fishfacts:fishfacts drizzle ./drizzle
+# Maintenance scripts (jmelding backfill / reproject / fragment sync) ship with
+# the image so they can be run in-pod, where DATABASE_URL, USABLE_API_TOKEN and
+# the workspace ids already exist as env. The alternative is exporting four
+# production secrets to whoever is running the repair.
+COPY --chown=fishfacts:fishfacts scripts ./scripts
 COPY --chown=fishfacts:fishfacts drizzle.config.ts ./
 COPY --chown=fishfacts:fishfacts tsconfig.json ./
 
