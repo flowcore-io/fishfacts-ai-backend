@@ -18,7 +18,7 @@ export type GeoProjectionResult = {
 };
 
 /** [minLon, minLat, maxLon, maxLat] for pre-parsed (FO/IS) geometry. */
-function bboxFromAreas(
+export function bboxFromAreas(
   areas: NonNullable<JMeldingAnnouncementDiscovered["areas"]>,
 ): [number, number, number, number] | null {
   let minLat = Number.POSITIVE_INFINITY;

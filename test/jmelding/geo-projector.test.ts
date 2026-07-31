@@ -211,6 +211,49 @@ describe("JMeldingGeoProjector + repository", () => {
     expect(inBbox.rows.map((r) => r.jmNumber)).not.toContain("test-74-2099");
   });
 
+  test("repairs a Faroese ring on projection, and again on re-projection", async () => {
+    if (!runCtx) return;
+    const projector = new JMeldingGeoProjector(runCtx.db);
+    const repository = new JMeldingGeoRepository(runCtx.db);
+
+    // Veiðibann nr. 14/2026 exactly as Vørn published it: the closing "6104 N
+    // – 0700 W" was typed "6014 N", ~93 km too far south. This is what a row
+    // projected before the ring repair landed still holds, and what
+    // scripts/jmelding-reproject-geometry.ts feeds back through the projector.
+    const raw: Array<[number, number]> = [
+      [61.0667, -7.0],
+      [60.95, -7.1],
+      [60.75, -7.0],
+      [60.65, -6.9],
+      [60.75, -6.6],
+      [60.2333, -7.0],
+    ];
+    const item = makeItem("test-vorn-14", "", {
+      region: "FO",
+      title: "Test Veiðibann nr. 14",
+      areas: [
+        {
+          name: "Veiðibann nr. 14",
+          points: raw.map(([lat, lon]) => ({ lat, lon })),
+        },
+      ],
+    });
+
+    await projector.project(item, null);
+    const repaired = await repository.findByJmNumber("test-vorn-14");
+    // The typo'd vertex is dropped, so the southern edge is 60.65, not 60.2333.
+    expect(repaired?.bbox).toEqual([-7.1, 60.65, -6.6, 61.0667]);
+
+    // Re-projecting the already-repaired row leaves it alone — the backfill is
+    // safe to re-run.
+    await projector.project(
+      { ...item, areas: repaired?.areas as typeof item.areas },
+      null,
+    );
+    const again = await repository.findByJmNumber("test-vorn-14");
+    expect(again?.bbox).toEqual([-7.1, 60.65, -6.6, 61.0667]);
+  });
+
   test("skips noise rows (no jmNumber + status unknown)", async () => {
     if (!runCtx) return;
     const projector = new JMeldingGeoProjector(runCtx.db);
