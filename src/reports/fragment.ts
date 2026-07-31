@@ -1,6 +1,7 @@
 import type { FishfactsUser } from "@/auth/types";
 import {
   type CaptureTruncation,
+  type ReportMapState,
   type ReportSubmission,
   toolJsonAsText,
   wasTruncated,
@@ -77,6 +78,10 @@ function frontmatterLines(
   if (submission.appVersion) {
     lines.push(`appVersion: ${yamlString(submission.appVersion)}`);
   }
+  // Searchable in the queue — "every report filed from the map page".
+  if (submission.route) {
+    lines.push(`route: ${yamlString(submission.route)}`);
+  }
   lines.push(
     `capturedMessageCount: ${submission.messages.length}`,
     `capturedToolCallCount: ${submission.toolCalls.length}`,
@@ -107,6 +112,15 @@ function buildSummary(input: ReportFragmentInput): string {
     `${reporter.username} reported an issue in chat session ${submission.sessionId}.`,
     `Captured ${submission.messages.length} messages, ${submission.toolCalls.length} tool calls and ${submission.networkRequests.length} FE network requests.`,
   ];
+  if (submission.route) {
+    const center = submission.mapState?.center;
+    const zoom = submission.mapState?.zoom;
+    const where =
+      center && typeof zoom === "number"
+        ? ` (map at ${formatCoord(center.lat)}, ${formatCoord(center.lng)} @ zoom ${zoom.toFixed(2)})`
+        : "";
+    parts.push(`Filed from ${inline(submission.route)}${where}.`);
+  }
   if (toolNames.length > 0) {
     parts.push(`Tools used: ${toolNames.slice(0, 8).join(", ")}.`);
   }
@@ -167,6 +181,123 @@ function toolCallSection(
   });
 }
 
+/** `62.0184, -6.7712` — enough precision to re-centre a map, no more. */
+function formatCoord(value: number): string {
+  return value.toFixed(4);
+}
+
+function countOf(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+/**
+ * The four area slots the FE map exposes (`TMapAreas`), flattened into one
+ * line. Empty slots are dropped rather than printed as "none" — a report line
+ * should say what was on the map, not enumerate what wasn't.
+ */
+function formatMapAreas(mapAreas: ReportMapState["mapAreas"]): string | null {
+  if (!mapAreas) return null;
+  const list = (values?: (string | null | undefined)[]) =>
+    (values ?? []).filter(
+      (v): v is string => typeof v === "string" && v !== "",
+    );
+  const parts = [
+    mapAreas.base ? `base ${inline(mapAreas.base)}` : null,
+    mapAreas.feature ? `feature ${inline(mapAreas.feature)}` : null,
+    list(mapAreas.zones).length > 0
+      ? `zones ${list(mapAreas.zones).map(inline).join(", ")}`
+      : null,
+    list(mapAreas.top).length > 0
+      ? `overlays ${list(mapAreas.top).map(inline).join(", ")}`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? `- Map areas: ${parts.join("; ")}` : null;
+}
+
+/**
+ * The map view the user was actually looking at. The tool-call log only shows
+ * what the *assistant* did, so without this a report from a user who panned
+ * and zoomed by hand says nothing about the map at all.
+ *
+ * Rendered as prose lines first (a triaging agent should not have to parse
+ * JSON to learn where the map was) with the full snapshot fenced underneath,
+ * including any fields newer than this renderer.
+ */
+function mapStateSection(
+  submission: ReportSubmission,
+  counter: { clipped: number },
+): string[] {
+  const route = submission.route
+    ? `- Route: \`${inline(submission.route)}\``
+    : null;
+  const mapState = submission.mapState as ReportMapState | null | undefined;
+  if (!mapState) {
+    return [
+      ...(route ? [route] : []),
+      "_No map state captured — the map was not mounted, or the report predates map-state capture._",
+    ];
+  }
+
+  const view =
+    mapState.center && typeof mapState.zoom === "number"
+      ? `- View: ${formatCoord(mapState.center.lat)}, ${formatCoord(mapState.center.lng)} @ zoom ${mapState.zoom.toFixed(2)}`
+      : "- View: map not on screen when the report was sent (settings below are the last-known Redux state)";
+  const bbox = mapState.bbox
+    ? `- Bounds (W,S,E,N): ${mapState.bbox.map(formatCoord).join(", ")}`
+    : null;
+  const dateLabel = mapState.layerSettings?.dateLabel;
+  const baseLayer = `- Base layer: ${
+    mapState.baseLayer ? inline(String(mapState.baseLayer)) : "none"
+  }${dateLabel ? ` (${inline(String(dateLabel))})` : ""}`;
+  const areas = formatMapAreas(mapState.mapAreas);
+  const ice =
+    mapState.iceLayers && mapState.iceLayers.length > 0
+      ? `- Ice layers: ${mapState.iceLayers.map((l) => inline(l)).join(", ")}`
+      : null;
+  const overlayCount = countOf(mapState.aiOverlays?.count);
+  const overlays =
+    overlayCount !== undefined
+      ? `- AI overlays: ${overlayCount}${mapState.aiOverlays?.isVisible === false ? " (hidden)" : ""}`
+      : null;
+  const selected = mapState.selected
+    ? `- Selected: ${[
+        `${mapState.selected.vessels?.length ?? 0} vessel(s)`,
+        `${mapState.selected.areas?.length ?? 0} area(s)`,
+        `${mapState.selected.cages?.length ?? 0} cage(s)`,
+        `${mapState.selected.services?.length ?? 0} service(s)`,
+      ].join(", ")}`
+    : null;
+  const inView = `- In view: ${countOf(mapState.vesselsInView?.total) ?? 0} vessel(s), ${
+    countOf(mapState.servicesInView?.returned) ?? 0
+  } service(s), ${countOf(mapState.farmsInView?.returned) ?? 0} farm(s)`;
+  const tracks = mapState.trackMode
+    ? `- Tracks: mode ${inline(String(mapState.trackMode))}${
+        mapState.trackPeriod
+          ? `, period ${inline(String(mapState.trackPeriod))}`
+          : ""
+      }`
+    : null;
+
+  const full = toolJsonAsText(mapState, counter);
+  return [
+    ...[
+      route,
+      view,
+      bbox,
+      baseLayer,
+      areas,
+      ice,
+      overlays,
+      selected,
+      inView,
+      tracks,
+    ].filter((line): line is string => line !== null),
+    ...(full === undefined
+      ? []
+      : ["", `Full snapshot:\n\n${fencedBlock(full, "json")}`]),
+  ];
+}
+
 function networkSection(submission: ReportSubmission): string[] {
   if (submission.networkRequests.length === 0) {
     return ["_No network requests captured._"];
@@ -208,6 +339,7 @@ export function buildReportFragment(
   const chatLog = messageSection(submission);
   const toolCalls = toolCallSection(submission, counter);
   const networkRequests = networkSection(submission);
+  const mapState = mapStateSection(submission, counter);
   const truncation: CaptureTruncation = {
     ...input.truncation,
     clippedValues: input.truncation.clippedValues + counter.clipped,
@@ -250,6 +382,11 @@ export function buildReportFragment(
       .join("\n"),
     "",
     ...truncationNote(truncation),
+    "",
+    // Before the chat log: it is the cheapest context for "what was the user
+    // looking at?", and the chat log below can run to thousands of lines.
+    "## Map state",
+    ...mapState,
     "",
     "## Chat log",
     ...chatLog,

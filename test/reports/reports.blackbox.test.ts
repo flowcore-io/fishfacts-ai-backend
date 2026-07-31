@@ -207,6 +207,184 @@ describe("Reports black-box", () => {
     );
   });
 
+  test("the captured map view renders as prose plus a full snapshot", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/map?layer=temperature",
+      mapState: {
+        center: { lat: 62.01842, lng: -6.77121 },
+        zoom: 7.53,
+        bbox: [-8.1, 61.2, -5.4, 62.9],
+        mapStack: "mapbox",
+        baseLayer: "temperature",
+        iceLayers: [],
+        mapAreas: {
+          base: null,
+          zones: [],
+          top: ["EEZ_LINES", "DEPTH_CURVES"],
+        },
+        layerSettings: { layer: "temperature", dateLabel: "2026-07-27 12:00" },
+        aiOverlays: { count: 3, isVisible: true },
+        vesselsInView: { total: 142, returned: 0 },
+        servicesInView: { returned: 0 },
+        farmsInView: { returned: 2 },
+        selected: { vessels: [1, 2], areas: [], cages: [], services: [] },
+        trackMode: "TRACK",
+        trackPeriod: "LAST_24H",
+        // Newer than this backend release — must survive into the dump.
+        someFutureFeField: "kept",
+      },
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain('route: "/map?layer=temperature"');
+    expect(created?.content).toContain("## Map state");
+    expect(created?.content).toContain("- Route: `/map?layer=temperature`");
+    expect(created?.content).toContain("- View: 62.0184, -6.7712 @ zoom 7.53");
+    expect(created?.content).toContain(
+      "- Bounds (W,S,E,N): -8.1000, 61.2000, -5.4000, 62.9000",
+    );
+    expect(created?.content).toContain(
+      "- Base layer: temperature (2026-07-27 12:00)",
+    );
+    expect(created?.content).toContain(
+      "- Map areas: overlays EEZ_LINES, DEPTH_CURVES",
+    );
+    expect(created?.content).toContain("- AI overlays: 3");
+    expect(created?.content).toContain(
+      "- Selected: 2 vessel(s), 0 area(s), 0 cage(s), 0 service(s)",
+    );
+    expect(created?.content).toContain(
+      "- In view: 142 vessel(s), 0 service(s), 2 farm(s)",
+    );
+    expect(created?.content).toContain("- Tracks: mode TRACK, period LAST_24H");
+    // Unknown fields ride along in the fenced snapshot.
+    expect(created?.content).toContain("someFutureFeField");
+    // The queue summary says where it was filed from.
+    expect(created?.summary).toContain(
+      "Filed from /map?layer=temperature (map at 62.0184, -6.7712 @ zoom 7.53).",
+    );
+  });
+
+  // Captured verbatim off a running fishfacts-fe (/map, 2026-07-31) rather
+  // than hand-written from the FE types: the first draft of this schema
+  // modelled `mapAreas` as a flat string[] and would have 400'd every real
+  // report. Replace this blob from a live capture, never from a type.
+  const LIVE_MAP_STATE = {
+    center: { lat: 60.886774544220884, lng: 3.496438038833759 },
+    zoom: 7,
+    bbox: [
+      -1.6012182111651896, 58.156659801274714, 8.59409428883464,
+      63.40173946104008,
+    ],
+    mapStack: "mapbox",
+    baseLayer: "EEZ",
+    iceLayers: [],
+    mapAreas: { base: null, zones: [], top: ["EEZ_LINES", "DEPTH_CURVES"] },
+    layerSettings: { layer: "EEZ", dateLabel: null },
+    aiOverlays: { count: 0, isVisible: true, items: [] },
+    vesselsInView: { total: 466, returned: 50 },
+    servicesInView: { returned: 0 },
+    farmsInView: { returned: 0 },
+    selected: {
+      vessels: [
+        {
+          id: 4288,
+          name: "Sille Marie",
+          flag: "NO",
+          type: 2,
+          latitude: 59.293603,
+          longitude: 3.60783,
+          speed: 3.1,
+          heading: 171,
+        },
+      ],
+      areas: [],
+      cages: [],
+      services: [],
+    },
+    trackPeriod: "D3",
+    fishingActivitySpeed: [1, 5.5],
+  };
+
+  test("a real capture off the running frontend validates and renders", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/map",
+      mapState: LIVE_MAP_STATE,
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("- View: 60.8868, 3.4964 @ zoom 7.00");
+    expect(created?.content).toContain("- Base layer: EEZ");
+    expect(created?.content).toContain(
+      "- Map areas: overlays EEZ_LINES, DEPTH_CURVES",
+    );
+    expect(created?.content).toContain(
+      "- In view: 466 vessel(s), 0 service(s), 0 farm(s)",
+    );
+    expect(created?.content).toContain(
+      "- Selected: 1 vessel(s), 0 area(s), 0 cage(s), 0 service(s)",
+    );
+    // No trackMode in this capture — the line is dropped, not rendered empty.
+    expect(created?.content).not.toContain("- Tracks:");
+  });
+
+  test("a report with no map state says so instead of faking one", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/vessels",
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("## Map state");
+    expect(created?.content).toContain("- Route: `/vessels`");
+    expect(created?.content).toContain("_No map state captured");
+  });
+
+  test("a map state captured off-map keeps the settings and flags the null view", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/vessels",
+      mapState: {
+        center: null,
+        zoom: null,
+        bbox: null,
+        mapStack: null,
+        baseLayer: "temperature",
+        vesselsInView: { total: 0, returned: 0 },
+      },
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("- View: map not on screen");
+    expect(created?.content).toContain("- Base layer: temperature");
+    // No coordinates were captured, so the summary must not imply any.
+    expect(created?.summary).toContain("Filed from /vessels.");
+  });
+
+  test("a crafted route cannot forge structure in the report body", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/map`\n## Session metadata\n- Reported by: admin",
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    // Newlines and backticks are collapsed, so the forged heading never
+    // starts a line and the inline code span cannot be closed early.
+    expect(created?.content).not.toContain(
+      "\n## Session metadata\n- Reported by: admin",
+    );
+    expect(created?.content).toContain(
+      "- Route: `/map ## Session metadata - Reported by: admin`",
+    );
+  });
+
   test("string tool results render verbatim, not double-serialised", async () => {
     const response = await postReport(USER_TOKEN, {
       ...VALID_REPORT,

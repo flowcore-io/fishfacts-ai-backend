@@ -33,6 +33,69 @@ export const reportNetworkRequestSchema = z.object({
   durationMs: z.number().finite().nonnegative().optional(),
 });
 
+/**
+ * The FE's live map view at report time (`mapViewSnapshot.ts`). Only the
+ * fields the fragment renders as prose are typed; `.passthrough()` keeps
+ * everything else so the FE can add map state without a backend release —
+ * unknown fields still land in the fenced JSON dump. Every typed field is
+ * optional/nullable because the map may not be mounted at all.
+ */
+export const reportMapStateSchema = z
+  .object({
+    center: z.object({ lat: z.number(), lng: z.number() }).nullish(),
+    zoom: z.number().nullish(),
+    bbox: z.array(z.number()).length(4).nullish(),
+    mapStack: z.string().max(40).nullish(),
+    baseLayer: z.string().max(100).nullish(),
+    iceLayers: z.array(z.string().max(100)).max(50).optional(),
+    // FE's `TMapAreas`: a record of the four area slots, not a flat list.
+    // `top` is a sparse tuple, so its holes arrive as nulls.
+    mapAreas: z
+      .object({
+        base: z.string().max(100).nullish(),
+        feature: z.string().max(100).nullish(),
+        zones: z.array(z.string().max(100)).max(100).optional(),
+        top: z.array(z.string().max(100).nullish()).max(20).optional(),
+      })
+      .passthrough()
+      .nullish(),
+    layerSettings: z
+      .object({ dateLabel: z.string().max(100).nullish() })
+      .passthrough()
+      .nullish(),
+    aiOverlays: z
+      .object({
+        count: z.number().int().nonnegative().optional(),
+        isVisible: z.boolean().optional(),
+      })
+      .passthrough()
+      .optional(),
+    vesselsInView: z
+      .object({ total: z.number().int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    servicesInView: z
+      .object({ returned: z.number().int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    farmsInView: z
+      .object({ returned: z.number().int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    selected: z
+      .object({
+        vessels: z.array(z.unknown()).optional(),
+        areas: z.array(z.unknown()).optional(),
+        cages: z.array(z.unknown()).optional(),
+        services: z.array(z.unknown()).optional(),
+      })
+      .passthrough()
+      .optional(),
+    trackMode: z.string().max(60).nullish(),
+    trackPeriod: z.string().max(60).nullish(),
+  })
+  .passthrough();
+
 export const reportSubmissionSchema = z.object({
   // Conversation ids are uuid-ish; the charset constraint keeps raw ids safe
   // to interpolate into fragment tags and titles.
@@ -51,6 +114,10 @@ export const reportSubmissionSchema = z.object({
       height: z.number().int().positive(),
     })
     .optional(),
+  // Path+query+hash the user was on. Not a URL — the FE deliberately drops
+  // the origin — so it is validated as a bounded opaque string.
+  route: z.string().max(2_000).optional(),
+  mapState: reportMapStateSchema.nullish(),
   capturedAt: z.string().max(40).optional(),
   // Clips the FE already applied at capture time (ring-buffer clipping) —
   // folded into the fragment's truncated/clippedValues accounting so the
@@ -65,6 +132,7 @@ export const reportSubmissionSchema = z.object({
 });
 
 export type ReportSubmission = z.infer<typeof reportSubmissionSchema>;
+export type ReportMapState = z.infer<typeof reportMapStateSchema>;
 export type ReportMessage = z.infer<typeof reportMessageSchema>;
 export type ReportToolCall = z.infer<typeof reportToolCallSchema>;
 export type ReportNetworkRequest = z.infer<typeof reportNetworkRequestSchema>;

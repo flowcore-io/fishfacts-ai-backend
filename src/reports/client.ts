@@ -15,6 +15,8 @@ export type ReportListItem = {
   /** User-supplied follow-up address — NOT a verified identity field. */
   contactEmail?: string;
   appVersion?: string;
+  /** Path the report was filed from — lets the queue be filtered by screen. */
+  route?: string;
   capturedMessageCount?: number;
   capturedToolCallCount?: number;
   capturedNetworkRequestCount?: number;
@@ -74,6 +76,7 @@ function toListItem(fragment: UsableFragment): ReportListItem {
     },
     contactEmail: asString(meta.contactEmail),
     appVersion: asString(meta.appVersion),
+    route: asString(meta.route),
     capturedMessageCount: asNumber(meta.capturedMessageCount),
     capturedToolCallCount: asNumber(meta.capturedToolCallCount),
     capturedNetworkRequestCount: asNumber(meta.capturedNetworkRequestCount),
