@@ -59,11 +59,25 @@ const VORN_SITEMAP = "https://www.vorn.fo/sitemap.xml";
 // (the old `veid[ib]+ann`) silently dropped nr 12/13. Anchor on the directory
 // + a generic `-nr-<n>-<year>` tail instead. The `/kunning/tidindi/…` news
 // archive lives under a different path, so it stays excluded.
+//
+// The year is `[0-9]+`, NOT `[0-9]{4}`: Vørn typo's the YEAR too. Nr 15 is
+// published at `…-nr-15-20206` (five digits — their slug AND page title say
+// "20206"; the image on the same page is named `veidibann-nr-15-2026.jpg`, so
+// 2026 is intended). A `{4}` quantifier has no trailing boundary, so it
+// matched only the first four digits and handed `…-nr-15-2020` downstream —
+// a URL that 404s. We then scraped the 404 body, which has no coordinates and
+// no "galdandi" sentence, and stored an in-force trawl ban with no geometry
+// and no validity that could never expire. One missing boundary, four wrong
+// fields. Take the whole digit run so we fetch the page that exists.
 const VORN_BAN_RE =
-  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/[a-z]+-nr-[0-9]+-[0-9]{4}/gi;
+  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/[a-z]+-nr-[0-9]+-[0-9]+/gi;
 // Pull the ban number + year from the `-nr-N-YYYY` tail without depending on
-// the (unreliable) veiðibann spelling.
-const VORN_NR_RE = /-nr-(\d+)-?(\d{4})/;
+// the (unreliable) veiðibann spelling. The year group is `\d+` for the same
+// reason as above — a malformed year is kept VERBATIM in the key rather than
+// silently truncated to a plausible-looking wrong one (`20206` → `2020` read
+// as a 2020 ban). The title gets the real year from the body; see
+// `vornTitleFromUrl`.
+const VORN_NR_RE = /-nr-(\d+)-(\d+)/;
 const VORN_COORD_RE =
   /(\d{2})(\d{2})\s*([NS])\s*[–-]\s*(\d{2,3})(\d{2})\s*([EWVØ])/gi;
 
@@ -74,10 +88,19 @@ export function vornSourceKey(url: string): string {
 
 /** Canonical ban title derived from the URL — the page body sometimes opens
  * with a cross-reference to a prior ban, so the in-text regex picks the wrong
- * number. The URL number is authoritative. */
-function vornTitleFromUrl(url: string): string | undefined {
+ * number. The URL NUMBER is authoritative.
+ *
+ * The URL YEAR is not: Vørn published nr 15 as `-nr-15-20206`, and a title of
+ * "Veiðibann nr. 15 - 20206" (or, worse, a silently truncated "- 2020") is
+ * what the user reads in the map popup. So the caller passes the year from the
+ * validity sentence when it parsed — that is the one place on the page where
+ * the year is unambiguous. The body at large is NOT safe to scan: nr 15 cites
+ * "Løgtingslóg nr. 152 frá 23. desember 2019", so a naive first-year-in-body
+ * would title it 2019. Falls back to the URL year when validity is unreadable.
+ */
+function vornTitleFromUrl(url: string, year?: string): string | undefined {
   const m = url.toLowerCase().match(VORN_NR_RE);
-  return m ? `Veiðibann nr. ${m[1]} - ${m[2]}` : undefined;
+  return m ? `Veiðibann nr. ${m[1]} - ${year ?? m[2]}` : undefined;
 }
 
 /** Extract the unique Vørn ban-page URLs from a sitemap XML body. Pure +
@@ -141,7 +164,9 @@ export function parseVornBan(url: string, html: string): ClosureRecord {
     region: "FO",
     source: "vorn",
     sourceKey: vornSourceKey(url),
-    title: vornTitleFromUrl(url) || url,
+    // The validity sentence is the only unambiguous year on the page, so it
+    // beats a slug Vørn may have fat-fingered (see `vornTitleFromUrl`).
+    title: vornTitleFromUrl(url, validity.validFrom?.slice(0, 4)) || url,
     // Vørn publishes no status field — a ban is in force until its window
     // closes, which is exactly what `withExpiry` decides.
     status: withExpiry("active", validity.validTo),
