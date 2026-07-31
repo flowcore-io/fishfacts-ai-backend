@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.28.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.28.0...v1.28.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **jmeldinger:** finish the normalisation and cover the branch it promises ([1d53b10](https://github.com/flowcore-io/fishfacts-ai-backend/commit/1d53b1078292598d6155353707e00930036ceb69))
+* **jmeldinger:** read row timestamps as the driver actually returns them ([044fa8e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/044fa8ea05b993b0730accb381629afd8f06ddf8))
+* **jmeldinger:** read row timestamps as the driver actually returns them ([898fce0](https://github.com/flowcore-io/fishfacts-ai-backend/commit/898fce0bc5a300b0d24e8baa715eb6d370640b77))
+
 ## [1.28.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.27.0...v1.28.0) (2026-07-31)
 
 
