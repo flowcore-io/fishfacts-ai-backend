@@ -84,8 +84,12 @@ try {
   let synced = 0;
   const samples: string[] = [];
 
+  let stoppedAtLimit = false;
   for (const row of rows) {
-    if (synced >= LIMIT) break;
+    if (synced >= LIMIT) {
+      stoppedAtLimit = true;
+      break;
+    }
     const fragment = await usable.getFragmentByKey(
       env.USABLE_WORKSPACE_ID,
       row.fragment_key,
@@ -121,6 +125,13 @@ try {
   console.log(
     `[SyncFragments] checked ${checked}, ${missing} with no fragment, ${unrecoverable} unrecoverable, ${synced} ${APPLY ? "rewritten" : "out of sync"}`,
   );
+  if (stoppedAtLimit) {
+    // The counts above stop where --limit did, so they are not a corpus-wide
+    // measure of drift — say so rather than let the number be read as one.
+    console.log(
+      `[SyncFragments] stopped at --limit ${LIMIT}; ${rows.length - checked} rows not examined, so this is not a total`,
+    );
+  }
   for (const sample of samples) console.log(sample);
   if (!APPLY) {
     console.log("[SyncFragments] dry run — pass --apply to write");
