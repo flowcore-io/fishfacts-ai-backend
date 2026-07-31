@@ -17,6 +17,8 @@
     "db:migrate:kit": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "ch:migrate": "bun scripts/ch-migrate.ts",
+    "jmelding:backfill-validity": "bun scripts/jmelding-backfill-validity.ts",
+    "jmelding:reproject-geometry": "bun scripts/jmelding-reproject-geometry.ts",
     "ais:backfill": "bun scripts/ais-backfill.ts",
     "ais:backfill:status": "bun scripts/ais-backfill-status.ts",
     "ais:stream": "bun scripts/ais-stream.ts",

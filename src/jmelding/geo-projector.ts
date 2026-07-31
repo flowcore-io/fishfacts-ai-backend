@@ -7,6 +7,7 @@ import {
   areasToWkt,
   parseJmeldingGeo,
 } from "./geo-parser";
+import { parseValidityEnd, parseValidityStart } from "./validity";
 import { normalizeVornAreas } from "./vorn-ring";
 
 export type GeoProjectionResult = {
@@ -17,7 +18,7 @@ export type GeoProjectionResult = {
 };
 
 /** [minLon, minLat, maxLon, maxLat] for pre-parsed (FO/IS) geometry. */
-function bboxFromAreas(
+export function bboxFromAreas(
   areas: NonNullable<JMeldingAnnouncementDiscovered["areas"]>,
 ): [number, number, number, number] | null {
   let minLat = Number.POSITIVE_INFINITY;
@@ -82,6 +83,11 @@ export class JMeldingGeoProjector {
     const wkt = areasToWkt(parsed.areas);
     const bbox = parsed.bbox;
 
+    // Each region publishes its window in its own shape; normalise to instants
+    // so `status = "current"` can be re-checked against the clock on read.
+    const validFrom = parseValidityStart(item.validFrom) ?? null;
+    const validTo = parseValidityEnd(item.validTo) ?? null;
+
     const areasJson = JSON.stringify(parsed.areas);
     const geojsonJson = geojson === null ? null : JSON.stringify(geojson);
     const geomExpr = wkt
@@ -91,10 +97,12 @@ export class JMeldingGeoProjector {
     await this.db.execute(sql`
       INSERT INTO jmelding_geo (
         jm_number, fragment_key, fragment_id, title, status, region, category, url, signature,
+        valid_from, valid_to,
         has_geo, areas, geojson, geom, min_lat, max_lat, min_lon, max_lon, updated_at
       )
       VALUES (
         ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.category ?? null}, ${item.url}, ${item.signature},
+        ${validFrom}::timestamptz, ${validTo}::timestamptz,
         ${parsed.hasGeo}, ${areasJson}::jsonb, ${geojsonJson}::jsonb,
         ${geomExpr},
         ${bbox?.[1] ?? null}, ${bbox?.[3] ?? null}, ${bbox?.[0] ?? null}, ${bbox?.[2] ?? null},
@@ -109,6 +117,8 @@ export class JMeldingGeoProjector {
         category     = EXCLUDED.category,
         url          = EXCLUDED.url,
         signature    = EXCLUDED.signature,
+        valid_from   = EXCLUDED.valid_from,
+        valid_to     = EXCLUDED.valid_to,
         has_geo      = EXCLUDED.has_geo,
         areas        = EXCLUDED.areas,
         geojson      = EXCLUDED.geojson,

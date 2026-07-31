@@ -822,9 +822,11 @@ export const openApiDocument = {
           {
             name: "status",
             in: "query",
+            description:
+              "`current` means in force right now: the stored status plus the published validity window (`validFrom` <= now <= `validTo`). A record with no window is included. `archived` is the complement — stored as archived, or past its `validTo` whatever the source called it. `upcoming` returns adopted regulations whose window has not opened yet. Applies on every path, spatial queries included.",
             schema: {
               type: "string",
-              enum: ["current", "archived", "unknown"],
+              enum: ["current", "archived", "upcoming", "unknown"],
             },
           },
           {
@@ -1936,6 +1938,20 @@ export const openApiDocument = {
             enum: ["current", "archived", "unknown"],
           },
           url: { type: "string", format: "uri" },
+          validFrom: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+            description:
+              "Start of the validity window as published by the source; null when none was given.",
+          },
+          validTo: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+            description:
+              "End of the validity window, inclusive of its final day. Null means open-ended (or not yet captured for this record).",
+          },
           hasGeo: { type: "boolean" },
           bbox: {
             type: "array",

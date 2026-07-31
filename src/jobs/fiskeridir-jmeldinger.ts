@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import type { Env } from "@/env";
+import {
+  parseValidityEnd,
+  parseValidityStart,
+  withExpiry,
+} from "@/jmelding/validity";
 import type { PathwayWriter } from "@/pathways";
 import { jmeldingFragmentKey } from "./jmelding-fragments";
 import type { JobExecutionResult, JobLatestItem, JobState } from "./types";
@@ -80,26 +85,80 @@ function toIsoDateStart(value?: string) {
   return new Date(Date.UTC(year, month - 1, day)).toISOString();
 }
 
-function detectStatus(text: string, fallback: JobLatestItem["status"]) {
+const ARCHIVED_MARKERS = [
+  "utgått",
+  "utgatt",
+  "utgaatt",
+  "historisk",
+  "avsluttet",
+  "arkiv",
+  "expired",
+];
+// "Kommende" is a notice that has been adopted but whose window starts later.
+// It is live and not superseded, so it files as current; `valid_from` is what
+// keeps it out of "in force right now" reads.
+const CURRENT_MARKERS = ["gjeldende", "gjeldande", "kommende", "current"];
+
+/**
+ * Classify a notice from a status SIGNAL — its own `Status` field, or the
+ * listing link text, which ends with the status word ("… Utløpsdato
+ * 31.12.2023 Utgått"). Never pass a whole page body: every J-melding page
+ * carries "Se utgåtte meldinger" in its footer and a great many carry
+ * "Gjeldende" in ordinary legal prose ("§ 3 oppheves. Gjeldende §§ 4 og 5 blir
+ * §§ 3 og 4." — J-99-2025), so a body scan misclassifies in both directions
+ * depending only on which marker is tested first.
+ *
+ * Within a signal an archived marker wins: an explicit "Utgått" is a statement
+ * about this notice, whereas a current marker can still be prose.
+ */
+export function detectStatus(text: string, fallback: JobLatestItem["status"]) {
   const lower = text.toLowerCase();
-  if (
-    lower.includes("current") ||
-    lower.includes("gjeldende") ||
-    lower.includes("gjeldande")
-  ) {
-    return "current";
-  }
-  if (
-    lower.includes("historisk") ||
-    lower.includes("utgått") ||
-    lower.includes("utgaatt") ||
-    lower.includes("avsluttet") ||
-    lower.includes("arkiv") ||
-    lower.includes("expired")
-  ) {
+  if (ARCHIVED_MARKERS.some((marker) => lower.includes(marker))) {
     return "archived";
   }
+  if (CURRENT_MARKERS.some((marker) => lower.includes(marker))) {
+    return "current";
+  }
   return fallback;
+}
+
+/**
+ * Read one `<dt>label</dt><dd>value</dd>` pair out of the `fd-datalist` header
+ * that opens every J-melding page — the notice's own metadata, as opposed to
+ * anything the statute text happens to say. Date cells wrap the value in
+ * `<time datetime="2025-07-21">`, which is preferred over the rendered
+ * day-first text.
+ */
+export function extractDataListValue(
+  html: string,
+  label: string,
+): string | undefined {
+  const cell = html.match(
+    new RegExp(
+      `<dt[^>]*>\\s*${label}\\s*</dt>\\s*<dd[^>]*>([\\s\\S]*?)</dd>`,
+      "i",
+    ),
+  )?.[1];
+  if (!cell) return undefined;
+  const isoDate = cell.match(/<time[^>]+datetime=["']([^"']+)["']/i)?.[1];
+  return isoDate ?? (decodeEntities(stripTags(cell)) || undefined);
+}
+
+/**
+ * First candidate that actually parses as a date — not merely the first that
+ * exists. `extractDataListValue` falls back to the rendered cell text when a
+ * `<dd>` carries no `<time datetime>`, so it can return prose ("Ikkje
+ * tidsavgrensa", a spelled-out date, an em-dash), and a `??` chain would let
+ * that beat the day-first date the listing row already gave us. An end date we
+ * cannot parse is an end date that cannot contradict the status word — which
+ * is the whole failure this file exists to prevent. Nothing parseable means we
+ * store nothing rather than something unusable.
+ */
+export function firstParseable(
+  parse: (value?: string | null) => string | undefined,
+  ...candidates: Array<string | undefined>
+) {
+  return candidates.find((candidate) => parse(candidate) !== undefined);
 }
 
 function extractJMeldingNumber(text: string) {
@@ -107,13 +166,19 @@ function extractJMeldingNumber(text: string) {
   return match ? `j-${match[1]}-${match[2]}` : undefined;
 }
 
-function extractValidity(text: string) {
+/**
+ * Pull the validity window out of Fiskeridir text. The end date is labelled
+ * "Gyldig til og med" on a notice still in force and "Utløpsdato" once it has
+ * expired — matching only `gyldig til` (as this did) left every expired notice
+ * with no end date at all, so nothing could contradict its status keyword.
+ */
+export function extractValidity(text: string) {
   return {
     validFrom: text.match(
-      /(?:gyldig\s+fra)\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/i,
+      /gyldig\s+fra(?:\s+og\s+med)?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/i,
     )?.[1],
     validTo: text.match(
-      /(?:gyldig\s+til)\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/i,
+      /(?:gyldig\s+til(?:\s+og\s+med)?|utløpsdato|utlopsdato)\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})/i,
     )?.[1],
   };
 }
@@ -156,15 +221,17 @@ function parseLinks(
     const href = normalizeUrl(match[1], baseUrl);
     const title = decodeEntities(stripTags(match[2]));
     if (!title || !isJMeldingLink(href, title)) continue;
-    const idx = match.index ?? 0;
-    const context = stripTags(
-      html.slice(Math.max(0, idx - 700), Math.min(html.length, idx + 700)),
-    );
+    // The link text is the whole listing row — number, heading, validity
+    // window and status word ("J-114-2023 Forskrift … Gyldig fra og med
+    // 07.07.2023 Utløpsdato 31.12.2023 Utgått"). Classify from that alone; the
+    // surrounding markup this used to include belongs to the neighbouring rows.
+    const validity = extractValidity(title);
     deduped.set(href, {
       title,
       url: href,
-      status: detectStatus(`${title} ${context}`, fallbackStatus),
-      publishedAt: extractDate(`${title} ${context}`),
+      status: withExpiry(detectStatus(title, fallbackStatus), validity.validTo),
+      publishedAt: extractDate(title),
+      ...validity,
     });
   }
   return Array.from(deduped.values());
@@ -307,12 +374,32 @@ async function fetchDetail(
     contentHash = createHash("sha256")
       .update(bodyText.slice(0, 6000))
       .digest("hex");
-    pageStatus = detectStatus(`${bodyText} ${item.title}`, pageStatus);
+    // The page's own metadata header, in preference to anything in the body:
+    // `Status`, and the end date under whichever label applies.
+    const fieldStatus = extractDataListValue(mainHtml, "Status");
+    const fieldValidFrom = extractDataListValue(mainHtml, "Gyldig fra og med");
+    const fieldValidTo =
+      extractDataListValue(mainHtml, "Gyldig til og med") ??
+      extractDataListValue(mainHtml, "Utløpsdato");
     publishedAt = publishedAt ?? extractDate(bodyText);
     jmNumber = jmNumber ?? extractJMeldingNumber(`${item.title} ${bodyText}`);
-    const validity = extractValidity(`${item.title} ${bodyText}`);
-    validFrom = validity.validFrom ?? validFrom;
-    validTo = validity.validTo ?? validTo;
+    const validity = extractValidity(item.title);
+    validFrom = firstParseable(
+      parseValidityStart,
+      fieldValidFrom,
+      validity.validFrom,
+      validFrom,
+    );
+    validTo = firstParseable(
+      parseValidityEnd,
+      fieldValidTo,
+      validity.validTo,
+      validTo,
+    );
+    pageStatus = withExpiry(
+      detectStatus(fieldStatus ?? item.title, pageStatus),
+      validTo,
+    );
     category = detectCategory(item.title, bodyText);
   }
   return {

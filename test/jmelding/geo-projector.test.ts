@@ -40,6 +40,7 @@ afterAll(async () => {
 function makeItem(
   jmNumber: string,
   bodyMarkdown: string,
+  overrides: Partial<JMeldingAnnouncementDiscovered> = {},
 ): JMeldingAnnouncementDiscovered {
   return {
     signature: `sig-${jmNumber}`,
@@ -50,6 +51,7 @@ function makeItem(
     jmNumber,
     bodyMarkdown,
     checkedAt: new Date().toISOString(),
+    ...overrides,
   };
 }
 
@@ -122,6 +124,148 @@ describe("JMeldingGeoProjector + repository", () => {
     expect(fetched).not.toBeNull();
     expect(fetched?.hasGeo).toBe(false);
     expect(fetched?.bbox).toBeNull();
+  });
+
+  test("an expired notice stored as current is not returned as current", async () => {
+    if (!runCtx) return;
+    const projector = new JMeldingGeoProjector(runCtx.db);
+    const repository = new JMeldingGeoRepository(runCtx.db);
+
+    // Exactly the shape of the ~1,296 rows Gilli was shown: the scraper filed
+    // it as current, and its own expiry date says otherwise. The row is not
+    // rewritten — the read is what refuses to call it current.
+    const expired = makeItem("test-70-2099", "Ingen koordinater her.", {
+      title: "Test test-70-2099 Utløpsdato 31.12.2023 Utgått",
+      status: "current",
+      validFrom: "07.07.2023",
+      validTo: "31.12.2023",
+    });
+    const inForce = makeItem("test-71-2099", "Ingen koordinater her.", {
+      status: "current",
+      validFrom: "01.01.2026",
+      validTo: "31.12.2099",
+    });
+    const upcoming = makeItem("test-72-2099", "Ingen koordinater her.", {
+      status: "current",
+      validFrom: "01.01.2098",
+      validTo: "01.01.2099",
+    });
+    await projector.project(expired, null);
+    await projector.project(inForce, null);
+    await projector.project(upcoming, null);
+
+    const current = await repository.list({ status: "current", limit: 100 });
+    const returned = current.rows.map((r) => r.jmNumber);
+    expect(returned).toContain("test-71-2099");
+    expect(returned).not.toContain("test-70-2099");
+    // Adopted but not yet started — also not in force right now.
+    expect(returned).not.toContain("test-72-2099");
+
+    // …and neither of them falls off the edge of the world: every row stays
+    // reachable from some filter, or "which regulations have expired" would
+    // silently come back short for exactly the rows this fix is about.
+    const archived = await repository.list({ status: "archived", limit: 100 });
+    expect(archived.rows.map((r) => r.jmNumber)).toContain("test-70-2099");
+
+    const upcomingPage = await repository.list({
+      status: "upcoming",
+      limit: 100,
+    });
+    const upcomingRows = upcomingPage.rows.map((r) => r.jmNumber);
+    expect(upcomingRows).toContain("test-72-2099");
+    expect(upcomingRows).not.toContain("test-71-2099");
+  });
+
+  test("persists the validity window and exposes it on the row", async () => {
+    if (!runCtx) return;
+    const projector = new JMeldingGeoProjector(runCtx.db);
+    const repository = new JMeldingGeoRepository(runCtx.db);
+
+    await projector.project(
+      makeItem("test-73-2099", "Ingen koordinater her.", {
+        validFrom: "19.06.2025",
+        validTo: "21.07.2025",
+      }),
+      null,
+    );
+
+    const fetched = await repository.findByJmNumber("test-73-2099");
+    expect(fetched?.validFrom).toBe("2025-06-19T00:00:00.000Z");
+    // Inclusive end: the notice is in force for the whole of its Utløpsdato.
+    expect(fetched?.validTo).toBe("2025-07-21T23:59:59.999Z");
+  });
+
+  test("an expired closure is not drawn", async () => {
+    if (!runCtx) return;
+    const projector = new JMeldingGeoProjector(runCtx.db);
+    const repository = new JMeldingGeoRepository(runCtx.db);
+
+    await projector.project(
+      makeItem(
+        "test-74-2099",
+        `Steinryggen:
+1. Nord 71 grader 10,000 minutter. Øst 024 grader 53,000 minutter.
+2. Nord 71 grader 11,600 minutter. Øst 024 grader 53,700 minutter.`,
+        { status: "current", validTo: "31.12.2023" },
+      ),
+      null,
+    );
+
+    const drawable = await repository.listForDrawing({ region: "NO" });
+    expect(drawable.map((r) => r.jmNumber)).not.toContain("test-74-2099");
+
+    const inBbox = await repository.findInBbox({
+      minLon: 24,
+      minLat: 70,
+      maxLon: 32,
+      maxLat: 72,
+      status: "current",
+      limit: 10,
+    });
+    expect(inBbox.rows.map((r) => r.jmNumber)).not.toContain("test-74-2099");
+  });
+
+  test("repairs a Faroese ring on projection, and again on re-projection", async () => {
+    if (!runCtx) return;
+    const projector = new JMeldingGeoProjector(runCtx.db);
+    const repository = new JMeldingGeoRepository(runCtx.db);
+
+    // Veiðibann nr. 14/2026 exactly as Vørn published it: the closing "6104 N
+    // – 0700 W" was typed "6014 N", ~93 km too far south. This is what a row
+    // projected before the ring repair landed still holds, and what
+    // scripts/jmelding-reproject-geometry.ts feeds back through the projector.
+    const raw: Array<[number, number]> = [
+      [61.0667, -7.0],
+      [60.95, -7.1],
+      [60.75, -7.0],
+      [60.65, -6.9],
+      [60.75, -6.6],
+      [60.2333, -7.0],
+    ];
+    const item = makeItem("test-vorn-14", "", {
+      region: "FO",
+      title: "Test Veiðibann nr. 14",
+      areas: [
+        {
+          name: "Veiðibann nr. 14",
+          points: raw.map(([lat, lon]) => ({ lat, lon })),
+        },
+      ],
+    });
+
+    await projector.project(item, null);
+    const repaired = await repository.findByJmNumber("test-vorn-14");
+    // The typo'd vertex is dropped, so the southern edge is 60.65, not 60.2333.
+    expect(repaired?.bbox).toEqual([-7.1, 60.65, -6.6, 61.0667]);
+
+    // Re-projecting the already-repaired row leaves it alone — the backfill is
+    // safe to re-run.
+    await projector.project(
+      { ...item, areas: repaired?.areas as typeof item.areas },
+      null,
+    );
+    const again = await repository.findByJmNumber("test-vorn-14");
+    expect(again?.bbox).toEqual([-7.1, 60.65, -6.6, 61.0667]);
   });
 
   test("skips noise rows (no jmNumber + status unknown)", async () => {
