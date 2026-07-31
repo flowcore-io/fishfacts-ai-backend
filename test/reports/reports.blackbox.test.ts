@@ -210,21 +210,24 @@ describe("Reports black-box", () => {
   test("the captured map view renders as prose plus a full snapshot", async () => {
     const response = await postReport(USER_TOKEN, {
       ...VALID_REPORT,
-      route: "/map?layer=temperature",
+      route: "/map",
+      // Deliberately fully populated: every slot the renderer can print. The
+      // live-capture test below covers the sparse real-world shape.
       mapState: {
         center: { lat: 62.01842, lng: -6.77121 },
         zoom: 7.53,
         bbox: [-8.1, 61.2, -5.4, 62.9],
         mapStack: "mapbox",
         baseLayer: "temperature",
-        iceLayers: [],
+        iceLayers: ["EAST_GREENLAND", "SVALBARD"],
         mapAreas: {
-          base: null,
-          zones: [],
+          base: "SEABED_COLOUR",
+          feature: "DEPTH_CURVES_COLOUR",
+          zones: ["NAFO_DIVISIONS"],
           top: ["EEZ_LINES", "DEPTH_CURVES"],
         },
         layerSettings: { layer: "temperature", dateLabel: "2026-07-27 12:00" },
-        aiOverlays: { count: 3, isVisible: true },
+        aiOverlays: { count: 3, isVisible: false },
         vesselsInView: { total: 142, returned: 0 },
         servicesInView: { returned: 0 },
         farmsInView: { returned: 2 },
@@ -245,9 +248,9 @@ describe("Reports black-box", () => {
     expect(response.status).toBe(201);
     const body = await response.json();
     const created = usable.fragments.get(body.fragmentId);
-    expect(created?.content).toContain('route: "/map?layer=temperature"');
+    expect(created?.content).toContain('route: "/map"');
     expect(created?.content).toContain("## Map state");
-    expect(created?.content).toContain("- Route: `/map?layer=temperature`");
+    expect(created?.content).toContain("- Route: `/map`");
     expect(created?.content).toContain("- View: 62.0184, -6.7712 @ zoom 7.53");
     expect(created?.content).toContain(
       "- Bounds (W,S,E,N): -8.1000, 61.2000, -5.4000, 62.9000",
@@ -256,9 +259,13 @@ describe("Reports black-box", () => {
       "- Base layer: temperature (2026-07-27 12:00)",
     );
     expect(created?.content).toContain(
-      "- Map areas: overlays EEZ_LINES, DEPTH_CURVES",
+      "- Ice layers: EAST_GREENLAND, SVALBARD",
     );
-    expect(created?.content).toContain("- AI overlays: 3");
+    // All four map-area slots, not just `top`.
+    expect(created?.content).toContain(
+      "- Map areas: base SEABED_COLOUR; feature DEPTH_CURVES_COLOUR; zones NAFO_DIVISIONS; overlays EEZ_LINES, DEPTH_CURVES",
+    );
+    expect(created?.content).toContain("- AI overlays: 3 (hidden)");
     expect(created?.content).toContain(
       "- Selected: 2 vessel(s), 0 area(s), 0 cage(s), 0 service(s)",
     );
@@ -270,8 +277,45 @@ describe("Reports black-box", () => {
     expect(created?.content).toContain("someFutureFeField");
     // The queue summary says where it was filed from.
     expect(created?.summary).toContain(
-      "Filed from /map?layer=temperature (map at 62.0184, -6.7712 @ zoom 7.53).",
+      "Filed from /map (map at 62.0184, -6.7712 @ zoom 7.53).",
     );
+  });
+
+  test("the query string is stripped from route, wherever it came from", async () => {
+    // `route` is client-supplied by any authenticated caller. The FE already
+    // drops the query because FishFacts accepts `auth_token`/`username` there;
+    // this asserts the server does not depend on that.
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/map?auth_token=SECRET-TOKEN-VALUE&username=skipper#panel",
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    // Body, indexed frontmatter and listing summary — all three.
+    expect(created?.content).not.toContain("SECRET-TOKEN-VALUE");
+    expect(created?.content).not.toContain("auth_token");
+    expect(created?.summary).not.toContain("SECRET-TOKEN-VALUE");
+    // The hash survives; only the query is dropped.
+    expect(created?.content).toContain("- Route: `/map#panel`");
+  });
+
+  test("an unparseable map state costs the map section, never the report", async () => {
+    const response = await postReport(USER_TOKEN, {
+      ...VALID_REPORT,
+      route: "/map",
+      // Wrong shape for a known field — the drift `.passthrough()` cannot
+      // catch, and the class of bug that modelled `mapAreas` as a flat list.
+      mapState: { bbox: [1, 2, 3], baseLayer: "x".repeat(500) },
+    });
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    const created = usable.fragments.get(body.fragmentId);
+    expect(created?.content).toContain("_No map state captured");
+    // The rest of the capture survives intact — that is the whole point.
+    expect(created?.content).toContain("show me herring catches");
+    expect(created?.content).toContain("draw_catch_bubbles");
+    expect(created?.content).toContain("- Route: `/map`");
   });
 
   // Captured verbatim off a running fishfacts-fe (/map, 2026-07-31) rather
@@ -325,8 +369,10 @@ describe("Reports black-box", () => {
     expect(created?.content).toContain(
       "- Selected: 1 vessel(s), 0 area(s), 0 cage(s), 0 service(s)",
     );
-    // No trackMode in this capture — the line is dropped, not rendered empty.
-    expect(created?.content).not.toContain("- Tracks:");
+    // No trackMode in this capture (persisted setting, untouched by this
+    // user) but trackPeriod always has a default — the period must still
+    // reach the prose rather than hiding in the JSON.
+    expect(created?.content).toContain("- Tracks: period D3");
   });
 
   test("a report with no map state says so instead of faking one", async () => {

@@ -126,10 +126,24 @@ export const reportSubmissionSchema = z.object({
       height: z.number().int().positive(),
     })
     .optional(),
-  // Path+query+hash the user was on. Not a URL — the FE deliberately drops
-  // the origin — so it is validated as a bounded opaque string.
-  route: z.string().max(2_000).optional(),
-  mapState: reportMapStateSchema.nullish(),
+  // Path + hash only. NOT a URL, and NOT the query string: FishFacts accepts
+  // `auth_token`/`username` as query params (fishfacts-fe `services/auth.ts`),
+  // and this value is written to the fragment body, the indexed frontmatter
+  // AND the listing summary. The FE strips the query at capture time; strip it
+  // again here, because `route` is client-supplied by any authenticated caller
+  // and this schema outlives any single FE release.
+  route: z
+    .string()
+    .max(2_000)
+    .transform((value) => value.replace(/\?[^#]*/g, ""))
+    .optional(),
+  // Fails closed, like the FE's `captureMapStateForReport()`: this block is
+  // decorative context, so a shape surprise inside it must cost the map
+  // section, never the chat log, tool calls and network requests alongside it.
+  // (`.passthrough()` protects UNKNOWN fields; this protects known ones
+  // arriving in an unexpected shape — the likelier drift, and the exact bug
+  // that modelled `mapAreas` as a flat list during development.)
+  mapState: reportMapStateSchema.nullish().catch(undefined),
   capturedAt: z.string().max(40).optional(),
   // Clips the FE already applied at capture time (ring-buffer clipping) —
   // folded into the fragment's truncated/clippedValues accounting so the

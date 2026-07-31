@@ -201,15 +201,13 @@ function formatMapAreas(mapAreas: ReportMapState["mapAreas"]): string | null {
     (values ?? []).filter(
       (v): v is string => typeof v === "string" && v !== "",
     );
+  const zones = list(mapAreas.zones);
+  const top = list(mapAreas.top);
   const parts = [
     mapAreas.base ? `base ${inline(mapAreas.base)}` : null,
     mapAreas.feature ? `feature ${inline(mapAreas.feature)}` : null,
-    list(mapAreas.zones).length > 0
-      ? `zones ${list(mapAreas.zones).map(inline).join(", ")}`
-      : null,
-    list(mapAreas.top).length > 0
-      ? `overlays ${list(mapAreas.top).map(inline).join(", ")}`
-      : null,
+    zones.length > 0 ? `zones ${zones.map(inline).join(", ")}` : null,
+    top.length > 0 ? `overlays ${top.map(inline).join(", ")}` : null,
   ].filter((part): part is string => part !== null);
   return parts.length > 0 ? `- Map areas: ${parts.join("; ")}` : null;
 }
@@ -285,13 +283,22 @@ function mapStateSection(
         countOf(mapState.servicesInView?.returned) ?? 0
       } service(s), ${countOf(mapState.farmsInView?.returned) ?? 0} farm(s)`
     : null;
-  const tracks = mapState.trackMode
-    ? `- Tracks: mode ${inline(String(mapState.trackMode))}${
-        mapState.trackPeriod
-          ? `, period ${inline(String(mapState.trackPeriod))}`
-          : ""
-      }`
-    : null;
+  // Either half is worth printing: `trackMode` is persisted settings and stays
+  // undefined until the user touches it, while `trackPeriod` always has a
+  // default — so gating on mode alone hides the period on most real captures.
+  const tracks =
+    mapState.trackMode || mapState.trackPeriod
+      ? `- Tracks: ${[
+          mapState.trackMode
+            ? `mode ${inline(String(mapState.trackMode))}`
+            : null,
+          mapState.trackPeriod
+            ? `period ${inline(String(mapState.trackPeriod))}`
+            : null,
+        ]
+          .filter((part): part is string => part !== null)
+          .join(", ")}`
+      : null;
 
   const full = toolJsonAsText(mapState, counter);
   return [
