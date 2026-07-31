@@ -111,6 +111,12 @@ export const jmeldingGeo = pgTable(
     category: text("category"),
     url: text("url").notNull(),
     signature: text("signature").notNull(),
+    // Validity window as published by the source. `status` records what the
+    // source called the regulation when we scraped it; these let a read decide
+    // whether it is in force NOW, so a stale row stops being reported as
+    // current without waiting for a re-scrape.
+    validFrom: timestamp("valid_from", { withTimezone: true }),
+    validTo: timestamp("valid_to", { withTimezone: true }),
     hasGeo: boolean("has_geo").notNull().default(false),
     areas: jsonb("areas").notNull().default([]),
     geojson: jsonb("geojson"),
@@ -129,6 +135,7 @@ export const jmeldingGeo = pgTable(
   (table) => ({
     geomGistIdx: index("jmelding_geo_geom_gist_idx").using("gist", table.geom),
     statusIdx: index("jmelding_geo_status_idx").on(table.status),
+    validToIdx: index("jmelding_geo_valid_to_idx").on(table.validTo),
     regionIdx: index("jmelding_geo_region_idx").on(table.region),
     hasGeoIdx: index("jmelding_geo_has_geo_idx").on(table.hasGeo),
     fragmentKeyIdx: index("jmelding_geo_fragment_key_idx").on(

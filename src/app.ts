@@ -194,6 +194,10 @@ export function createApp({
       regionRaw === "NO" || regionRaw === "FO" || regionRaw === "IS"
         ? regionRaw
         : undefined;
+    // Honoured on every path, spatial ones included — `status=current` means
+    // "in force now" (see JMeldingGeoRepository › statusConditions), and a map
+    // query is exactly where an expired closure would be drawn.
+    const status = params.get("status") ?? undefined;
 
     // Bulk-draw path: return every matching regulation WITH geometry inline so
     // the client can draw a whole set (e.g. all Icelandic closures) in one call
@@ -211,7 +215,7 @@ export function createApp({
         );
       const rows = await geoRepository.listForDrawing({
         region,
-        status: params.get("status") ?? undefined,
+        status,
         bbox: drawBbox
           ? [drawBbox.minLon, drawBbox.minLat, drawBbox.maxLon, drawBbox.maxLat]
           : undefined,
@@ -234,6 +238,7 @@ export function createApp({
       const page = await geoRepository.findInBbox({
         ...bbox,
         region,
+        status,
         limit,
         cursor,
       });
@@ -254,13 +259,13 @@ export function createApp({
       const page = await geoRepository.findNear({
         ...near,
         region,
+        status,
         limit,
         cursor,
       });
       return c.json(page);
     }
 
-    const status = params.get("status") ?? undefined;
     const hasGeoRaw = params.get("hasGeo");
     const hasGeo =
       hasGeoRaw === null

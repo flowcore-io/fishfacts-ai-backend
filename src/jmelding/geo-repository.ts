@@ -12,6 +12,9 @@ export type GeoListRow = {
   region: string;
   category: string | null;
   url: string;
+  /** Validity window as published by the source; null where none was given. */
+  validFrom: string | null;
+  validTo: string | null;
   hasGeo: boolean;
   bbox: GeoBbox | null;
 };
@@ -39,6 +42,7 @@ export type BboxParams = {
   maxLon: number;
   maxLat: number;
   region?: string;
+  status?: string;
   limit: number;
   cursor?: string | null;
 };
@@ -48,6 +52,7 @@ export type NearParams = {
   lat: number;
   radiusKm: number;
   region?: string;
+  status?: string;
   limit: number;
   cursor?: string | null;
 };
@@ -66,6 +71,8 @@ const SELECT_LIST_COLUMNS = sql`
   region,
   category,
   url,
+  valid_from,
+  valid_to,
   has_geo,
   min_lat,
   max_lat,
@@ -83,6 +90,8 @@ const SELECT_FULL_COLUMNS = sql`
   category,
   url,
   signature,
+  valid_from,
+  valid_to,
   has_geo,
   areas,
   ST_AsGeoJSON(geom)::jsonb AS geom_geojson,
@@ -104,6 +113,8 @@ type ListDbRow = {
   region: string;
   category: string | null;
   url: string;
+  valid_from: Date | string | null;
+  valid_to: Date | string | null;
   has_geo: boolean;
   min_lat: number | null;
   max_lat: number | null;
@@ -138,6 +149,19 @@ function decodeCursor(cursor: string | null | undefined): string | null {
   }
 }
 
+/**
+ * Timestamps come back from `db.execute` either as a Date or as Postgres' own
+ * rendering ("2025-06-19 00:00:00+00") depending on the driver path. Callers
+ * get ISO 8601 either way; an unparseable value is passed through rather than
+ * dropped.
+ */
+function toIso(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? value : new Date(parsed).toISOString();
+}
+
 function toListRow(row: ListDbRow): GeoListRow {
   const bbox: GeoBbox | null =
     row.min_lat !== null &&
@@ -155,6 +179,8 @@ function toListRow(row: ListDbRow): GeoListRow {
     region: row.region,
     category: row.category,
     url: row.url,
+    validFrom: toIso(row.valid_from),
+    validTo: toIso(row.valid_to),
     hasGeo: row.has_geo,
     bbox,
   };
@@ -193,6 +219,28 @@ function paginate<T extends { jmNumber: string }>(
   return { rows, nextCursor: null };
 }
 
+/**
+ * Filter for a requested `status`. Asking for `current` is a question about
+ * right now, so it is answered against the clock and not only against the
+ * word a scraper stored: a row also has to be inside its published validity
+ * window. That is what keeps a notice that expired in 2011 — or an Icelandic
+ * skyndilokun whose two weeks are up — out of the answer without anything
+ * having to rewrite the stored row first.
+ *
+ * A row with no window (Norwegian notices scraped before `valid_to` was
+ * captured, open-ended regulations) is left in: absence of a date is not
+ * evidence of expiry. Run `scripts/jmelding-backfill-validity.ts` to fill the
+ * dates in for rows already stored.
+ */
+function statusConditions(status: string): SQL[] {
+  const conditions: SQL[] = [sql`status = ${status}`];
+  if (status === "current") {
+    conditions.push(sql`(valid_to IS NULL OR valid_to >= now())`);
+    conditions.push(sql`(valid_from IS NULL OR valid_from <= now())`);
+  }
+  return conditions;
+}
+
 export class JMeldingGeoRepository {
   constructor(private readonly db: Database) {}
 
@@ -217,7 +265,7 @@ export class JMeldingGeoRepository {
     const limit = clampLimit(params.limit);
     const cursor = decodeCursor(params.cursor);
     const conditions: SQL[] = [];
-    if (params.status) conditions.push(sql`status = ${params.status}`);
+    if (params.status) conditions.push(...statusConditions(params.status));
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (typeof params.hasGeo === "boolean")
       conditions.push(sql`has_geo = ${params.hasGeo}`);
@@ -252,12 +300,14 @@ export class JMeldingGeoRepository {
       status: string;
       region: string;
       category: string | null;
+      validFrom: string | null;
+      validTo: string | null;
       areas: unknown;
     }>
   > {
     const cap = Math.min(Math.max(params.limit ?? 500, 1), 1000);
     const conditions: SQL[] = [sql`geom IS NOT NULL`];
-    conditions.push(sql`status = ${params.status ?? "current"}`);
+    conditions.push(...statusConditions(params.status ?? "current"));
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (params.bbox) {
       const [minLon, minLat, maxLon, maxLat] = params.bbox;
@@ -271,9 +321,11 @@ export class JMeldingGeoRepository {
       status: string;
       region: string;
       category: string | null;
+      valid_from: Date | string | null;
+      valid_to: Date | string | null;
       areas: unknown;
     }>(sql`
-      SELECT jm_number, title, status, region, category, areas
+      SELECT jm_number, title, status, region, category, valid_from, valid_to, areas
       FROM jmelding_geo
       ${whereClause(conditions)}
       ORDER BY jm_number DESC
@@ -288,6 +340,8 @@ export class JMeldingGeoRepository {
       status: r.status as string,
       region: r.region as string,
       category: (r.category as string | null) ?? null,
+      validFrom: toIso((r.valid_from as Date | string | null) ?? null),
+      validTo: toIso((r.valid_to as Date | string | null) ?? null),
       areas: r.areas,
     }));
   }
@@ -299,6 +353,7 @@ export class JMeldingGeoRepository {
       sql`geom IS NOT NULL`,
       sql`ST_Intersects(geom, ST_MakeEnvelope(${params.minLon}, ${params.minLat}, ${params.maxLon}, ${params.maxLat}, 4326))`,
     ];
+    if (params.status) conditions.push(...statusConditions(params.status));
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (cursor) conditions.push(sql`jm_number < ${cursor}`);
     const where = whereClause(conditions);
@@ -320,6 +375,7 @@ export class JMeldingGeoRepository {
       sql`geom IS NOT NULL`,
       sql`ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(${params.lon}, ${params.lat}), 4326)::geography, ${radiusMeters})`,
     ];
+    if (params.status) conditions.push(...statusConditions(params.status));
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (cursor) conditions.push(sql`jm_number < ${cursor}`);
     const where = whereClause(conditions);

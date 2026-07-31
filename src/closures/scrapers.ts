@@ -7,6 +7,7 @@
  * Pure fetch+parse — no DB/event deps — so they are unit/live testable in
  * isolation. The collector jobs map `ClosureRecord` → the discovered event.
  */
+import { parseFaroeseValidityWindow, withExpiry } from "@/jmelding/validity";
 
 export type ClosurePoint = { lat: number; lng: number };
 
@@ -128,19 +129,27 @@ export function parseVornBan(url: string, html: string): ClosureRecord {
 
   const gear = (text.match(/\b(trol|línu|lína|nót|garn|teinur)\b/i) || [])[1];
   const legalBasis = (text.match(/Løgtingslóg[^.]*\.?/i) || [])[0]?.trim();
-  // "galdandi frá ... til ..." validity window (best-effort).
-  const valid = text.match(/galdandi fr[áa]\s+([^.]{3,80})/i)?.[1]?.trim();
+  // "Veiðibannið er galdandi frá í dag, hin 1. juli 2026 klokkan 23:00 til
+  // 29. juli 2026 klokkan 23:00." — parsed into real instants. A bráðfeingis
+  // ban runs for a few weeks and Vørn leaves the page up afterwards, so
+  // without an end date nothing downstream can tell that one has lapsed. (The
+  // previous `[^.]{3,80}` capture stopped at the period in "1." and stored
+  // "í dag, hin 1" as the start date.)
+  const validity = parseFaroeseValidityWindow(text);
 
   return {
     region: "FO",
     source: "vorn",
     sourceKey: vornSourceKey(url),
     title: vornTitleFromUrl(url) || url,
-    status: "active",
+    // Vørn publishes no status field — a ban is in force until its window
+    // closes, which is exactly what `withExpiry` decides.
+    status: withExpiry("active", validity.validTo),
     closureType: "bráðfeingis veiðibann",
     gear,
     legalBasis,
-    validFrom: valid,
+    validFrom: validity.validFrom,
+    validTo: validity.validTo,
     url,
     geometryType:
       points.length >= 3
@@ -284,17 +293,21 @@ export function featureToClosure(
     stableId !== undefined && stableId !== null ? stableId : (f.id ?? ""),
   );
   const title = str("heiti") || str("vfheiti") || `${closureType} ${fid}`;
+  const validTo = str("dags_til");
   return {
     region: "IS",
     source: "fiskistofa-wfs",
     sourceKey: `fiskistofa-${layer}-${fid}`,
     title,
-    status: "active",
+    // The layer is named "virkar_…" (active) but we keep every feature we have
+    // ever seen, so a closure that has since run out must expire on its own
+    // `dags_til` rather than stay active forever.
+    status: withExpiry("active", validTo),
     closureType,
     legalBasis: str("fors") || str("vmork"),
     species: str("teg_veidisvaeda"),
     validFrom: str("dags_fra"),
-    validTo: str("dags_til"),
+    validTo,
     url: "https://www.fiskistofa.is/fiskveidistjorn/skyndilokanir/",
     geometryType,
     points,
