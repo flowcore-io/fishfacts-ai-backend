@@ -230,7 +230,7 @@ function mapStateSection(
   const route = submission.route
     ? `- Route: \`${inline(submission.route)}\``
     : null;
-  const mapState = submission.mapState as ReportMapState | null | undefined;
+  const mapState = submission.mapState;
   if (!mapState) {
     return [
       ...(route ? [route] : []),
