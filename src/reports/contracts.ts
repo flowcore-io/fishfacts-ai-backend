@@ -33,6 +33,81 @@ export const reportNetworkRequestSchema = z.object({
   durationMs: z.number().finite().nonnegative().optional(),
 });
 
+/**
+ * The FE's live map view at report time (`mapViewSnapshot.ts`). Only the
+ * fields the fragment renders as prose are typed; `.passthrough()` keeps
+ * everything else so the FE can add map state without a backend release —
+ * unknown fields still land in the fenced JSON dump. Every typed field is
+ * optional/nullable because the map may not be mounted at all.
+ */
+export const reportMapStateSchema = z
+  .object({
+    center: z.object({ lat: z.number(), lng: z.number() }).nullish(),
+    zoom: z.number().nullish(),
+    bbox: z.array(z.number()).length(4).nullish(),
+    mapStack: z.string().max(40).nullish(),
+    baseLayer: z.string().max(100).nullish(),
+    iceLayers: z.array(z.string().max(100)).max(50).optional(),
+    // FE's `TMapAreas`: a record of the four area slots, not a flat list.
+    // `top` is a sparse tuple, so its holes arrive as nulls.
+    mapAreas: z
+      .object({
+        base: z.string().max(100).nullish(),
+        feature: z.string().max(100).nullish(),
+        zones: z.array(z.string().max(100)).max(100).optional(),
+        top: z.array(z.string().max(100).nullish()).max(20).optional(),
+      })
+      .passthrough()
+      .nullish(),
+    layerSettings: z
+      .object({ dateLabel: z.string().max(100).nullish() })
+      .passthrough()
+      .nullish(),
+    aiOverlays: z
+      .object({
+        count: z.number().int().nonnegative().optional(),
+        isVisible: z.boolean().optional(),
+      })
+      .passthrough()
+      .optional(),
+    vesselsInView: z
+      .object({ total: z.number().int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    servicesInView: z
+      .object({ returned: z.number().int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    farmsInView: z
+      .object({ returned: z.number().int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    selected: z
+      .object({
+        vessels: z.array(z.unknown()).optional(),
+        areas: z.array(z.unknown()).optional(),
+        cages: z.array(z.unknown()).optional(),
+        services: z.array(z.unknown()).optional(),
+      })
+      .passthrough()
+      .optional(),
+    // True selection sizes. Present only on report captures, where `selected`
+    // above is a capped identity-only sample and its lengths would understate
+    // a large selection.
+    selectedTotals: z
+      .object({
+        vessels: z.number().int().nonnegative().optional(),
+        areas: z.number().int().nonnegative().optional(),
+        cages: z.number().int().nonnegative().optional(),
+        services: z.number().int().nonnegative().optional(),
+      })
+      .passthrough()
+      .optional(),
+    trackMode: z.string().max(60).nullish(),
+    trackPeriod: z.string().max(60).nullish(),
+  })
+  .passthrough();
+
 export const reportSubmissionSchema = z.object({
   // Conversation ids are uuid-ish; the charset constraint keeps raw ids safe
   // to interpolate into fragment tags and titles.
@@ -51,6 +126,24 @@ export const reportSubmissionSchema = z.object({
       height: z.number().int().positive(),
     })
     .optional(),
+  // Path + hash only. NOT a URL, and NOT the query string: FishFacts accepts
+  // `auth_token`/`username` as query params (fishfacts-fe `services/auth.ts`),
+  // and this value is written to the fragment body, the indexed frontmatter
+  // AND the listing summary. The FE strips the query at capture time; strip it
+  // again here, because `route` is client-supplied by any authenticated caller
+  // and this schema outlives any single FE release.
+  route: z
+    .string()
+    .max(2_000)
+    .transform((value) => value.replace(/\?[^#]*/g, ""))
+    .optional(),
+  // Fails closed, like the FE's `captureMapStateForReport()`: this block is
+  // decorative context, so a shape surprise inside it must cost the map
+  // section, never the chat log, tool calls and network requests alongside it.
+  // (`.passthrough()` protects UNKNOWN fields; this protects known ones
+  // arriving in an unexpected shape — the likelier drift, and the exact bug
+  // that modelled `mapAreas` as a flat list during development.)
+  mapState: reportMapStateSchema.nullish().catch(undefined),
   capturedAt: z.string().max(40).optional(),
   // Clips the FE already applied at capture time (ring-buffer clipping) —
   // folded into the fragment's truncated/clippedValues accounting so the
@@ -65,6 +158,7 @@ export const reportSubmissionSchema = z.object({
 });
 
 export type ReportSubmission = z.infer<typeof reportSubmissionSchema>;
+export type ReportMapState = z.infer<typeof reportMapStateSchema>;
 export type ReportMessage = z.infer<typeof reportMessageSchema>;
 export type ReportToolCall = z.infer<typeof reportToolCallSchema>;
 export type ReportNetworkRequest = z.infer<typeof reportNetworkRequestSchema>;
