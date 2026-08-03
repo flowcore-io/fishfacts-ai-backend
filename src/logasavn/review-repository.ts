@@ -79,19 +79,138 @@ export class LogasavnReviewRepository {
    * thing in the queue is backwards: unknown is not in force.
    */
   async listPending(): Promise<ReviewRow[]> {
+    return this.listForReview({ status: "pending" });
+  }
+
+  /**
+   * The queue, filtered and ranked for a human working through it.
+   *
+   * Every filter is OPTIONAL and defaults to off, so the unfiltered call
+   * returns everything current. That direction matters: a list endpoint whose
+   * default hides rows is how a statute stops being looked at without anyone
+   * choosing to stop looking at it.
+   */
+  async listForReview(
+    filters: {
+      status?: ReviewStatus;
+      reason?: ReviewReason;
+      /** Only statutes currently in force. */
+      inForceOnly?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): Promise<ReviewRow[]> {
+    const conditions = [sql`${logasavnReview.isCurrent}`];
+    if (filters.status) {
+      conditions.push(sql`${logasavnReview.reviewStatus} = ${filters.status}`);
+    }
+    if (filters.reason) {
+      conditions.push(sql`${logasavnReview.reviewReason} = ${filters.reason}`);
+    }
+    if (filters.inForceOnly) {
+      conditions.push(sql`${logasavnReview.validityStatus} = ${IN_FORCE}`);
+    }
+    let where = conditions[0] as ReturnType<typeof sql>;
+    for (let i = 1; i < conditions.length; i++) {
+      where = sql`${where} AND ${conditions[i]}`;
+    }
     const rows = await this.db
       .select()
       .from(logasavnReview)
-      .where(
-        sql`${logasavnReview.isCurrent} AND ${logasavnReview.reviewStatus} = 'pending'`,
-      )
+      .where(where)
       .orderBy(
         sql`(${logasavnReview.validityStatus} = ${IN_FORCE}) DESC NULLS LAST,
             ${logasavnReview.withheldCount} DESC,
             (${logasavnReview.authority} = 'uttanrikis-og-fiskimalaradid') DESC NULLS LAST,
             ${logasavnReview.title} ASC`,
-      );
+      )
+      .limit(filters.limit ?? 500)
+      .offset(filters.offset ?? 0);
     return rows.map(toReviewRow);
+  }
+
+  /** Queue shape at a glance, so a reviewer knows what they are facing. */
+  async summarise(): Promise<{
+    total: number;
+    byStatus: Record<string, number>;
+    byReason: Record<string, number>;
+    inForcePending: number;
+  }> {
+    const rows = await this.db
+      .select()
+      .from(logasavnReview)
+      .where(sql`${logasavnReview.isCurrent}`);
+    const byStatus: Record<string, number> = {};
+    const byReason: Record<string, number> = {};
+    let inForcePending = 0;
+    for (const row of rows) {
+      byStatus[row.reviewStatus] = (byStatus[row.reviewStatus] ?? 0) + 1;
+      byReason[row.reviewReason] = (byReason[row.reviewReason] ?? 0) + 1;
+      if (row.reviewStatus === "pending" && row.validityStatus === IN_FORCE) {
+        inForcePending += 1;
+      }
+    }
+    return { total: rows.length, byStatus, byReason, inForcePending };
+  }
+
+  /**
+   * Record a human's decision about ONE exact statute text.
+   *
+   * The `content_hash` is part of the target, not a detail: an approval is an
+   * approval OF SPECIFIC TEXT, so the caller has to say which text they read.
+   * If the sweep re-scraped the statute between the reviewer loading the row
+   * and deciding on it, the hash they hold is no longer current and the write
+   * is REFUSED rather than applied to text they never saw. That is the same
+   * pin `mergeReviewRows` enforces, surfacing at the API as ordinary optimistic
+   * concurrency.
+   *
+   * Returns a discriminated result rather than throwing, because "your view is
+   * stale" is a normal thing for a reviewer to hit and the route needs to tell
+   * them the new hash so they can re-read and decide again.
+   */
+  async recordVerdict(input: {
+    fragmentId: string;
+    contentHash: string;
+    status: Exclude<ReviewStatus, "pending">;
+    declineReason?: string | null;
+    recurrence?: Recurrence | null;
+    reviewedBy: string;
+  }): Promise<
+    | { outcome: "recorded"; row: ReviewRow }
+    | { outcome: "stale"; currentHash: string }
+    | { outcome: "not_found" }
+  > {
+    const updated = await this.db
+      .update(logasavnReview)
+      .set({
+        reviewStatus: input.status,
+        declineReason: input.declineReason ?? null,
+        recurrence: input.recurrence ?? null,
+        reviewedBy: input.reviewedBy,
+        reviewedAt: new Date(),
+      })
+      .where(
+        sql`${logasavnReview.fragmentId} = ${input.fragmentId}
+            AND ${logasavnReview.contentHash} = ${input.contentHash}
+            AND ${logasavnReview.isCurrent}`,
+      )
+      .returning();
+    const row = updated[0];
+    if (row) return { outcome: "recorded", row: toReviewRow(row) };
+
+    // Nothing updated: either the statute moved under the reviewer, or this
+    // fragment is not in the queue at all. Those need different answers.
+    const current = await this.db
+      .select()
+      .from(logasavnReview)
+      .where(
+        sql`${logasavnReview.fragmentId} = ${input.fragmentId} AND ${logasavnReview.isCurrent}`,
+      )
+      .limit(1);
+    const currentRow = current[0];
+    return currentRow
+      ? { outcome: "stale", currentHash: currentRow.contentHash }
+      : { outcome: "not_found" };
   }
 
   async apply(rows: ReviewRow[]): Promise<number> {
