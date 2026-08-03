@@ -127,6 +127,13 @@
       "when": 1785792447341,
       "tag": "0017_black_vulture",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785799955110,
+      "tag": "0018_brainy_phalanx",
+      "breakpoints": true
     }
   ]
 }

@@ -42,6 +42,13 @@ const envSchema = z.object({
     .string()
     .uuid()
     .default("67a1ae00-da83-4dfd-b540-9e2835fbc81f"),
+  // Where the sweep publishes its index of coordinate-bearing statutes: a
+  // "Knowledge" fragment in Fishfacts Knowledge (`USABLE_WORKSPACE_ID`), which
+  // is the workspace the chat bot searches. Written by us, unlike the corpus.
+  LOGASAVN_INDEX_FRAGMENT_TYPE_ID: z
+    .string()
+    .uuid()
+    .default("ad920334-6c96-431e-9089-399f0dab8ebd"),
   // In-chat issue reports (PRD: In-Chat Issue Reporting & Session Capture)
   // land as fragments of a dedicated Report fragment type, ideally in a
   // support-scoped workspace. Both optional: without a fragment type id the

@@ -16,7 +16,6 @@ export default defineConfig({
     "sildelaget_*",
     "ais_*",
     "job_*",
-    "logasavn_*",
     "!pathway_*",
   ],
 });

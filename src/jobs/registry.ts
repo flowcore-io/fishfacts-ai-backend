@@ -6,8 +6,6 @@ import { createAisChRefillJob } from "@/ais/job-ch-refill";
 import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
 import type { Env } from "@/env";
-import type { JMeldingGeoRepository } from "@/jmelding/geo-repository";
-import type { LogasavnReviewRepository } from "@/logasavn/review-repository";
 import type { PathwayWriter } from "@/pathways";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
@@ -16,7 +14,6 @@ import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
-import { createLogasavnClosuresJob } from "./logasavn-closures";
 import { createLogasavnSweepJob } from "./logasavn-sweep";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
@@ -32,8 +29,6 @@ export function createJobDefinitions(
   aisIngestState: AisIngestStateRepository,
   aisChRepo: AisClickhouseRepository,
   aisBucketReader: FlowcoreBucketReader,
-  logasavnReviewRepository: LogasavnReviewRepository,
-  jmeldingGeoRepository: JMeldingGeoRepository,
 ): JobDefinition[] {
   return [
     {
@@ -93,43 +88,22 @@ export function createJobDefinitions(
     },
     {
       id: "logasavn-sweep",
-      name: "Lógasavn corpus sweep (Faroese statutory closures)",
+      name: "Lógasavn corpus index (Faroese statutes mentioning coordinates)",
       // Manual only for now — impossible date (Feb 31) ⇒ the scheduler never
       // fires it; run via POST /api/jobs/run, `dryRun: true` first.
       //
-      // This job feeds a queue a human has to work through, so it earns its
-      // schedule by being watched first: a detector that mis-fires unattended
-      // fills the queue with noise, and noise is how a review step stops being
-      // read. Once a few runs have been checked against the review table, the
-      // schedule it WANTS is `0 5 * * *` — 05:00 UTC, after the upstream
+      // The schedule it WANTS is `0 5 * * *` — 05:00 UTC, after the upstream
       // logir.fo scrape, which timestamps its fragments around 04:00
       // (`scraped_at: 2026-07-24T06:00:24Z` on a 04:02 pass). Daily, because
-      // the corpus is re-scraped IN PLACE and drift is only visible by looking
-      // again.
+      // the corpus is re-scraped IN PLACE and the index carries a freshness
+      // stamp that a reader is told to distrust once it ages.
       schedule: "0 0 31 2 *",
       inputSchema: z.object({
-        // Classify and log the counts, write nothing. For checking a detector
-        // change against the live corpus without touching review state.
+        // Classify and log the counts, publish nothing. For checking a detector
+        // change against the live corpus without moving the index.
         dryRun: z.coerce.boolean().default(false),
       }),
-      execute: createLogasavnSweepJob(env, usable, logasavnReviewRepository),
-    },
-    {
-      id: "logasavn-closures",
-      name: "Lógasavn approved closures → geo store (Faroe Islands)",
-      // Manual only for now (impossible date). This is the job that puts
-      // geometry in front of skippers, so it earns a schedule after its output
-      // has been looked at — not before. Once scheduled it belongs shortly
-      // after `logasavn-sweep`, which refreshes the hashes it re-verifies.
-      schedule: "0 0 31 2 *",
-      inputSchema: z.object({}),
-      execute: createLogasavnClosuresJob(
-        env,
-        writer,
-        usable,
-        logasavnReviewRepository,
-        jmeldingGeoRepository,
-      ),
+      execute: createLogasavnSweepJob(env, usable),
     },
     {
       id: "gebco-ingest",

@@ -146,57 +146,49 @@ On the Azure `flowcore-customer` Flexible Server, PostGIS must first be added to
 
 After deployment, replay all historical announcements through the new geo projector by posting to `/reset` with the `x-pump-reset-secret` header (see `@flowcore/pathways` `ResetCallbackBody` for the exact body shape). Both projectors are idempotent (`ON CONFLICT DO UPDATE` for the geo row; the Usable fragment projector upserts by key).
 
-## Lógasavn review queue
+## Lógasavn corpus index
 
-Faroese statutes swept out of Lógasavn land in `logasavn_review` as **pending**
-and are not drawable until a human approves them. The sweep fills this table and
-is structurally incapable of writing a verdict into it; these two ADMIN-only
-endpoints are the only thing that can.
+This service does **not** decide what a Faroese statute means, and does not draw
+Lógasavn geometry on the map. It answers one narrow question that a reader
+cannot answer for itself — *which of the ~7,400 statutes mention coordinates at
+all* — and publishes the answer for whoever is doing the reading.
 
-Populate or refresh the queue (manual — the job is not scheduled yet):
+`logasavn-sweep` reads every fragment in the corpus and writes a single fragment,
+keyed `logasavn-coordinate-index`, into Fishfacts Knowledge
+(`USABLE_WORKSPACE_ID`). No database table, no endpoint, no approval step.
+Lógasavn itself stays read-only.
 
 ```sh
+# counts only, publishes nothing — run this first after a detector change
 curl -s -X POST "$SERVICE_URL/api/jobs/run" \
   -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
-  -d '{"jobId":"logasavn-sweep","args":{"dryRun":true}}'   # counts only, writes nothing
-```
+  -d '{"jobId":"logasavn-sweep","args":{"dryRun":true}}'
 
-List it. Every filter is optional; unfiltered returns everything current, ranked
-in-force first, then by withheld geometry, then the fisheries ministry's own:
-
-```sh
-curl -s -H "x-auth-token: $TOKEN" "$SERVICE_URL/api/logasavn/review?inForce=true"
-curl -s -H "x-auth-token: $TOKEN" "$SERVICE_URL/api/logasavn/review?reason=unreadable_geometry"
-```
-
-Every page carries a `summary` (`byStatus`, `byReason`, `inForcePending`) so you
-can see what is left without a second call.
-
-Decide. The URL targets `(fragmentId, contentHash)` because **an approval is an
-approval of specific text** — if the sweep re-scraped the statute after you read
-it, the write is refused with `409 stale_content_hash` and the current hash, so
-you re-read rather than approving text you never saw:
-
-```sh
-# approve, with a reviewer-set seasonal window
-curl -s -X PATCH "$SERVICE_URL/api/logasavn/review/$FRAGMENT_ID/$CONTENT_HASH" \
+# publish/refresh the index (upserts by key, so it rewrites in place)
+curl -s -X POST "$SERVICE_URL/api/jobs/run" \
   -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
-  -d '{"status":"approved","recurrence":{"type":"annual","from":"02-01","to":"05-01"}}'
-
-# decline — a reason is REQUIRED, because a decline is a recorded decision
-curl -s -X PATCH "$SERVICE_URL/api/logasavn/review/$FRAGMENT_ID/$CONTENT_HASH" \
-  -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
-  -d '{"status":"declined","declineReason":"treaty boundary, not a fishing closure"}'
+  -d '{"jobId":"logasavn-sweep"}'
 ```
 
-`reviewedBy` is stamped from the authenticated admin and ignored if sent in the
-body. `recurrence` can only be set here, never by the parser: no statute states
-its own recurrence, so it is an interpretation rather than an extraction.
+Two properties of the index are deliberate and easy to erode:
 
-Re-deciding the same text is allowed — you must be able to take back a mistake
-without waiting for the law to change. The table keeps one verdict per text, so
-the response carries a `replaced` object naming the verdict you overwrote (null
-on a first decision), and the server logs it.
+- **It is a floor, not a ceiling.** It carries a `scanned_at` stamp and tells its
+  reader, in the page itself, to search the corpus directly as well once a
+  question reaches past that date. The corpus grows and is re-scraped, and a
+  stale index is worse than none: it returns a complete-*looking* list with the
+  statute someone asked about missing from it.
+- **The parser is a witness, not an author.** Ring and vertex counts are
+  published beside each statute together with the case against believing them,
+  so a reader who disagrees with them has found something worth saying. The
+  regex matched a careful human reading of `K 35/2026` on all ten vertices, and
+  it also read `K 113/2014`'s thirteen *fishing-ground* tables as closures.
+
+The comprehension layer is a skill fragment, `63652773`, in the same workspace.
+
+`scripts/logasavn-retract-closures.ts` takes any Lógasavn-derived row back off
+the map. It emits archived announcements through the pathway rather than
+deleting `jmelding_geo` rows, so a replay cannot redraw them. Dry run by
+default; `--apply` to emit.
 
 ## Verification
 

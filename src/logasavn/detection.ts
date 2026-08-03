@@ -10,12 +10,12 @@
  * tokenizer is blind to a notation, and an untagged fragment full of
  * coordinates means their tagger is.
  *
- * Detection deliberately fails OPEN — anything that might carry geometry
- * becomes a review candidate. Nothing is drawn off the back of it; that gate is
- * `review_status`, and it fails closed.
+ * Detection deliberately fails OPEN — anything that might carry geometry gets
+ * listed in the index. Nothing is drawn off the back of it: being listed means
+ * "this text mentions coordinates", and what they MEAN is read by someone else.
  */
 
-import { countCoordinateLike } from "./areas";
+import { countCoordinateLike, countDecimalDegreeRows } from "./areas";
 
 export type DetectableFragment = {
   id: string;
@@ -29,7 +29,7 @@ export type DetectorVerdict = {
   candidate: boolean;
   /**
    * How hard the detector fired — coordinate count for the text reader, 1/0 for
-   * a tag. Recorded per row so a reviewer can see "47 coordinate-like
+   * a tag. Published per statute so a reader can see "47 coordinate-like
    * constructs, 0 rings" without re-running anything.
    */
   signal: number;
@@ -48,11 +48,18 @@ export const HAS_COORDINATES_TAG_DETECTOR_ID = "has-coordinates-tag";
  * quarantine uses. Asking the question with a DIFFERENT regex than the one
  * `unparsed` is computed from is how fragments fall through the gap between
  * "not a candidate" and "candidate we failed to parse".
+ *
+ * BOTH notations count, and the second one has no extractor behind it at all:
+ * the decimal-degree tables are read here and nowhere else, on purpose. A
+ * statute we cannot parse still has to reach the index — that is the whole
+ * difference between "we do not draw this" and "nobody knows this exists".
  */
 export const coordinateTextDetector: CoordinateDetector = {
   id: COORDINATE_TEXT_DETECTOR_ID,
   detect(fragment) {
-    const signal = countCoordinateLike(fragment.body);
+    const signal =
+      countCoordinateLike(fragment.body) +
+      countDecimalDegreeRows(fragment.body);
     return {
       detectorId: COORDINATE_TEXT_DETECTOR_ID,
       candidate: signal > 0,
@@ -91,9 +98,9 @@ export type Detection = {
 /**
  * Did the readers differ about this fragment?
  *
- * Derived from the stored verdicts rather than persisted alongside them, so a
- * review row cannot end up claiming agreement that its own detector record
- * contradicts. One reader never disagrees with itself.
+ * Derived from the verdicts rather than recorded alongside them, so an index
+ * entry cannot end up claiming agreement its own detector signals contradict.
+ * One reader never disagrees with itself.
  */
 export function detectorsDisagree(verdicts: DetectorVerdict[]): boolean {
   const first = verdicts[0];
@@ -105,7 +112,7 @@ export function detectorsDisagree(verdicts: DetectorVerdict[]): boolean {
  * Ask every detector, and take the UNION.
  *
  * Union rather than intersection because the sweep's job is recall: a candidate
- * only costs a reviewer a glance, while a missed statute is a closure that
+ * only costs a reader a glance, while a missed statute is a closure that
  * never gets drawn and that nothing reports on.
  */
 export function detectCoordinates(
@@ -128,9 +135,9 @@ export function detectCoordinates(
  *
  * A detector reading a tag that has not shipped yet is absent, not dissenting.
  * Left in, it would disagree with the text reader on every single candidate and
- * stamp the entire queue `crosscheck_disagreement` on day one — burying the
- * handful of real disagreements it exists to surface, and doing it during
- * precisely the transition window the cross-check was built for.
+ * flag the whole index on day one — burying the handful of real disagreements
+ * it exists to surface, and doing it during precisely the transition window the
+ * cross-check was built for.
  *
  * Corpus-wide silence is the right test rather than a config flag: the day
  * Jaspur ships the tag, the cross-check turns itself on.

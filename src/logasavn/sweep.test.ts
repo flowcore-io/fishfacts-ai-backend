@@ -58,8 +58,8 @@ const NO_GEOMETRY_BODY = `### § 1.
 
 describe("hashBody", () => {
   // The trap this exists to avoid: Jaspur's ingest moves `scraped_at` on every
-  // pass whether or not the law changed, so a whole-content hash would re-open
-  // every approval in the queue every single night.
+  // pass whether or not the law changed, so a whole-content hash would report
+  // every statute in the corpus as re-scraped every single night.
   test("a re-scrape that changes only the frontmatter does not move the hash", () => {
     const before = sweepCorpus(
       [fragmentOf({ id: "f1", body: FOROYABANKI_BODY })],
@@ -76,8 +76,8 @@ describe("hashBody", () => {
       DETECTORS,
     );
 
-    expect(after.observed[0]?.contentHash).toBe(
-      before.observed[0]?.contentHash as string,
+    expect(after.entries[0]?.contentHash).toBe(
+      before.entries[0]?.contentHash as string,
     );
   });
 
@@ -90,8 +90,8 @@ describe("hashBody", () => {
   test("the hash is over the body a human would read, verbatim", () => {
     // Pinned to a value computed INDEPENDENTLY of this code —
     // `printf '### \302\247 1.\n' | shasum -a 256` — so the test cannot agree
-    // with a mistake by rederiving it. This is the value the whole review queue
-    // is keyed on.
+    // with a mistake by rederiving it. This is the value a reader diffing two
+    // versions of the index is reading.
     expect(hashBody("### § 1.\n")).toBe(
       "709f77bdb094d8697cafebc0ff0d4ffb334f53601722aea2daf86c9d683e21fc",
     );
@@ -105,27 +105,27 @@ describe("sweepCorpus", () => {
       DETECTORS,
     );
 
-    const candidate = result.observed[0];
+    const candidate = result.entries[0];
     expect(candidate?.fragmentId).toBe("f1");
     expect(candidate?.ringCount).toBe(1);
     expect(candidate?.vertexCount).toBe(10);
     expect(candidate?.withheldCount).toBe(0);
-    expect(candidate?.coordinateLike).toBe(20);
+    expect(candidate?.coordinateSignals).toBe(20);
     expect(candidate?.validityStatus).toBe("Galdandi");
   });
 
-  test("prose with no coordinates is skipped, not queued", () => {
+  test("prose with no coordinates is skipped, not indexed", () => {
     const result = sweepCorpus(
       [fragmentOf({ id: "f1", body: NO_GEOMETRY_BODY })],
       DETECTORS,
     );
 
-    expect(result.observed).toEqual([]);
+    expect(result.entries).toEqual([]);
     expect(result.counts.skipped).toBe(1);
     expect(result.counts.candidates).toBe(0);
-    // Scanned regardless — that is what lets the merge tell "no longer a
-    // candidate" apart from "never looked at".
-    expect(result.scannedFragmentIds.has("f1")).toBe(true);
+    // Counted regardless: "300 of 7,405" is the sentence the index opens with,
+    // and it is only honest if the denominator is everything that was read.
+    expect(result.counts.scanned).toBe(1);
   });
 
   test("counts every fragment it read, candidate or not", () => {
@@ -142,8 +142,8 @@ describe("sweepCorpus", () => {
     expect(result.counts.candidates).toBe(1);
     expect(result.counts.inForceCandidates).toBe(1);
     expect(result.counts.skipped).toBe(2);
-    expect(result.counts.drawable).toBe(1);
-    expect(result.counts.quarantined).toBe(0);
+    expect(result.counts.rings).toBe(1);
+    expect(result.counts.withheld).toBe(0);
     expect(result.counts.extractionGaps).toBe(0);
   });
 
@@ -160,10 +160,10 @@ describe("sweepCorpus", () => {
     );
 
     expect(result.counts.candidates).toBe(1);
-    expect(result.counts.drawable).toBe(0);
+    expect(result.counts.rings).toBe(0);
     expect(result.counts.extractionGaps).toBe(1);
-    expect(result.observed[0]?.coordinateLike).toBe(2);
-    expect(result.observed[0]?.ringCount).toBe(0);
+    expect(result.entries[0]?.coordinateSignals).toBe(2);
+    expect(result.entries[0]?.ringCount).toBe(0);
   });
 
   test("prefers the normalised authority tag over the signing ministry", () => {
@@ -182,7 +182,7 @@ describe("sweepCorpus", () => {
       DETECTORS,
     );
 
-    expect(result.observed[0]?.authority).toBe("uttanrikis-og-fiskimalaradid");
+    expect(result.entries[0]?.authority).toBe("uttanrikis-og-fiskimalaradid");
   });
 
   test("falls back to the frontmatter ministry when the tag says nobody", () => {
@@ -198,7 +198,7 @@ describe("sweepCorpus", () => {
       DETECTORS,
     );
 
-    expect(result.observed[0]?.authority).toBe("Løgmansskrivstovan");
+    expect(result.entries[0]?.authority).toBe("Løgmansskrivstovan");
   });
 
   test("reports the inert cross-check rather than firing it 47 times", () => {
@@ -213,9 +213,9 @@ describe("sweepCorpus", () => {
 });
 
 describe("rejectSweep", () => {
-  // The failure this catches: a broken detector reports zero candidates, the
-  // merge concludes every approved statute has gone dark, and one regex
-  // mistake blanks the regulatory map.
+  // The failure this catches: a broken detector reports zero candidates and
+  // publishes an empty index over a working one — freshly stamped, and
+  // therefore more convincing than the stale page it replaced.
   test("a corpus that was read but yielded no candidate is refused", () => {
     const result = sweepCorpus(
       [
@@ -259,14 +259,14 @@ describe("formatSweepCounts", () => {
     expect(line).toContain("scanned: 2");
     expect(line).toContain("candidates: 1 (1 in force)");
     expect(line).toContain("skipped: 1");
-    expect(line).toContain("drawable rings: 1");
+    expect(line).toContain("rings read: 1");
     expect(line).toContain("inert detectors: has-coordinates-tag");
   });
 });
 
 describe("in-force counting", () => {
   // A count, never a filter: the superseded statute is still swept, still
-  // recorded, and still hashed — it just is not what a reviewer faces first.
+  // recorded, and still hashed — it just is not what a reader meets first.
   test("a superseded candidate is recorded but counted separately", () => {
     const result = sweepCorpus(
       [
@@ -282,7 +282,7 @@ describe("in-force counting", () => {
 
     expect(result.counts.candidates).toBe(2);
     expect(result.counts.inForceCandidates).toBe(1);
-    expect(result.observed).toHaveLength(2);
-    expect(result.observed[1]?.validityStatus).toBe("Áður galdandi");
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries[1]?.validityStatus).toBe("Áður galdandi");
   });
 });

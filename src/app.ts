@@ -28,8 +28,6 @@ import type { GillnetRepository } from "./gillnet/repository";
 import type { JMeldingGeoRepository } from "./jmelding/geo-repository";
 import type { JobRunner } from "./jobs/runner";
 import type { JobStateStore } from "./jobs/state-store";
-import type { LogasavnReviewRepository } from "./logasavn/review-repository";
-import { createLogasavnReviewRouter } from "./logasavn/routes";
 import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
 import type { PoiRepository } from "./poi/repository";
@@ -52,7 +50,6 @@ export type AppDependencies = {
   gillnetRepository: GillnetRepository;
   gebcoRepository: GebcoRepository;
   poiRepository: PoiRepository;
-  logasavnReviewRepository: LogasavnReviewRepository;
   tilesRepository: TilesRepository;
   areasRepository: AreasRepository;
   sildelagetCatchRepository: SildelagetCatchRepository;
@@ -76,7 +73,6 @@ export function createApp({
   gillnetRepository,
   gebcoRepository,
   poiRepository,
-  logasavnReviewRepository,
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
@@ -133,15 +129,6 @@ export function createApp({
     createPoiRouter({
       repository: poiRepository,
       writer: pathways.writer,
-      authMiddleware,
-    }),
-  );
-  // ADMIN-only end to end: a pending row is an unverified reading of the law,
-  // so unlike /api/poi there is no public read side here.
-  app.route(
-    "/api/logasavn/review",
-    createLogasavnReviewRouter({
-      repository: logasavnReviewRepository,
       authMiddleware,
     }),
   );
