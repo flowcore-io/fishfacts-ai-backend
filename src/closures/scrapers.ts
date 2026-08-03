@@ -59,11 +59,25 @@ const VORN_SITEMAP = "https://www.vorn.fo/sitemap.xml";
 // (the old `veid[ib]+ann`) silently dropped nr 12/13. Anchor on the directory
 // + a generic `-nr-<n>-<year>` tail instead. The `/kunning/tidindi/…` news
 // archive lives under a different path, so it stays excluded.
+//
+// The year is `[0-9]+`, NOT `[0-9]{4}`: Vørn typo's the YEAR too. Nr 15 is
+// published at `…-nr-15-20206` (five digits — their slug AND page title say
+// "20206"; the image on the same page is named `veidibann-nr-15-2026.jpg`, so
+// 2026 is intended). A `{4}` quantifier has no trailing boundary, so it
+// matched only the first four digits and handed `…-nr-15-2020` downstream —
+// a URL that 404s. We then scraped the 404 body, which has no coordinates and
+// no "galdandi" sentence, and stored an in-force trawl ban with no geometry
+// and no validity that could never expire. One missing boundary, four wrong
+// fields. Take the whole digit run so we fetch the page that exists.
 const VORN_BAN_RE =
-  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/[a-z]+-nr-[0-9]+-[0-9]{4}/gi;
+  /https:\/\/www\.vorn\.fo\/fiskiveida\/bradfeingis-veidibann\/[a-z]+-nr-[0-9]+-[0-9]+/gi;
 // Pull the ban number + year from the `-nr-N-YYYY` tail without depending on
-// the (unreliable) veiðibann spelling.
-const VORN_NR_RE = /-nr-(\d+)-?(\d{4})/;
+// the (unreliable) veiðibann spelling. The year group is `\d+` for the same
+// reason as above — a malformed year is kept VERBATIM in the key rather than
+// silently truncated to a plausible-looking wrong one (`20206` → `2020` read
+// as a 2020 ban). The title gets the real year from the body; see
+// `vornTitleFromUrl`.
+const VORN_NR_RE = /-nr-(\d+)-(\d+)/;
 const VORN_COORD_RE =
   /(\d{2})(\d{2})\s*([NS])\s*[–-]\s*(\d{2,3})(\d{2})\s*([EWVØ])/gi;
 
@@ -74,10 +88,31 @@ export function vornSourceKey(url: string): string {
 
 /** Canonical ban title derived from the URL — the page body sometimes opens
  * with a cross-reference to a prior ban, so the in-text regex picks the wrong
- * number. The URL number is authoritative. */
-function vornTitleFromUrl(url: string): string | undefined {
+ * number. The URL NUMBER is authoritative.
+ *
+ * A WELL-FORMED URL year is authoritative too, and deliberately beats the
+ * validity window: ban numbers reset annually, so the year in the title is the
+ * ban's NUMBERING year, not the year it happens to be in force. A ban
+ * published in December and effective from January would otherwise be retitled
+ * into the next year and collide with that year's ban of the same number.
+ *
+ * Only a MALFORMED year defers to the body. Vørn published nr 15 as
+ * `-nr-15-20206`, and "Veiðibann nr. 15 - 20206" (or, worse, a silently
+ * truncated "- 2020") is what the user reads in the map popup. The validity
+ * sentence is the one place on the page where the year is unambiguous — the
+ * body at large is NOT safe to scan, since nr 15 cites "Løgtingslóg nr. 152
+ * frá 23. desember 2019" and a naive first-year-in-body would title it 2019.
+ * Falls back to the raw slug year when validity is unreadable too.
+ */
+function vornTitleFromUrl(
+  url: string,
+  validityYear?: string,
+): string | undefined {
   const m = url.toLowerCase().match(VORN_NR_RE);
-  return m ? `Veiðibann nr. ${m[1]} - ${m[2]}` : undefined;
+  if (!m) return undefined;
+  const slugYear = m[2];
+  const year = /^\d{4}$/.test(slugYear) ? slugYear : (validityYear ?? slugYear);
+  return `Veiðibann nr. ${m[1]} - ${year}`;
 }
 
 /** Extract the unique Vørn ban-page URLs from a sitemap XML body. Pure +
@@ -141,7 +176,9 @@ export function parseVornBan(url: string, html: string): ClosureRecord {
     region: "FO",
     source: "vorn",
     sourceKey: vornSourceKey(url),
-    title: vornTitleFromUrl(url) || url,
+    // The validity sentence is the only unambiguous year on the page, so it
+    // beats a slug Vørn may have fat-fingered (see `vornTitleFromUrl`).
+    title: vornTitleFromUrl(url, validity.validFrom?.slice(0, 4)) || url,
     // Vørn publishes no status field — a ban is in force until its window
     // closes, which is exactly what `withExpiry` decides.
     status: withExpiry("active", validity.validTo),
