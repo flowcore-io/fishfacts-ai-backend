@@ -116,6 +116,11 @@ export const jmeldingGeo = pgTable(
     // than "what we parsed and a human approved" — and for Lógasavn closures
     // the approval is pinned to precisely this hash (`logasavn_review`).
     contentHash: text("content_hash"),
+    // Seasonal window, `{type:"annual", from:"MM-DD", to:"MM-DD"}`, set by a
+    // REVIEWER and never by the parser: no statute states its own recurrence.
+    // Null means "not seasonal", which is what every non-Lógasavn source is —
+    // so the read-time season gate is inert for Vørn, Fiskistofa and NO rows.
+    recurrence: jsonb("recurrence"),
     // Validity window as published by the source. `status` records what the
     // source called the regulation when we scraped it; these let a read decide
     // whether it is in force NOW, so a stale row stops being reported as

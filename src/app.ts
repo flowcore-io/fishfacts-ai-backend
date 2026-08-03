@@ -211,6 +211,19 @@ export function createApp({
     // "in force now" (see JMeldingGeoRepository › statusConditions), and a map
     // query is exactly where an expired closure would be drawn.
     const status = params.get("status") ?? undefined;
+    // `asOf` lets "what is closed in March?" be SERVED rather than simulated.
+    // The agent is unreliable at date maths and year boundaries, and the error
+    // is directional — telling a skipper water is shut when it is legally open,
+    // or the reverse. An unparseable value is rejected rather than silently
+    // treated as now, which would answer a different question than was asked.
+    const asOfRaw = params.get("asOf");
+    const asOf = asOfRaw ? new Date(asOfRaw) : undefined;
+    if (asOfRaw && Number.isNaN(asOf?.getTime())) {
+      return c.json(
+        { error: "invalid_asOf", message: "asOf must be an ISO 8601 instant" },
+        400,
+      );
+    }
 
     // Bulk-draw path: return every matching regulation WITH geometry inline so
     // the client can draw a whole set (e.g. all Icelandic closures) in one call
@@ -233,8 +246,13 @@ export function createApp({
           ? [drawBbox.minLon, drawBbox.minLat, drawBbox.maxLon, drawBbox.maxLat]
           : undefined,
         limit,
+        asOf,
       });
-      return c.json({ rows, returned: rows.length });
+      return c.json({
+        rows,
+        returned: rows.length,
+        asOf: (asOf ?? new Date()).toISOString(),
+      });
     }
 
     if (bboxParam) {

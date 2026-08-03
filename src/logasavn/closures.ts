@@ -12,7 +12,7 @@
  */
 
 import type { ParsedArea } from "./areas";
-import type { ReviewRow } from "./review";
+import type { Recurrence, ReviewRow } from "./review";
 
 /**
  * Prefix marking a `jmelding_geo` row as Lógasavn-derived.
@@ -61,6 +61,8 @@ export type ClosureEmission = {
   contentHash: string;
   title: string;
   url: string;
+  /** The reviewer's seasonal window, carried through verbatim. */
+  recurrence: Recurrence | null;
   areas: { name: string | null; points: { lat: number; lon: number }[] }[];
 };
 
@@ -147,6 +149,9 @@ export function planClosureIngest(
       contentHash: source.contentHash,
       title: source.row.title,
       url: source.url ?? "",
+      // Verbatim from the verdict. The parser cannot produce this and must
+      // never appear to: a season is a reviewer's interpretation.
+      recurrence: source.row.recurrence,
       areas: drawable.map((area) => ({
         name: area.name,
         // `lng` inside the parser, `lon` on the wire — the announcement contract

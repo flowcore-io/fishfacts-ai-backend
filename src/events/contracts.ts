@@ -40,6 +40,17 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
   // write its own fragment copy: the statute is the record, this is a derived
   // index over it, and a second copy would be a second thing to keep in sync.
   sourceFragmentId: z.string().optional(),
+  // Seasonal window set by a REVIEWER (`{type:"annual", from:"MM-DD", to:"MM-DD"}`).
+  // Absent for every source but Lógasavn: no other collector has a human in the
+  // loop to record one, and the read-time gate treats absent as "always in
+  // season" so they are unaffected.
+  recurrence: z
+    .object({
+      type: z.literal("annual"),
+      from: z.string().regex(/^\d{2}-\d{2}$/),
+      to: z.string().regex(/^\d{2}-\d{2}$/),
+    })
+    .optional(),
   checkedAt: z.string().datetime(),
   partNumber: z.number().int().min(1).optional(),
   totalParts: z.number().int().min(1).optional(),

@@ -121,10 +121,27 @@ describe("planClosureIngest", () => {
     expect(plan.skip).toEqual([]);
     expect(plan.emit[0]?.key).toBe("LOG-K-35-2026");
     expect(plan.emit[0]?.contentHash).toBe(APPROVED_HASH);
+    expect(plan.emit[0]?.recurrence).toBeNull();
     // lng inside the parser, lon on the wire.
     expect(plan.emit[0]?.areas[0]?.points[0]).toEqual({
       lat: 60.955555555555556,
       lon: -7.95,
+    });
+  });
+
+  // A season is a reviewer's interpretation, so it has to survive the trip to
+  // the map verbatim — the parser can neither produce nor alter it.
+  test("carries the reviewer's seasonal window through untouched", () => {
+    const seasonal = approvedRow({
+      recurrence: { type: "annual", from: "02-01", to: "05-01" },
+    });
+
+    const plan = planClosureIngest([source({ row: seasonal })], []);
+
+    expect(plan.emit[0]?.recurrence).toEqual({
+      type: "annual",
+      from: "02-01",
+      to: "05-01",
     });
   });
 

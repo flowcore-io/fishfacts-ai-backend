@@ -1,0 +1,1 @@
+ALTER TABLE "jmelding_geo" ADD COLUMN "recurrence" jsonb;

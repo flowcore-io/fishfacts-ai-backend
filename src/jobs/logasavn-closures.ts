@@ -144,6 +144,7 @@ export function createLogasavnClosuresJob(
         bodyMarkdown: "",
         contentHash: closure.contentHash,
         sourceFragmentId: closure.fragmentId,
+        recurrence: closure.recurrence ?? undefined,
         checkedAt,
       });
     }

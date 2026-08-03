@@ -1,5 +1,6 @@
 import { type Database, timestampToIso } from "@/db/client";
 import { type SQL, sql } from "drizzle-orm";
+import { isInSeason } from "./season";
 
 export type GeoBbox = [number, number, number, number];
 
@@ -29,6 +30,8 @@ export type GeoFullRecord = GeoListRow & {
 
 export type ListParams = {
   status?: string;
+  /** Answer as of this instant instead of now. */
+  asOf?: Date;
   region?: string;
   hasGeo?: boolean;
   q?: string;
@@ -37,6 +40,8 @@ export type ListParams = {
 };
 
 export type BboxParams = {
+  /** Answer as of this instant instead of now. */
+  asOf?: Date;
   minLon: number;
   minLat: number;
   maxLon: number;
@@ -48,6 +53,8 @@ export type BboxParams = {
 };
 
 export type NearParams = {
+  /** Answer as of this instant instead of now. */
+  asOf?: Date;
   lon: number;
   lat: number;
   radiusKm: number;
@@ -225,12 +232,16 @@ function paginate<T extends { jmNumber: string }>(
  * `current`, `archived` and `upcoming` are meant to cover the corpus between
  * them, so no row is unreachable from every filter.
  */
-function statusConditions(status: string): SQL[] {
+function statusConditions(status: string, asOf: Date): SQL[] {
+  // `asOf` rather than `now()` so "what is closed in March?" is SERVED rather
+  // than simulated by the agent. Defaults to the present everywhere, so this is
+  // a widening, not a behaviour change.
+  const at = sql`${asOf.toISOString()}::timestamptz`;
   if (status === "current") {
     return [
       sql`status = ${status}`,
-      sql`(valid_to IS NULL OR valid_to >= now())`,
-      sql`(valid_from IS NULL OR valid_from <= now())`,
+      sql`(valid_to IS NULL OR valid_to >= ${at})`,
+      sql`(valid_from IS NULL OR valid_from <= ${at})`,
     ];
   }
   if (status === "archived") {
@@ -238,13 +249,13 @@ function statusConditions(status: string): SQL[] {
     // notice that expired while still stored as `current` — every row the
     // backfill has not reached yet — would otherwise be returned by neither
     // filter, so "which regulations have expired" would come back short.
-    return [sql`(status = ${status} OR valid_to < now())`];
+    return [sql`(status = ${status} OR valid_to < ${at})`];
   }
   if (status === "upcoming") {
     // Adopted, not yet in force ("Kommende"): live and not superseded, so it
     // is stored as current, and `current` deliberately excludes it. This is
     // the query that reaches it.
-    return [sql`status = 'current'`, sql`valid_from > now()`];
+    return [sql`status = 'current'`, sql`valid_from > ${at}`];
   }
   return [sql`status = ${status}`];
 }
@@ -316,7 +327,10 @@ export class JMeldingGeoRepository {
     const limit = clampLimit(params.limit);
     const cursor = decodeCursor(params.cursor);
     const conditions: SQL[] = [];
-    if (params.status) conditions.push(...statusConditions(params.status));
+    if (params.status)
+      conditions.push(
+        ...statusConditions(params.status, params.asOf ?? new Date()),
+      );
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (typeof params.hasGeo === "boolean")
       conditions.push(sql`has_geo = ${params.hasGeo}`);
@@ -335,6 +349,13 @@ export class JMeldingGeoRepository {
   }
 
   /**
+   * SEASON GATE lives here and not on the search paths (`findInBbox`,
+   * `findNear`, `list`), deliberately. Drawing answers "is this water shut
+   * today", so an out-of-season closure must not appear; search answers "does
+   * this regulation exist", where hiding it would be wrong. Those paths do take
+   * `asOf` for law-validity, but do not yet surface `recurrence` — worth closing
+   * once something asks them the closed-today question.
+   *
    * Rows WITH geometry inline (areas), for bulk-drawing a whole set in one call
    * (e.g. "show all Icelandic closures") instead of one get_regulation per area.
    * Optional region + bbox filter; only geometry-bearing rows; capped.
@@ -344,6 +365,8 @@ export class JMeldingGeoRepository {
     bbox?: GeoBbox;
     status?: string;
     limit?: number;
+    /** Answer as of this instant instead of now. */
+    asOf?: Date;
   }): Promise<
     Array<{
       jmNumber: string;
@@ -353,12 +376,14 @@ export class JMeldingGeoRepository {
       category: string | null;
       validFrom: string | null;
       validTo: string | null;
+      recurrence: unknown;
       areas: unknown;
     }>
   > {
+    const asOf = params.asOf ?? new Date();
     const cap = Math.min(Math.max(params.limit ?? 500, 1), 1000);
     const conditions: SQL[] = [sql`geom IS NOT NULL`];
-    conditions.push(...statusConditions(params.status ?? "current"));
+    conditions.push(...statusConditions(params.status ?? "current", asOf));
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (params.bbox) {
       const [minLon, minLat, maxLon, maxLat] = params.bbox;
@@ -374,9 +399,11 @@ export class JMeldingGeoRepository {
       category: string | null;
       valid_from: Date | string | null;
       valid_to: Date | string | null;
+      recurrence: unknown;
       areas: unknown;
     }>(sql`
-      SELECT jm_number, title, status, region, category, valid_from, valid_to, areas
+      SELECT jm_number, title, status, region, category, valid_from, valid_to,
+             recurrence, areas
       FROM jmelding_geo
       ${whereClause(conditions)}
       ORDER BY jm_number DESC
@@ -385,16 +412,27 @@ export class JMeldingGeoRepository {
     const rows = Array.isArray(result)
       ? result
       : ((result as unknown as { rows?: unknown[] }).rows ?? []);
-    return (rows as Array<Record<string, unknown>>).map((r) => ({
-      jmNumber: r.jm_number as string,
-      title: r.title as string,
-      status: r.status as string,
-      region: r.region as string,
-      category: (r.category as string | null) ?? null,
-      validFrom: toIso((r.valid_from as Date | string | null) ?? null),
-      validTo: toIso((r.valid_to as Date | string | null) ?? null),
-      areas: r.areas,
-    }));
+    return (
+      (rows as Array<Record<string, unknown>>)
+        // The season half of `active()`. Applied here rather than in SQL so the
+        // window arithmetic has ONE definition — a tested pure function — instead
+        // of a JS copy and a SQL copy that can drift apart at a year boundary.
+        // Filtering after LIMIT can only ever return fewer rows than the cap, and
+        // the cap is a safety bound rather than a pagination contract; the whole
+        // Faroese statutory set is a few dozen areas.
+        .filter((r) => isInSeason(r.recurrence, asOf))
+        .map((r) => ({
+          jmNumber: r.jm_number as string,
+          title: r.title as string,
+          status: r.status as string,
+          region: r.region as string,
+          category: (r.category as string | null) ?? null,
+          validFrom: toIso((r.valid_from as Date | string | null) ?? null),
+          validTo: toIso((r.valid_to as Date | string | null) ?? null),
+          recurrence: r.recurrence ?? null,
+          areas: r.areas,
+        }))
+    );
   }
 
   async findInBbox(params: BboxParams): Promise<PageResult<GeoListRow>> {
@@ -404,7 +442,10 @@ export class JMeldingGeoRepository {
       sql`geom IS NOT NULL`,
       sql`ST_Intersects(geom, ST_MakeEnvelope(${params.minLon}, ${params.minLat}, ${params.maxLon}, ${params.maxLat}, 4326))`,
     ];
-    if (params.status) conditions.push(...statusConditions(params.status));
+    if (params.status)
+      conditions.push(
+        ...statusConditions(params.status, params.asOf ?? new Date()),
+      );
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (cursor) conditions.push(sql`jm_number < ${cursor}`);
     const where = whereClause(conditions);
@@ -426,7 +467,10 @@ export class JMeldingGeoRepository {
       sql`geom IS NOT NULL`,
       sql`ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(${params.lon}, ${params.lat}), 4326)::geography, ${radiusMeters})`,
     ];
-    if (params.status) conditions.push(...statusConditions(params.status));
+    if (params.status)
+      conditions.push(
+        ...statusConditions(params.status, params.asOf ?? new Date()),
+      );
     if (params.region) conditions.push(sql`region = ${params.region}`);
     if (cursor) conditions.push(sql`jm_number < ${cursor}`);
     const where = whereClause(conditions);
