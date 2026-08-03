@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.29.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.28.2...v1.29.0) (2026-08-03)
+
+
+### Features
+
+* **logasavn:** parse closure geometry from Faroese statute fragments ([69578a3](https://github.com/flowcore-io/fishfacts-ai-backend/commit/69578a39ac5b007ff0a908f49247c6394af28978))
+* **logasavn:** parse closure geometry from Faroese statute fragments ([436e0ac](https://github.com/flowcore-io/fishfacts-ai-backend/commit/436e0ac9c182fd17214df7ce94a893e6fb6bf939))
+* **logasavn:** sweep the corpus into a hash-pinned review queue ([65316c5](https://github.com/flowcore-io/fishfacts-ai-backend/commit/65316c5df947bfbc611406b66429324fd078e89f))
+* **logasavn:** sweep the corpus into a hash-pinned review queue ([d4bdc6d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d4bdc6de63ac4b8578535f0a3e02713bb1b8df17))
+
+
+### Bug Fixes
+
+* **logasavn:** rank unknown validity below in-force, not above it ([b20113f](https://github.com/flowcore-io/fishfacts-ai-backend/commit/b20113f1bd461c9edbc85f099cb32a0328660f17))
+* **logasavn:** read the corpus's real notation zoo, and fail closed on the rest ([2507918](https://github.com/flowcore-io/fishfacts-ai-backend/commit/25079185ab1bb3247ccc9ea6f454ae7018fb5707))
+* **logasavn:** withhold undecidable segmentation, and mark drawableAreas pre-supersession ([d1cb297](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d1cb2970db4700a18ebf38973577cacf41ad434b))
+
 ## [1.28.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.28.1...v1.28.2) (2026-08-03)
 
 
