@@ -12,6 +12,14 @@ import { IN_FORCE } from "./sweep";
 
 type DbRow = typeof logasavnReview.$inferSelect;
 
+/** A verdict that a re-decision overwrote, reported so it is not lost silently. */
+export type PriorVerdict = {
+  status: ReviewStatus;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  declineReason: string | null;
+};
+
 function toReviewRow(row: DbRow): ReviewRow {
   return {
     fragmentId: row.fragmentId,
@@ -129,28 +137,50 @@ export class LogasavnReviewRepository {
     return rows.map(toReviewRow);
   }
 
-  /** Queue shape at a glance, so a reviewer knows what they are facing. */
+  /**
+   * Queue shape at a glance, so a reviewer knows what they are facing.
+   *
+   * Counted in the database rather than in JS. This runs alongside EVERY list
+   * call, and the JS version pulled every current row — `detectors` payload and
+   * all — purely to increment three counters. The grouped form returns at most
+   * a few dozen rows however large the queue gets.
+   */
   async summarise(): Promise<{
     total: number;
     byStatus: Record<string, number>;
     byReason: Record<string, number>;
     inForcePending: number;
   }> {
-    const rows = await this.db
-      .select()
+    const groups = await this.db
+      .select({
+        status: logasavnReview.reviewStatus,
+        reason: logasavnReview.reviewReason,
+        validity: logasavnReview.validityStatus,
+        n: sql<number>`count(*)::int`,
+      })
       .from(logasavnReview)
-      .where(sql`${logasavnReview.isCurrent}`);
+      .where(sql`${logasavnReview.isCurrent}`)
+      .groupBy(
+        logasavnReview.reviewStatus,
+        logasavnReview.reviewReason,
+        logasavnReview.validityStatus,
+      );
+
+    // `byStatus` and `byReason` are marginals of the same grouping, so folding
+    // them here is exact rather than approximate.
     const byStatus: Record<string, number> = {};
     const byReason: Record<string, number> = {};
+    let total = 0;
     let inForcePending = 0;
-    for (const row of rows) {
-      byStatus[row.reviewStatus] = (byStatus[row.reviewStatus] ?? 0) + 1;
-      byReason[row.reviewReason] = (byReason[row.reviewReason] ?? 0) + 1;
-      if (row.reviewStatus === "pending" && row.validityStatus === IN_FORCE) {
-        inForcePending += 1;
+    for (const group of groups) {
+      total += group.n;
+      byStatus[group.status] = (byStatus[group.status] ?? 0) + group.n;
+      byReason[group.reason] = (byReason[group.reason] ?? 0) + group.n;
+      if (group.status === "pending" && group.validity === IN_FORCE) {
+        inForcePending += group.n;
       }
     }
-    return { total: rows.length, byStatus, byReason, inForcePending };
+    return { total, byStatus, byReason, inForcePending };
   }
 
   /**
@@ -164,6 +194,23 @@ export class LogasavnReviewRepository {
    * pin `mergeReviewRows` enforces, surfacing at the API as ordinary optimistic
    * concurrency.
    *
+   * **Re-deciding the CURRENT text is allowed on purpose.** A reviewer who
+   * approves a treaty boundary by mistake has to be able to take it back, and
+   * making them wait for the source to change before they can is absurd. The
+   * hash pin guards against deciding text nobody read; it was never meant to
+   * make a decision permanent.
+   *
+   * But the table holds ONE verdict per text by design, so re-deciding
+   * overwrites the previous `reviewed_by`/`reviewed_at`. That overwrite is
+   * therefore reported back rather than done silently — the caller is told what
+   * it replaced, and the route logs it. A durable decision history would need
+   * its own table; recorded as a follow-up rather than smuggled in here.
+   *
+   * Runs in a transaction with `FOR UPDATE` because it reads to classify and
+   * then writes: without the lock, two reviewers deciding the same row at once
+   * could each read `pending` and the second would silently overwrite the first
+   * with no `replaced` reported at all — the exact thing this returns.
+   *
    * Returns a discriminated result rather than throwing, because "your view is
    * stale" is a normal thing for a reviewer to hit and the route needs to tell
    * them the new hash so they can re-read and decide again.
@@ -176,41 +223,55 @@ export class LogasavnReviewRepository {
     recurrence?: Recurrence | null;
     reviewedBy: string;
   }): Promise<
-    | { outcome: "recorded"; row: ReviewRow }
+    | { outcome: "recorded"; row: ReviewRow; replaced: PriorVerdict | null }
     | { outcome: "stale"; currentHash: string }
     | { outcome: "not_found" }
   > {
-    const updated = await this.db
-      .update(logasavnReview)
-      .set({
-        reviewStatus: input.status,
-        declineReason: input.declineReason ?? null,
-        recurrence: input.recurrence ?? null,
-        reviewedBy: input.reviewedBy,
-        reviewedAt: new Date(),
-      })
-      .where(
-        sql`${logasavnReview.fragmentId} = ${input.fragmentId}
-            AND ${logasavnReview.contentHash} = ${input.contentHash}
-            AND ${logasavnReview.isCurrent}`,
-      )
-      .returning();
-    const row = updated[0];
-    if (row) return { outcome: "recorded", row: toReviewRow(row) };
+    return this.db.transaction(async (tx) => {
+      const held = await tx
+        .select()
+        .from(logasavnReview)
+        .where(
+          sql`${logasavnReview.fragmentId} = ${input.fragmentId} AND ${logasavnReview.isCurrent}`,
+        )
+        .limit(1)
+        .for("update");
+      const current = held[0];
+      if (!current) return { outcome: "not_found" as const };
+      if (current.contentHash !== input.contentHash) {
+        return { outcome: "stale" as const, currentHash: current.contentHash };
+      }
 
-    // Nothing updated: either the statute moved under the reviewer, or this
-    // fragment is not in the queue at all. Those need different answers.
-    const current = await this.db
-      .select()
-      .from(logasavnReview)
-      .where(
-        sql`${logasavnReview.fragmentId} = ${input.fragmentId} AND ${logasavnReview.isCurrent}`,
-      )
-      .limit(1);
-    const currentRow = current[0];
-    return currentRow
-      ? { outcome: "stale", currentHash: currentRow.contentHash }
-      : { outcome: "not_found" };
+      const replaced: PriorVerdict | null =
+        current.reviewStatus === "pending"
+          ? null
+          : {
+              status: current.reviewStatus as ReviewStatus,
+              reviewedBy: current.reviewedBy,
+              reviewedAt: timestampToIso(current.reviewedAt) ?? null,
+              declineReason: current.declineReason,
+            };
+
+      const updated = await tx
+        .update(logasavnReview)
+        .set({
+          reviewStatus: input.status,
+          declineReason: input.declineReason ?? null,
+          recurrence: input.recurrence ?? null,
+          reviewedBy: input.reviewedBy,
+          reviewedAt: new Date(),
+        })
+        .where(
+          sql`${logasavnReview.fragmentId} = ${input.fragmentId}
+              AND ${logasavnReview.contentHash} = ${input.contentHash}`,
+        )
+        .returning();
+      return {
+        outcome: "recorded" as const,
+        row: toReviewRow(updated[0] as DbRow),
+        replaced,
+      };
+    });
   }
 
   async apply(rows: ReviewRow[]): Promise<number> {

@@ -193,6 +193,11 @@ curl -s -X PATCH "$SERVICE_URL/api/logasavn/review/$FRAGMENT_ID/$CONTENT_HASH" \
 body. `recurrence` can only be set here, never by the parser: no statute states
 its own recurrence, so it is an interpretation rather than an extraction.
 
+Re-deciding the same text is allowed — you must be able to take back a mistake
+without waiting for the law to change. The table keeps one verdict per text, so
+the response carries a `replaced` object naming the verdict you overwrote (null
+on a first decision), and the server logs it.
+
 ## Verification
 
 ```sh

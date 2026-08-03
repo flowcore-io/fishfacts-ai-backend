@@ -276,6 +276,78 @@ describe("Lógasavn review routes black-box", () => {
     expect(current?.reviewStatus).toBe("pending");
   });
 
+  // Re-deciding the CURRENT text is legitimate — a reviewer who approves a
+  // treaty boundary by mistake must be able to take it back. But the table
+  // holds one verdict per text, so what it replaced is reported rather than
+  // lost silently.
+  test("a re-decision succeeds and reports the verdict it replaced", async () => {
+    if (!run) return;
+    await seed([candidate()]);
+    const url = `/api/logasavn/review/${IN_FORCE_ID}/${"a".repeat(64)}`;
+    const patch = (body: unknown) =>
+      admin.request(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    const first = await patch({ status: "approved" });
+    expect(first.status).toBe(200);
+    expect(((await first.json()) as { replaced: unknown }).replaced).toBeNull();
+
+    const second = await patch({
+      status: "declined",
+      declineReason: "on reflection this is a treaty boundary",
+    });
+    const body = (await second.json()) as {
+      row: { reviewStatus: string; declineReason: string };
+      replaced: { status: string; reviewedBy: string } | null;
+    };
+
+    expect(second.status).toBe(200);
+    expect(body.row.reviewStatus).toBe("declined");
+    // The overwritten verdict comes back, so it is not lost without trace.
+    expect(body.replaced?.status).toBe("approved");
+    expect(body.replaced?.reviewedBy).toBe("gilli");
+  });
+
+  test("a re-decision clears a recurrence the previous verdict set", async () => {
+    if (!run) return;
+    await seed([candidate()]);
+    const url = `/api/logasavn/review/${IN_FORCE_ID}/${"a".repeat(64)}`;
+    await admin.request(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "approved",
+        recurrence: { type: "annual", from: "02-01", to: "05-01" },
+      }),
+    });
+
+    const resp = await admin.request(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "approved" }),
+    });
+    const body = (await resp.json()) as { row: { recurrence: unknown } };
+
+    // A season left behind from a superseded decision would keep gating what
+    // gets drawn long after the reviewer stopped meaning it.
+    expect(body.row.recurrence).toBeNull();
+  });
+
+  test("accepts the CLI-shaped truthy forms of inForce", async () => {
+    if (!run) return;
+    await seed([candidate()]);
+
+    for (const q of ["inForce=true", "inForce=1", "inForce=yes", "inForce"]) {
+      const resp = await admin.request(`/api/logasavn/review?${q}`);
+      expect(resp.status).toBe(200);
+    }
+    const off = await admin.request("/api/logasavn/review?inForce=0");
+    expect(off.status).toBe(200);
+  });
+
   test("404s for a fragment that is not in the queue", async () => {
     if (!run) return;
     await cleanup();

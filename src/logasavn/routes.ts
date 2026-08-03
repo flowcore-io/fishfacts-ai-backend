@@ -9,10 +9,15 @@ import { verdictInputSchema } from "./verdict";
 const listQuerySchema = z.object({
   status: z.enum(REVIEW_STATUSES).optional(),
   reason: z.enum(REVIEW_REASONS).optional(),
+  // Lenient on purpose: this endpoint is driven by hand from a terminal, and
+  // `?inForce=1` or a bare `?inForce` failing with a 400 is a pointless round
+  // trip. A bare flag reads as "yes" the way a CLI flag does.
   inForce: z
-    .enum(["true", "false"])
+    .enum(["true", "1", "yes", "", "false", "0", "no"])
     .optional()
-    .transform((value) => value === "true"),
+    .transform((value) =>
+      value === undefined ? false : !["false", "0", "no"].includes(value),
+    ),
   limit: z.coerce.number().int().min(1).max(500).default(500),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -105,7 +110,20 @@ export function createLogasavnReviewRouter(
         // a verdict cannot be attributed to someone who did not make it.
         reviewedBy: auth.user.username,
       });
-      if (result.outcome === "recorded") return c.json({ row: result.row });
+      if (result.outcome === "recorded") {
+        if (result.replaced) {
+          // A re-decision is legitimate, but the table keeps only one verdict
+          // per text — so say what was overwritten instead of losing it
+          // silently. Returned to the caller AND logged, because the caller may
+          // be a script that ignores the body.
+          console.info("[LogasavnReview] verdict replaced a previous one", {
+            fragmentId: c.req.param("fragmentId"),
+            previous: result.replaced,
+            now: { status: input.status, reviewedBy: auth.user.username },
+          });
+        }
+        return c.json({ row: result.row, replaced: result.replaced });
+      }
       if (result.outcome === "stale") {
         // 409, not 404: the statute IS in the queue, but its text moved after
         // the reviewer read it. Handing back the current hash lets them re-read

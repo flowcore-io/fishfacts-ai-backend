@@ -40,11 +40,21 @@ const monthDay = z
  * None of the three known seasonal closures wrap, but rejecting it here would
  * push the next one into being recorded backwards.
  */
-export const recurrenceSchema = z.object({
-  type: z.literal("annual"),
-  from: monthDay,
-  to: monthDay,
-});
+export const recurrenceSchema = z
+  .object({
+    type: z.literal("annual"),
+    from: monthDay,
+    to: monthDay,
+  })
+  .refine((value) => value.from !== value.to, {
+    path: ["to"],
+    // `02-01`–`02-01` has no agreed meaning: a single day, a whole year, or an
+    // empty window are all readable from it, and the three differ enormously to
+    // a skipper. Overwhelmingly it is a typo for a range someone half-entered.
+    // Rejected rather than guessed, on a field that gates what gets drawn.
+    message:
+      "from and to are identical — state a real window, or leave recurrence unset for a year-round closure",
+  });
 
 /**
  * A decision, with the evidence that makes it reviewable later.

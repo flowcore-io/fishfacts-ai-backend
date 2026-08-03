@@ -135,6 +135,19 @@ describe("recurrenceSchema", () => {
     ).toBe(false);
   });
 
+  // `02-01`-`02-01` is readable as a single day, a whole year, or nothing at
+  // all, and those differ enormously to a skipper. Almost always a half-typed
+  // range.
+  test("rejects a window whose ends are identical", () => {
+    const result = recurrenceSchema.safeParse({
+      type: "annual",
+      from: "02-01",
+      to: "02-01",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   test("rejects a non-annual recurrence type", () => {
     expect(
       recurrenceSchema.safeParse({
