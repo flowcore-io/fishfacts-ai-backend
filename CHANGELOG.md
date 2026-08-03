@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.31.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.30.0...v1.31.0) (2026-08-03)
+
+
+### Features
+
+* **logasavn:** draw approved statutory closures on the map ([18561d7](https://github.com/flowcore-io/fishfacts-ai-backend/commit/18561d7d6a0df94b35166930b9e22ca8803ac995))
+* **logasavn:** draw approved statutory closures on the map ([57d3d85](https://github.com/flowcore-io/fishfacts-ai-backend/commit/57d3d855f92c004675cb4e5b8f3de3cfde9c2571))
+
+
+### Bug Fixes
+
+* **logasavn:** never retract a closure just because we could not read it ([47ef5fd](https://github.com/flowcore-io/fishfacts-ai-backend/commit/47ef5fd652608b7112c092a716397ed05e68082b))
+
 ## [1.30.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.29.0...v1.30.0) (2026-08-03)
 
 
