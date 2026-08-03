@@ -287,6 +287,27 @@ describe("failing closed", () => {
     expect(area.points.length).toBeGreaterThan(0);
   });
 
+  test("a heading glued to a vertex is undecidable, so nothing is drawn", () => {
+    // The fixtures glue a bare title word (`Fiskidagatal`), which HEADING_RE
+    // ignores; 0 of the corpus's 5,508 vertex lines glue a `**Stk. N.**` marker
+    // instead. The corpus is re-scraped in place though, so this pins the
+    // behaviour rather than today's data. Every available reading is wrong —
+    // split before and the closing vertex tears both rings, never split and two
+    // areas merge, split after and the glued text mislabels the wrong area — so
+    // the ring is withheld instead of guessed at.
+    const GLUED_HEADING = `**Stk. 1.** Innan fyri linjur drignar millum hesi støð:
+- **1)**61°40,000'N 007°33,000'V
+- **2)**61°30,000'N 007°45,000'V
+- **3)**61°26,000'N 007°45,000'V
+- **4)**61°40,000'N 007°33,000'V **Stk. 2.** Í øki B:
+- **1)**62°40,000'N 007°33,000'V
+- **2)**62°30,000'N 007°45,000'V
+- **3)**62°26,000'N 007°45,000'V
+- **4)**62°40,000'N 007°33,000'V `;
+    expect(drawableAreas(GLUED_HEADING)).toHaveLength(0);
+    expect(extractAreas(GLUED_HEADING)[0].unparsed).toBeGreaterThan(0);
+  });
+
   test("a fully readable area is not held", () => {
     const [area] = extractAreas(FOROYABANKI);
     expect(area.unparsed).toBe(0);

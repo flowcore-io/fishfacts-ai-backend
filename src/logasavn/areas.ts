@@ -240,6 +240,29 @@ function looksLikeVertexItem(text: string): boolean {
 }
 
 /**
+ * A line that is BOTH a vertex and the next section's opener.
+ *
+ * The markdown routinely glues what follows onto the ring-closing vertex's line,
+ * and today that is always a bare title word (`…07°57'00"V Fiskidagatal`) —
+ * 0 of the corpus's 5,508 vertex lines also match `HEADING_RE`. The corpus is
+ * re-scraped in place though, so the day one glues a `**Stk. N.**` instead,
+ * every available reading is wrong: split before the line and the closing vertex
+ * migrates into the next block, tearing both rings; never split and two distinct
+ * areas merge into one polygon; split after and the glued text — which may name
+ * the NEXT area (`**Stk. 2.** Í øki B…`) — stays behind and mislabels THIS one.
+ *
+ * Segmentation is genuinely undecidable there, so the area is withheld and
+ * counted rather than guessed at. Same principle as an unreadable notation: an
+ * honest gap beats a confident wrong shape.
+ */
+function isAmbiguousVertexHeading(line: string): boolean {
+  const item = ITEM_RE.exec(line);
+  if (item == null) return false;
+  if (!isVertexItem(item[1]) && !looksLikeVertexItem(item[1])) return false;
+  return HEADING_RE.test(line);
+}
+
+/**
  * Cut a statute into candidate area blocks.
  *
  * A block opens at a §/Stk. heading, or at a list item stating a RULE. It must
@@ -259,7 +282,10 @@ export function splitBlocks(content: string): string[] {
     // the ring is torn in half on top of losing the vertex.
     const isVertex =
       item != null && (isVertexItem(item[1]) || looksLikeVertexItem(item[1]));
-    const opensBlock = HEADING_RE.test(line) || (item != null && !isVertex);
+    // A vertex line never opens a block, whatever else is glued to it — see
+    // `isAmbiguousVertexHeading` for the case this protects against and why the
+    // area is then withheld rather than guessed at.
+    const opensBlock = !isVertex && (HEADING_RE.test(line) || item != null);
     if (opensBlock && current.length > 0) {
       blocks.push(current.join("\n"));
       current = [];
@@ -378,16 +404,19 @@ export function extractAreas(content: string): ParsedArea[] {
   const areas: ParsedArea[] = [];
   for (const block of splitBlocks(content)) {
     const items: string[] = [];
+    let ambiguous = 0;
     for (const line of block.split("\n")) {
       const item = ITEM_RE.exec(line);
       if (item != null) items.push(item[1]);
+      if (isAmbiguousVertexHeading(line)) ambiguous += 1;
     }
     const vertexText = items.filter(isVertexItem);
     const coords = vertexText.flatMap(matchCoordinates);
-    // Vertex lines the tokenizer could not read.
-    const unparsed = items.filter(
-      (item) => !isVertexItem(item) && looksLikeVertexItem(item),
-    ).length;
+    // Vertex lines the tokenizer could not read, plus lines whose segmentation
+    // is undecidable — both mean this ring is not safe to draw.
+    const unparsed =
+      items.filter((item) => !isVertexItem(item) && looksLikeVertexItem(item))
+        .length + ambiguous;
     if (coords.length < 3) continue;
 
     const descriptorCount = matchCoordinates(block).length - coords.length;
@@ -407,13 +436,19 @@ export function extractAreas(content: string): ParsedArea[] {
 }
 
 /**
- * Areas safe to draw.
+ * Areas safe to draw FROM THIS ONE STATUTE.
  *
  * Fails CLOSED: an area is withheld when its boundary was described rather than
  * enumerated (`descriptive`), and equally when any of its vertex lines could not
  * be read (`unparsed`). The second case is the one that matters — a ring quietly
  * missing corners still draws, just in the wrong place, which is the failure
  * this ingest exists to end. An honest gap beats a wrong polygon.
+ *
+ * Does NOT resolve supersession — the projector does. A statute whose body still
+ * carries superseded list-item rings alongside an in-force replacement table
+ * (K 113/2014 with K 102/2024's annex) yields BOTH here, by design, because the
+ * `fishfacts-announcement.0` event stays a faithful record of the source. Never
+ * treat this output as already merged or in-force-filtered.
  */
 export function drawableAreas(content: string): ParsedArea[] {
   return extractAreas(content).filter(
