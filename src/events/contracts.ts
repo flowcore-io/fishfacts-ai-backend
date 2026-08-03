@@ -35,6 +35,11 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
   category: z.string().optional(),
   bodyMarkdown: z.string().default(""),
   contentHash: z.string().optional(),
+  // Points at a fragment that ALREADY exists and that we do not own — today the
+  // Lógasavn mirror of logir.fo. When set, the announcement projector does not
+  // write its own fragment copy: the statute is the record, this is a derived
+  // index over it, and a second copy would be a second thing to keep in sync.
+  sourceFragmentId: z.string().optional(),
   checkedAt: z.string().datetime(),
   partNumber: z.number().int().min(1).optional(),
   totalParts: z.number().int().min(1).optional(),

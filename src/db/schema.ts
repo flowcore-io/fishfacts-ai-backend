@@ -111,6 +111,11 @@ export const jmeldingGeo = pgTable(
     category: text("category"),
     url: text("url").notNull(),
     signature: text("signature").notNull(),
+    // The exact source text this geometry was derived from. A row pointing at a
+    // MUTATING source fragment otherwise means "whatever it says now" rather
+    // than "what we parsed and a human approved" — and for Lógasavn closures
+    // the approval is pinned to precisely this hash (`logasavn_review`).
+    contentHash: text("content_hash"),
     // Validity window as published by the source. `status` records what the
     // source called the regulation when we scraped it; these let a read decide
     // whether it is in force NOW, so a stale row stops being reported as

@@ -116,6 +116,7 @@ const jobs = createJobDefinitions(
   aisChRepo,
   aisBucketReader,
   logasavnReviewRepository,
+  geoRepository,
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);

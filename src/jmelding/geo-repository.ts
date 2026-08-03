@@ -252,6 +252,49 @@ function statusConditions(status: string): SQL[] {
 export class JMeldingGeoRepository {
   constructor(private readonly db: Database) {}
 
+  /**
+   * Rows this service drew from Lógasavn, by key.
+   *
+   * The closure ingest must retract as well as insert, and to retract safely it
+   * has to know which rows are its own — region cannot say, because Vørn's
+   * emergency bans are `region: "FO"` too. Title and url come back so a
+   * retraction can be emitted without re-reading the source it no longer trusts.
+   */
+  async listLogasavnRows(prefix: string): Promise<
+    {
+      jmNumber: string;
+      fragmentId: string | null;
+      title: string;
+      url: string;
+    }[]
+  > {
+    type Row = {
+      jm_number: string;
+      fragment_id: string | null;
+      title: string;
+      url: string;
+    };
+    // Already-archived rows are excluded: they are not drawn, so they are not
+    // candidates for retraction. Including them made every run re-archive every
+    // statute ever taken down — a fresh event each time, forever, and
+    // `changed: true` on every run as a side effect.
+    const result = await this.db.execute<Row>(sql`
+      SELECT jm_number, fragment_id, title, url
+      FROM jmelding_geo
+      WHERE jm_number LIKE ${`${prefix}-%`}
+        AND status <> 'archived'
+    `);
+    const rows =
+      (result as unknown as { rows?: Row[] }).rows ??
+      (Array.isArray(result) ? (result as Row[]) : []);
+    return rows.map((row) => ({
+      jmNumber: row.jm_number,
+      fragmentId: row.fragment_id,
+      title: row.title,
+      url: row.url,
+    }));
+  }
+
   async findByJmNumber(key: string): Promise<GeoFullRecord | null> {
     const lookup = key.trim();
     if (!lookup) return null;
