@@ -91,11 +91,19 @@ export function createJobDefinitions(
     {
       id: "logasavn-sweep",
       name: "Lógasavn corpus sweep (Faroese statutory closures)",
-      // 05:00 UTC — after the upstream logir.fo scrape, which timestamps its
-      // fragments around 04:00 (`scraped_at: 2026-07-24T06:00:24Z` on a 04:02
-      // pass). Daily because the corpus is re-scraped IN PLACE, so drift is
-      // detectable only by looking again.
-      schedule: "0 5 * * *",
+      // Manual only for now — impossible date (Feb 31) ⇒ the scheduler never
+      // fires it; run via POST /api/jobs/run, `dryRun: true` first.
+      //
+      // This job feeds a queue a human has to work through, so it earns its
+      // schedule by being watched first: a detector that mis-fires unattended
+      // fills the queue with noise, and noise is how a review step stops being
+      // read. Once a few runs have been checked against the review table, the
+      // schedule it WANTS is `0 5 * * *` — 05:00 UTC, after the upstream
+      // logir.fo scrape, which timestamps its fragments around 04:00
+      // (`scraped_at: 2026-07-24T06:00:24Z` on a 04:02 pass). Daily, because
+      // the corpus is re-scraped IN PLACE and drift is only visible by looking
+      // again.
+      schedule: "0 0 31 2 *",
       inputSchema: z.object({
         // Classify and log the counts, write nothing. For checking a detector
         // change against the live corpus without touching review state.
