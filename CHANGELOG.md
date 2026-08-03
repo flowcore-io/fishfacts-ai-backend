@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.28.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.28.1...v1.28.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* **vorn:** a well-formed slug year beats validity; assert expiry on a fixed clock ([4c28f6f](https://github.com/flowcore-io/fishfacts-ai-backend/commit/4c28f6f8fa626a13317ecfe8c8a29b9f734c280a))
+* **vorn:** stop truncating typo'd slugs into 404s, title the year from the body ([26ba2f7](https://github.com/flowcore-io/fishfacts-ai-backend/commit/26ba2f7b989aaf021d36d2955b5e876786689dbd))
+* **vorn:** stop truncating typo'd slugs into 404s, title the year from the body ([26e4211](https://github.com/flowcore-io/fishfacts-ai-backend/commit/26e4211b760940c17a0be67afee66132db247cce))
+
 ## [1.28.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.28.0...v1.28.1) (2026-07-31)
 
 
