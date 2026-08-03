@@ -146,6 +146,58 @@ On the Azure `flowcore-customer` Flexible Server, PostGIS must first be added to
 
 After deployment, replay all historical announcements through the new geo projector by posting to `/reset` with the `x-pump-reset-secret` header (see `@flowcore/pathways` `ResetCallbackBody` for the exact body shape). Both projectors are idempotent (`ON CONFLICT DO UPDATE` for the geo row; the Usable fragment projector upserts by key).
 
+## Lógasavn review queue
+
+Faroese statutes swept out of Lógasavn land in `logasavn_review` as **pending**
+and are not drawable until a human approves them. The sweep fills this table and
+is structurally incapable of writing a verdict into it; these two ADMIN-only
+endpoints are the only thing that can.
+
+Populate or refresh the queue (manual — the job is not scheduled yet):
+
+```sh
+curl -s -X POST "$SERVICE_URL/api/jobs/run" \
+  -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
+  -d '{"jobId":"logasavn-sweep","args":{"dryRun":true}}'   # counts only, writes nothing
+```
+
+List it. Every filter is optional; unfiltered returns everything current, ranked
+in-force first, then by withheld geometry, then the fisheries ministry's own:
+
+```sh
+curl -s -H "x-auth-token: $TOKEN" "$SERVICE_URL/api/logasavn/review?inForce=true"
+curl -s -H "x-auth-token: $TOKEN" "$SERVICE_URL/api/logasavn/review?reason=unreadable_geometry"
+```
+
+Every page carries a `summary` (`byStatus`, `byReason`, `inForcePending`) so you
+can see what is left without a second call.
+
+Decide. The URL targets `(fragmentId, contentHash)` because **an approval is an
+approval of specific text** — if the sweep re-scraped the statute after you read
+it, the write is refused with `409 stale_content_hash` and the current hash, so
+you re-read rather than approving text you never saw:
+
+```sh
+# approve, with a reviewer-set seasonal window
+curl -s -X PATCH "$SERVICE_URL/api/logasavn/review/$FRAGMENT_ID/$CONTENT_HASH" \
+  -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
+  -d '{"status":"approved","recurrence":{"type":"annual","from":"02-01","to":"05-01"}}'
+
+# decline — a reason is REQUIRED, because a decline is a recorded decision
+curl -s -X PATCH "$SERVICE_URL/api/logasavn/review/$FRAGMENT_ID/$CONTENT_HASH" \
+  -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
+  -d '{"status":"declined","declineReason":"treaty boundary, not a fishing closure"}'
+```
+
+`reviewedBy` is stamped from the authenticated admin and ignored if sent in the
+body. `recurrence` can only be set here, never by the parser: no statute states
+its own recurrence, so it is an interpretation rather than an extraction.
+
+Re-deciding the same text is allowed — you must be able to take back a mistake
+without waiting for the law to change. The table keeps one verdict per text, so
+the response carries a `replaced` object naming the verdict you overwrote (null
+on a first decision), and the server logs it.
+
 ## Verification
 
 ```sh

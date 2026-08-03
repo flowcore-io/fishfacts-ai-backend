@@ -143,6 +143,7 @@ const app = createApp({
   gillnetRepository,
   gebcoRepository,
   poiRepository,
+  logasavnReviewRepository,
   tilesRepository,
   areasRepository,
   sildelagetCatchRepository,
