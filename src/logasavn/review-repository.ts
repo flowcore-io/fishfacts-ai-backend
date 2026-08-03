@@ -70,6 +70,13 @@ export class LogasavnReviewRepository {
    * then the ones holding withheld geometry, then the fisheries ministry's own.
    * A superseded statute still has to be reachable: they come back, and a queue
    * that cannot show you one cannot tell you it did.
+   *
+   * `NULLS LAST` on both boolean keys is load-bearing, not decoration. Postgres
+   * orders `DESC` as `NULLS FIRST`, and `null = 'Galdandi'` is null rather than
+   * false — so a fragment whose `validity_status` or `authority` failed to parse
+   * would sort ABOVE the in-force rows this ordering exists to surface. Ranking
+   * a statute we could not read the status of as though it were the most urgent
+   * thing in the queue is backwards: unknown is not in force.
    */
   async listPending(): Promise<ReviewRow[]> {
     const rows = await this.db
@@ -79,9 +86,9 @@ export class LogasavnReviewRepository {
         sql`${logasavnReview.isCurrent} AND ${logasavnReview.reviewStatus} = 'pending'`,
       )
       .orderBy(
-        sql`(${logasavnReview.validityStatus} = ${IN_FORCE}) DESC,
+        sql`(${logasavnReview.validityStatus} = ${IN_FORCE}) DESC NULLS LAST,
             ${logasavnReview.withheldCount} DESC,
-            (${logasavnReview.authority} = 'uttanrikis-og-fiskimalaradid') DESC,
+            (${logasavnReview.authority} = 'uttanrikis-og-fiskimalaradid') DESC NULLS LAST,
             ${logasavnReview.title} ASC`,
       );
     return rows.map(toReviewRow);
