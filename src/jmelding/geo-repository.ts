@@ -252,6 +252,42 @@ function statusConditions(status: string): SQL[] {
 export class JMeldingGeoRepository {
   constructor(private readonly db: Database) {}
 
+  /**
+   * Rows this service drew from Lógasavn, by key.
+   *
+   * The closure ingest must retract as well as insert, and to retract safely it
+   * has to know which rows are its own — region cannot say, because Vørn's
+   * emergency bans are `region: "FO"` too. Title and url come back so a
+   * retraction can be emitted without re-reading the source it no longer trusts.
+   */
+  async listLogasavnRows(
+    prefix: string,
+  ): Promise<{ jmNumber: string; title: string; url: string }[]> {
+    const result = await this.db.execute<{
+      jm_number: string;
+      title: string;
+      url: string;
+    }>(sql`
+      SELECT jm_number, title, url
+      FROM jmelding_geo
+      WHERE jm_number LIKE ${`${prefix}-%`}
+    `);
+    const rows =
+      (
+        result as unknown as {
+          rows?: { jm_number: string; title: string; url: string }[];
+        }
+      ).rows ??
+      (Array.isArray(result)
+        ? (result as { jm_number: string; title: string; url: string }[])
+        : []);
+    return rows.map((row) => ({
+      jmNumber: row.jm_number,
+      title: row.title,
+      url: row.url,
+    }));
+  }
+
   async findByJmNumber(key: string): Promise<GeoFullRecord | null> {
     const lookup = key.trim();
     if (!lookup) return null;

@@ -64,15 +64,24 @@ export class JMeldingChunkAssembler {
 
   private async runProjectors(item: JMeldingAnnouncementDiscovered) {
     let fragmentId: string | null = null;
-    try {
-      const result = await this.projector.project(item);
-      fragmentId = result?.fragmentId ?? null;
-    } catch (error) {
-      console.error("[JMeldingFragment] projection failed", {
-        jmNumber: item.jmNumber,
-        url: item.url,
-        message: error instanceof Error ? error.message : String(error),
-      });
+    if (item.sourceFragmentId) {
+      // The source already lives in Usable and we do not own it (Lógasavn).
+      // Writing our own copy would duplicate the law and give us two records to
+      // keep in step, so the geo row points straight at theirs. The trade is
+      // that these closures are absent from the J-announcement semantic index —
+      // accepted deliberately; `draw_regulations` is the path that matters.
+      fragmentId = item.sourceFragmentId;
+    } else {
+      try {
+        const result = await this.projector.project(item);
+        fragmentId = result?.fragmentId ?? null;
+      } catch (error) {
+        console.error("[JMeldingFragment] projection failed", {
+          jmNumber: item.jmNumber,
+          url: item.url,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     if (!this.geoProjector) return;
     try {

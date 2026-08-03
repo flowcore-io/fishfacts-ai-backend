@@ -61,7 +61,18 @@ export class JMeldingGeoProjector {
     // typos), so clean them here in the read-model transformer: drop the
     // closing dup and repair a typo'd/self-intersecting ring. A warning means a
     // source typo we should report to Vørn (monitored in Groundcover).
-    if (areas && areas.length > 0 && item.region === "FO") {
+    // Scoped to VORN's rings, not all Faroese ones. This repairs typo'd and
+    // self-intersecting rings, which is right for hand-transcribed ban pages and
+    // wrong for statute geometry: Lógasavn rings come from a parser that fails
+    // closed, so a "repair" here could silently move a vertex — the one failure
+    // class (parsed successfully to the WRONG value) that nothing downstream can
+    // detect. `sourceFragmentId` marks the statute-derived events.
+    if (
+      areas &&
+      areas.length > 0 &&
+      item.region === "FO" &&
+      !item.sourceFragmentId
+    ) {
       const normalized = normalizeVornAreas(areas);
       areas = normalized.areas;
       for (const w of normalized.warnings) {
@@ -96,12 +107,12 @@ export class JMeldingGeoProjector {
 
     await this.db.execute(sql`
       INSERT INTO jmelding_geo (
-        jm_number, fragment_key, fragment_id, title, status, region, category, url, signature,
+        jm_number, fragment_key, fragment_id, title, status, region, category, url, signature, content_hash,
         valid_from, valid_to,
         has_geo, areas, geojson, geom, min_lat, max_lat, min_lon, max_lon, updated_at
       )
       VALUES (
-        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.category ?? null}, ${item.url}, ${item.signature},
+        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.category ?? null}, ${item.url}, ${item.signature}, ${item.contentHash ?? null},
         ${validFrom}::timestamptz, ${validTo}::timestamptz,
         ${parsed.hasGeo}, ${areasJson}::jsonb, ${geojsonJson}::jsonb,
         ${geomExpr},
@@ -117,6 +128,7 @@ export class JMeldingGeoProjector {
         category     = EXCLUDED.category,
         url          = EXCLUDED.url,
         signature    = EXCLUDED.signature,
+        content_hash = EXCLUDED.content_hash,
         valid_from   = EXCLUDED.valid_from,
         valid_to     = EXCLUDED.valid_to,
         has_geo      = EXCLUDED.has_geo,
