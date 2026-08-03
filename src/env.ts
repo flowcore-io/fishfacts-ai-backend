@@ -31,6 +31,17 @@ const envSchema = z.object({
     .string()
     .uuid()
     .default("11da02d0-b033-43a4-acd1-96f9e193cc86"),
+  // Lógasavn — the Faroese law corpus (a mirror of logir.fo maintained by
+  // someone else's ingest). READ-ONLY for us: the sweep reads every fragment
+  // and writes none of them.
+  LOGASAVN_WORKSPACE_ID: z
+    .string()
+    .uuid()
+    .default("a2ae037c-5b45-4f06-924f-eb9fa4a8cc45"),
+  LOGASAVN_FRAGMENT_TYPE_ID: z
+    .string()
+    .uuid()
+    .default("67a1ae00-da83-4dfd-b540-9e2835fbc81f"),
   // In-chat issue reports (PRD: In-Chat Issue Reporting & Session Capture)
   // land as fragments of a dedicated Report fragment type, ideally in a
   // support-scoped workspace. Both optional: without a fragment type id the

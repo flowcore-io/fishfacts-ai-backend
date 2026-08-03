@@ -113,6 +113,13 @@
       "when": 1785499895512,
       "tag": "0015_long_war_machine",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785787162301,
+      "tag": "0016_abandoned_blue_shield",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@ import { createAisChRefillJob } from "@/ais/job-ch-refill";
 import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
 import type { Env } from "@/env";
+import type { LogasavnReviewRepository } from "@/logasavn/review-repository";
 import type { PathwayWriter } from "@/pathways";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
@@ -14,6 +15,7 @@ import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
+import { createLogasavnSweepJob } from "./logasavn-sweep";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
 import { createVornVeidibannJob } from "./vorn-veidibann";
@@ -28,6 +30,7 @@ export function createJobDefinitions(
   aisIngestState: AisIngestStateRepository,
   aisChRepo: AisClickhouseRepository,
   aisBucketReader: FlowcoreBucketReader,
+  logasavnReviewRepository: LogasavnReviewRepository,
 ): JobDefinition[] {
   return [
     {
@@ -84,6 +87,29 @@ export function createJobDefinitions(
         refreshExisting: z.coerce.boolean().default(false),
       }),
       execute: createGillnetPositionsJob(env, writer),
+    },
+    {
+      id: "logasavn-sweep",
+      name: "Lógasavn corpus sweep (Faroese statutory closures)",
+      // Manual only for now — impossible date (Feb 31) ⇒ the scheduler never
+      // fires it; run via POST /api/jobs/run, `dryRun: true` first.
+      //
+      // This job feeds a queue a human has to work through, so it earns its
+      // schedule by being watched first: a detector that mis-fires unattended
+      // fills the queue with noise, and noise is how a review step stops being
+      // read. Once a few runs have been checked against the review table, the
+      // schedule it WANTS is `0 5 * * *` — 05:00 UTC, after the upstream
+      // logir.fo scrape, which timestamps its fragments around 04:00
+      // (`scraped_at: 2026-07-24T06:00:24Z` on a 04:02 pass). Daily, because
+      // the corpus is re-scraped IN PLACE and drift is only visible by looking
+      // again.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        // Classify and log the counts, write nothing. For checking a detector
+        // change against the live corpus without touching review state.
+        dryRun: z.coerce.boolean().default(false),
+      }),
+      execute: createLogasavnSweepJob(env, usable, logasavnReviewRepository),
     },
     {
       id: "gebco-ingest",
