@@ -21,6 +21,22 @@ export type AnnualWindow = {
   to: string;
 };
 
+/**
+ * `MM-DD` restricted to real months and days.
+ *
+ * A loose `\d{2}-\d{2}` would accept `13-01`, and that value is worse than
+ * useless: `from > to` sends it down the year-wrapping branch, where
+ * `today >= "13-01"` can never hold, so the closure NEVER draws. A reviewer
+ * typo would silently hide a live ban — the fail-CLOSED direction this module
+ * exists to avoid. Rejecting it here routes it to `isInSeason`'s fail-OPEN
+ * path instead, where an unreadable window means "always in season".
+ *
+ * `02-30` still passes (no month-length table here); that is deliberate — it
+ * is a harmless bound, not a silent disable, and the review API rejects it at
+ * entry with a real calendar check.
+ */
+const MONTH_DAY = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
 /** Reads unknown JSON off a row without trusting it. */
 export function parseAnnualWindow(value: unknown): AnnualWindow | null {
   if (!value || typeof value !== "object") return null;
@@ -29,14 +45,28 @@ export function parseAnnualWindow(value: unknown): AnnualWindow | null {
   const from = record.from;
   const to = record.to;
   if (typeof from !== "string" || typeof to !== "string") return null;
-  if (!/^\d{2}-\d{2}$/.test(from) || !/^\d{2}-\d{2}$/.test(to)) return null;
+  if (!MONTH_DAY.test(from) || !MONTH_DAY.test(to)) return null;
   return { type: "annual", from, to };
 }
 
-/** `MM-DD` for an instant, in UTC. Zero-padded so it compares lexicographically. */
-function monthDayUtc(at: Date): string {
-  const month = String(at.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(at.getUTCDate()).padStart(2, "0");
+/**
+ * `MM-DD` for an instant, in FAROESE local time.
+ *
+ * The statute's `til 1. mai` is a Faroese calendar date, and the islands run
+ * UTC+1 in summer — so a UTC reading mis-classifies the last hour of a boundary
+ * day. That is a sub-day version of precisely the off-by-one the "both ends
+ * inclusive" rule guards against, and it costs one formatter to remove.
+ */
+const FAROE_MONTH_DAY = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Atlantic/Faroe",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function monthDayLocal(at: Date): string {
+  const parts = FAROE_MONTH_DAY.formatToParts(at);
+  const month = parts.find((p) => p.type === "month")?.value ?? "01";
+  const day = parts.find((p) => p.type === "day")?.value ?? "01";
   return `${month}-${day}`;
 }
 
@@ -54,12 +84,12 @@ function monthDayUtc(at: Date): string {
  * handling it is a closure that silently never activates, and that is two lines
  * of code to avoid.
  *
- * Compared as `MM-DD` strings, which is exact for zero-padded fixed-width
- * fields and sidesteps constructing a date in a year that may not have the
+ * Compared as `MM-DD` strings in Faroese local time, which is exact for
+ * zero-padded fixed-width fields and sidesteps constructing a date in a year that may not have the
  * day — 29 February being the obvious one.
  */
 export function inSeason(window: AnnualWindow, at: Date): boolean {
-  const today = monthDayUtc(at);
+  const today = monthDayLocal(at);
   if (window.from <= window.to) {
     return today >= window.from && today <= window.to;
   }

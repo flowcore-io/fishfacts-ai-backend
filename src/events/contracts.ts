@@ -47,8 +47,10 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
   recurrence: z
     .object({
       type: z.literal("annual"),
-      from: z.string().regex(/^\d{2}-\d{2}$/),
-      to: z.string().regex(/^\d{2}-\d{2}$/),
+      // Real months/days only: `13-01` would send the window down the
+      // year-wrapping branch where it can never match, silently hiding a ban.
+      from: z.string().regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/),
+      to: z.string().regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/),
     })
     .optional(),
   checkedAt: z.string().datetime(),

@@ -129,6 +129,59 @@ describe("isInSeason — the gate as the read path uses it", () => {
   });
 });
 
+// Raised by Ramattra on #135. `13-01` passed the loose regex, then `from > to`
+// sent it down the wrapping branch where `today >= "13-01"` can never hold — so
+// the closure never drew at all. A reviewer typo silently hiding a live ban is
+// the fail-CLOSED direction this module exists to prevent.
+describe("a malformed window must fail OPEN, never silently disable a ban", () => {
+  test("an impossible month is rejected rather than becoming a dead window", () => {
+    expect(
+      parseAnnualWindow({ type: "annual", from: "13-01", to: "05-01" }),
+    ).toBeNull();
+    // …and therefore the closure keeps drawing rather than vanishing.
+    expect(
+      isInSeason(
+        { type: "annual", from: "13-01", to: "05-01" },
+        at("2026-08-03"),
+      ),
+    ).toBe(true);
+  });
+
+  test("an impossible day is rejected", () => {
+    expect(
+      parseAnnualWindow({ type: "annual", from: "02-32", to: "05-01" }),
+    ).toBeNull();
+    expect(
+      parseAnnualWindow({ type: "annual", from: "00-00", to: "05-01" }),
+    ).toBeNull();
+    expect(
+      parseAnnualWindow({ type: "annual", from: "02-00", to: "05-01" }),
+    ).toBeNull();
+  });
+
+  test("every real month and day boundary is still accepted", () => {
+    for (const value of ["01-01", "12-31", "02-29", "06-30", "10-31"]) {
+      expect(
+        parseAnnualWindow({ type: "annual", from: value, to: value }),
+      ).not.toBeNull();
+    }
+  });
+});
+
+// The statute's `til 1. mai` is a Faroese calendar date and the islands run
+// UTC+1 in summer, so a UTC reading mis-classifies the last hour of a boundary
+// day — a sub-day version of the same off-by-one.
+describe("boundaries are Faroese local dates, not UTC ones", () => {
+  test("23:30 UTC on 30 April is already 1 May in the Faroes", () => {
+    const window: AnnualWindow = { type: "annual", from: "05-01", to: "05-31" };
+
+    // Summer: Faroes are UTC+1, so this instant is 00:30 on 1 May locally.
+    expect(inSeason(window, new Date("2026-04-30T23:30:00.000Z"))).toBe(true);
+    // An hour earlier is still 30 April locally.
+    expect(inSeason(window, new Date("2026-04-30T22:30:00.000Z"))).toBe(false);
+  });
+});
+
 describe("parseAnnualWindow", () => {
   test("accepts a well-formed window", () => {
     expect(

@@ -270,6 +270,7 @@ export function createApp({
         ...bbox,
         region,
         status,
+        asOf,
         limit,
         cursor,
       });
@@ -291,6 +292,7 @@ export function createApp({
         ...near,
         region,
         status,
+        asOf,
         limit,
         cursor,
       });
@@ -309,6 +311,7 @@ export function createApp({
     const q = params.get("q") ?? undefined;
     const page = await geoRepository.list({
       status,
+      asOf,
       region,
       hasGeo,
       q,
