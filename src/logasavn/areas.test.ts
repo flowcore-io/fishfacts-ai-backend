@@ -176,3 +176,120 @@ describe("segmentation", () => {
     expect(areas[0].points[1].lat).not.toBeCloseTo(areas[1].points[1].lat, 5);
   });
 });
+
+// A survey of all 7,405 Lógasavn fragments (Usable Knowledge 714320cb) found
+// 135 distinct coordinate shapes, not the four this parser was first built for.
+// Each row below is a real family from that census, and each is asserted on the
+// VALUE rather than the vertex count — the failure these guard against moves a
+// vertex rather than losing one, so counting corners cannot see it. Writing
+// this table is how the dropped `.63` in `22.63″` was found: a 19 m error that
+// every count-based test passed.
+const NOTATIONS: [string, string, number][] = [
+  [
+    "decimal before the seconds mark (Anordning 598/1976)",
+    "65° 41′ 22.63″ N 5° 34′ 42.22″ W",
+    65 + 41 / 60 + 22.63 / 3600,
+  ],
+  [
+    "decimal after the seconds mark (Løgtingslóg 80/2003)",
+    "61° 20’ 10’’.85 N 006° 40’ 23’’.77 V",
+    61 + 20 / 60 + 10.85 / 3600,
+  ],
+  [
+    "seconds closed by two apostrophes (K 4/2026)",
+    "60°20'00''N 06°00'00''V",
+    60 + 20 / 60,
+  ],
+  [
+    "typographic doubled quote (K 197/2021, NAFO)",
+    "48° 17’39’’N 47° 25’37’’V",
+    48 + 17 / 60 + 39 / 3600,
+  ],
+  [
+    "acute accent with a four-digit fraction (K 236/2025)",
+    "62°24´7090 N 006°33´3655 V",
+    62 + 24.709 / 60,
+  ],
+  [
+    "`º` U+00BA masculine ordinal, not `°` U+00B0",
+    "61º49'00\"N 06º30'00\"V",
+    61 + 49 / 60,
+  ],
+  ["degrees and minutes only (K 28/2014)", "59° 45' N 33° 30' V", 59 + 45 / 60],
+  ["bare degrees — a box corner (K 11/2026)", "62°N 06°V", 62],
+];
+
+describe("notation coverage (corpus census 714320cb)", () => {
+  for (const [label, vertex, expectedLat] of NOTATIONS) {
+    test(label, () => {
+      const md = `**Stk. 1.** Innan fyri linjur drignar millum hesi støð:\n- **1)**${vertex}\n- **2)**${vertex}\n- **3)**${vertex} `;
+      const [area] = drawableAreas(md);
+      expect(area).toBeDefined();
+      expect(area.points[0].lat).toBeCloseTo(expectedLat, 9);
+      expect(area.points[0].lng).toBeLessThan(0); // all are western
+    });
+  }
+});
+
+// Kunngerð 102/2024 § 2, Skjal 1 — the IN-FORCE replacement of the NEAFC
+// statute's Fylgiskjal 1. Plain signed decimal degrees in an inline table: no
+// degree sign, no hemisphere letter, the sign carrying the hemisphere. The base
+// statute K 113/2014 still contains the superseded 2014 rings in its own body,
+// so a reader that only knows the list-item grammar draws the wrong shapes and
+// raises nothing.
+const NEAFC_TABLE = `### § 2
+
+ Henda kunngerð kemur í gildi dagin eftir, at hon er kunngjørd. Skjal 1 “Skjal 1 Knattstøður fyri verandi fiskileiðir í NEAFC-skipanarøkinum Talva 1 BAR 1 Breiddarstig Longdarstig 1 74.1356 41.0604 2 73.7439 41.36 3 73.4273 41.0317 4 73.1143 40.7075 5 74.1356 41.0604 Talva 2 HAR 1 Breiddarstig Longdarstig 1 60.0557 -14.2048 2 59.6708 -14.0275 3 59.5262 -14.2562 4 59.3197 -14.6393 5 60.0557 -14.2048 Talva 13 Reykjanes Ridge Breiddarstig Longdarstig 1 60.9844 -27.0000 2 60.8811 -27.4432 3 60.8893 -27.6897 4 60.9592 -27.8432 5 60.9844 -27.0000 „`;
+
+describe("decimal-degree tables (K 102/2024)", () => {
+  test("reads every table in the annex", () => {
+    const areas = drawableAreas(NEAFC_TABLE);
+    expect(areas.map((a) => a.name)).toEqual([
+      "BAR 1",
+      "HAR 1",
+      "Reykjanes Ridge",
+    ]);
+  });
+
+  test("the sign carries the hemisphere — BAR 1 is east, HAR 1 is west", () => {
+    const [bar, har] = drawableAreas(NEAFC_TABLE);
+    expect(bar.points[0]).toEqual({ lat: 74.1356, lng: 41.0604 });
+    expect(har.points[0]).toEqual({ lat: 60.0557, lng: -14.2048 });
+  });
+
+  test("the row index is not mistaken for a coordinate", () => {
+    const [bar] = drawableAreas(NEAFC_TABLE);
+    expect(bar.points).toHaveLength(5);
+    expect(bar.ringClosed).toBe(true);
+  });
+});
+
+describe("failing closed", () => {
+  // A vertex line in a notation the tokenizer cannot read used to vanish from
+  // the ring silently — the polygon simply had fewer corners than the statute
+  // said. Across the corpus that hit ten in-force statutes. The area must now
+  // be withheld and counted instead.
+  const WITH_UNREADABLE_VERTEX = `**Stk. 1.** Innan fyri linjur drignar millum hesi støð:
+- **1)**61°40,000'N 007°33,000'V
+- **2)**61°30,000'N 007°45,000'V
+- **3)**61°26,000‚000'N 007°45,000‚000'V
+- **4)**61°40,000'N 007°33,000'V `;
+
+  test("an unreadable vertex withholds the whole area", () => {
+    expect(drawableAreas(WITH_UNREADABLE_VERTEX)).toHaveLength(0);
+  });
+
+  test("...and says so rather than failing silently", () => {
+    const [area] = extractAreas(WITH_UNREADABLE_VERTEX);
+    expect(area.unparsed).toBeGreaterThan(0);
+    // The readable vertices are still parsed — the area is held, not discarded,
+    // so an operator can see how much was understood.
+    expect(area.points.length).toBeGreaterThan(0);
+  });
+
+  test("a fully readable area is not held", () => {
+    const [area] = extractAreas(FOROYABANKI);
+    expect(area.unparsed).toBe(0);
+    expect(drawableAreas(FOROYABANKI)).toHaveLength(1);
+  });
+});
