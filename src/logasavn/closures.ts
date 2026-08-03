@@ -71,6 +71,13 @@ export type ClosureSkip = {
   reason: "hash_moved" | "unreadable" | "no_geometry";
 };
 
+/** A closure this service has already drawn, as the geo store knows it. */
+export type DrawnClosure = {
+  key: string;
+  /** The Lógasavn fragment it came from — `jmelding_geo.fragment_id`. */
+  fragmentId: string | null;
+};
+
 export type ClosurePlan = {
   emit: ClosureEmission[];
   skip: ClosureSkip[];
@@ -93,7 +100,8 @@ export type ClosurePlan = {
  * 2. **Withhold rather than guess.** A fragment we cannot read, or one that now
  *    yields no drawable ring, is skipped and counted — never emitted with
  *    partial geometry.
- * 3. **Retract what is no longer approved.** A row previously drawn whose review
+ * 3. **Retract what is no longer approved** — but never merely because we could
+ *    not read it this run. A row previously drawn whose review
  *    row has been re-declined, or whose text moved, must stop being drawn.
  *    Un-approved means not on the map, and that has to hold going backwards as
  *    well as forwards or the fail-closed default only applies to statutes nobody
@@ -101,7 +109,7 @@ export type ClosurePlan = {
  */
 export function planClosureIngest(
   sources: ClosureSource[],
-  alreadyDrawn: string[],
+  alreadyDrawn: DrawnClosure[],
 ): ClosurePlan {
   const emit: ClosureEmission[] = [];
   const skip: ClosureSkip[] = [];
@@ -152,8 +160,31 @@ export function planClosureIngest(
   }
 
   const emitting = new Set(emit.map((item) => item.key));
-  const retract = alreadyDrawn.filter(
-    (key) => key.startsWith(`${LOGASAVN_KEY_PREFIX}-`) && !emitting.has(key),
+  // A statute we simply could not READ this run keeps whatever it already has
+  // on the map. "We failed to fetch it" is not evidence the approval lapsed,
+  // and treating it as such points the failure the dangerous way: a legally
+  // in-force ban blinks off, and a skipper reading the map mid-blink sees open
+  // water where there is a closure. One Usable blip would otherwise retract
+  // EVERY drawn closure at once, because every fetch in the batch fails
+  // together.
+  //
+  // Matched on fragment id, not key: an unreadable fragment has no frontmatter,
+  // so its `closureKey` falls back to the id form and would never match the key
+  // it was drawn under.
+  const unreadable = new Set(
+    skip
+      .filter((item) => item.reason === "unreadable")
+      .map((item) => item.fragmentId),
   );
+  const retract = alreadyDrawn
+    .filter((drawn) => drawn.key.startsWith(`${LOGASAVN_KEY_PREFIX}-`))
+    .filter((drawn) => !emitting.has(drawn.key))
+    // `hash_moved` and `no_geometry` DO retract: there the approval genuinely
+    // no longer covers anything drawable. Only unreadability is withheld from
+    // the judgement.
+    .filter(
+      (drawn) => drawn.fragmentId == null || !unreadable.has(drawn.fragmentId),
+    )
+    .map((drawn) => drawn.key);
   return { emit, skip, retract };
 }

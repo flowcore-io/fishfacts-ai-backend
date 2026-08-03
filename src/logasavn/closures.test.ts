@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ParsedArea } from "./areas";
 import {
   type ClosureSource,
+  type DrawnClosure,
   LOGASAVN_KEY_PREFIX,
   closureKey,
   planClosureIngest,
@@ -49,6 +50,11 @@ function approvedRow(over: Partial<ReviewRow> = {}): ReviewRow {
     ...over,
   };
 }
+
+const drawn = (
+  key = "LOG-K-35-2026",
+  fragmentId: string | null = FRAGMENT,
+): DrawnClosure => ({ key, fragmentId });
 
 function source(over: Partial<ClosureSource> = {}): ClosureSource {
   return {
@@ -167,7 +173,7 @@ describe("planClosureIngest", () => {
   // Un-approved means not on the map, and that has to hold going backwards too:
   // a statute re-declined after being drawn must come off.
   test("retracts a drawn closure that is no longer approved", () => {
-    const plan = planClosureIngest([], ["LOG-K-35-2026"]);
+    const plan = planClosureIngest([], [drawn()]);
 
     expect(plan.retract).toEqual(["LOG-K-35-2026"]);
   });
@@ -175,7 +181,7 @@ describe("planClosureIngest", () => {
   test("retracts a drawn closure whose text moved", () => {
     const plan = planClosureIngest(
       [source({ contentHash: "d".repeat(64) })],
-      ["LOG-K-35-2026"],
+      [drawn()],
     );
 
     // Skipped AND taken back down — leaving it drawn would keep showing
@@ -185,10 +191,59 @@ describe("planClosureIngest", () => {
   });
 
   test("leaves a still-approved closure drawn", () => {
-    const plan = planClosureIngest([source()], ["LOG-K-35-2026"]);
+    const plan = planClosureIngest([source()], [drawn()]);
 
     expect(plan.retract).toEqual([]);
     expect(plan.emit).toHaveLength(1);
+  });
+
+  // A transient Usable outage must NOT take a legally in-force ban off the map.
+  // The failure points the dangerous way: a skipper reading the map mid-blink
+  // sees open water where there is a closure. And because every fetch in the
+  // batch fails together, one blip would retract EVERY drawn closure at once.
+  test("keeps a drawn closure that could not be re-read this run", () => {
+    const plan = planClosureIngest(
+      [source({ body: null, contentHash: null })],
+      [drawn()],
+    );
+
+    expect(plan.skip[0]?.reason).toBe("unreadable");
+    expect(plan.retract).toEqual([]);
+  });
+
+  // The preserve has to match on FRAGMENT ID: an unreadable fragment has no
+  // frontmatter, so its closureKey falls back to the id form and would never
+  // match the key it was drawn under.
+  test("keeps it even though the fallback key differs from the drawn key", () => {
+    const plan = planClosureIngest(
+      // A failed fetch yields no frontmatter at all — this is the shape the job
+      // actually builds when `getFragmentById` returns null.
+      [
+        source({
+          body: null,
+          contentHash: null,
+          documentType: null,
+          lawNumber: null,
+          year: null,
+        }),
+      ],
+      [drawn("LOG-K-35-2026", FRAGMENT)],
+    );
+
+    expect(plan.skip[0]?.key).toBe(`${LOGASAVN_KEY_PREFIX}-${FRAGMENT}`);
+    expect(plan.retract).toEqual([]);
+  });
+
+  test("an unreadable statute does not shield a DIFFERENT lapsed one", () => {
+    const plan = planClosureIngest(
+      [source({ body: null, contentHash: null })],
+      [
+        drawn("LOG-K-35-2026", FRAGMENT),
+        drawn("LOG-K-9-2019", "gone-fragment"),
+      ],
+    );
+
+    expect(plan.retract).toEqual(["LOG-K-9-2019"]);
   });
 
   // Vørn's emergency bans are region FO too. Archiving one because a statute
@@ -196,7 +251,11 @@ describe("planClosureIngest", () => {
   test("never retracts a row it did not write", () => {
     const plan = planClosureIngest(
       [],
-      ["J-2026-14", "vorn-ban-991", "LOG-K-1-2020"],
+      [
+        drawn("J-2026-14", null),
+        drawn("vorn-ban-991", null),
+        drawn("LOG-K-1-2020", "other-fragment"),
+      ],
     );
 
     expect(plan.retract).toEqual(["LOG-K-1-2020"]);

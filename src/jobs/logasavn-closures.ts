@@ -115,7 +115,10 @@ export function createLogasavnClosuresJob(
 
     const plan = planClosureIngest(
       sources,
-      alreadyDrawn.map((row) => row.jmNumber),
+      alreadyDrawn.map((row) => ({
+        key: row.jmNumber,
+        fragmentId: row.fragmentId,
+      })),
     );
     // Printed every run: "approved: 12, drawn: 12" becoming "approved: 12,
     // drawn: 0" is the whole system failing closed, and it is only visible if
