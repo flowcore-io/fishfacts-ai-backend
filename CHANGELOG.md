@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.30.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.29.0...v1.30.0) (2026-08-03)
+
+
+### Features
+
+* **logasavn:** let a human actually work the review queue ([16a9b21](https://github.com/flowcore-io/fishfacts-ai-backend/commit/16a9b21eacd938e0d353be14f93047138d1f39e0))
+* **logasavn:** let a human actually work the review queue ([327d9eb](https://github.com/flowcore-io/fishfacts-ai-backend/commit/327d9eb27aff0a7578da27332abcaceb27d836fe))
+
+
+### Bug Fixes
+
+* **logasavn:** make a re-decision visible, and count the queue in SQL ([5f67e23](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5f67e233b0d42f20a8467f7a230fe47fbd2de52c))
+
 ## [1.29.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.28.2...v1.29.0) (2026-08-03)
 
 
