@@ -436,13 +436,25 @@ export function extractAreas(content: string): ParsedArea[] {
 }
 
 /**
- * Areas safe to draw FROM THIS ONE STATUTE.
+ * Is this ONE area safe to draw?
  *
  * Fails CLOSED: an area is withheld when its boundary was described rather than
  * enumerated (`descriptive`), and equally when any of its vertex lines could not
  * be read (`unparsed`). The second case is the one that matters — a ring quietly
  * missing corners still draws, just in the wrong place, which is the failure
  * this ingest exists to end. An honest gap beats a wrong polygon.
+ *
+ * Exported because the corpus sweep needs both halves of the split — the rings
+ * it may draw AND the count it had to withhold — from a SINGLE `extractAreas`
+ * pass over 7,405 fragments. A second copy of this predicate at the call site is
+ * how "drawable" quietly comes to mean two different things.
+ */
+export function isDrawable(area: ParsedArea): boolean {
+  return !area.descriptive && area.unparsed === 0;
+}
+
+/**
+ * Areas safe to draw FROM THIS ONE STATUTE.
  *
  * Does NOT resolve supersession — the projector does. A statute whose body still
  * carries superseded list-item rings alongside an in-force replacement table
@@ -451,7 +463,5 @@ export function extractAreas(content: string): ParsedArea[] {
  * treat this output as already merged or in-force-filtered.
  */
 export function drawableAreas(content: string): ParsedArea[] {
-  return extractAreas(content).filter(
-    (area) => !area.descriptive && area.unparsed === 0,
-  );
+  return extractAreas(content).filter(isDrawable);
 }

@@ -6,6 +6,7 @@ import { createAisChRefillJob } from "@/ais/job-ch-refill";
 import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
 import type { Env } from "@/env";
+import type { LogasavnReviewRepository } from "@/logasavn/review-repository";
 import type { PathwayWriter } from "@/pathways";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
@@ -14,6 +15,7 @@ import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
+import { createLogasavnSweepJob } from "./logasavn-sweep";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
 import { createVornVeidibannJob } from "./vorn-veidibann";
@@ -28,6 +30,7 @@ export function createJobDefinitions(
   aisIngestState: AisIngestStateRepository,
   aisChRepo: AisClickhouseRepository,
   aisBucketReader: FlowcoreBucketReader,
+  logasavnReviewRepository: LogasavnReviewRepository,
 ): JobDefinition[] {
   return [
     {
@@ -84,6 +87,21 @@ export function createJobDefinitions(
         refreshExisting: z.coerce.boolean().default(false),
       }),
       execute: createGillnetPositionsJob(env, writer),
+    },
+    {
+      id: "logasavn-sweep",
+      name: "Lógasavn corpus sweep (Faroese statutory closures)",
+      // 05:00 UTC — after the upstream logir.fo scrape, which timestamps its
+      // fragments around 04:00 (`scraped_at: 2026-07-24T06:00:24Z` on a 04:02
+      // pass). Daily because the corpus is re-scraped IN PLACE, so drift is
+      // detectable only by looking again.
+      schedule: "0 5 * * *",
+      inputSchema: z.object({
+        // Classify and log the counts, write nothing. For checking a detector
+        // change against the live corpus without touching review state.
+        dryRun: z.coerce.boolean().default(false),
+      }),
+      execute: createLogasavnSweepJob(env, usable, logasavnReviewRepository),
     },
     {
       id: "gebco-ingest",

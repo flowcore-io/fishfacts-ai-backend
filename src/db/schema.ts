@@ -431,3 +431,68 @@ export const fxRate = pgTable(
     pk: primaryKey({ columns: [table.year, table.quote] }),
   }),
 );
+
+/**
+ * Review queue for Lógasavn-derived closure geometry.
+ *
+ * Nothing here is drawable until a human approves it, and an approval is pinned
+ * to the statute text it was given for: the primary key is
+ * `(fragment_id, content_hash)`, so a re-scrape that moves the text lands a
+ * fresh `pending` row and the old verdict stops being current. That single
+ * choice makes the review queue and the drift watchdog one mechanism instead of
+ * two. The merge rules — and why old verdicts are kept rather than
+ * overwritten — live in `src/logasavn/review.ts`.
+ *
+ * Holds CANDIDATES, not the corpus: tens of rows against 7,405 fragments.
+ */
+export const logasavnReview = pgTable(
+  "logasavn_review",
+  {
+    fragmentId: text("fragment_id").notNull(),
+    // sha256 of the statute BODY. Frontmatter is excluded deliberately: it
+    // carries `scraped_at`, which moves on every ingest pass whether or not the
+    // law changed, and hashing it would re-open every approval every night.
+    contentHash: text("content_hash").notNull(),
+    // The one hash per fragment the latest sweep actually saw. Reads filter on
+    // this: an approval for superseded text must never draw.
+    isCurrent: boolean("is_current").notNull().default(true),
+    title: text("title").notNull(),
+    // Normalised responsible ministry — ranks the queue, never scopes it.
+    authority: text("authority"),
+    // Lógasavn's own `validity_status` ("Galdandi" = in force). Refreshed by
+    // every sweep WITHOUT touching the verdict: a statute being superseded is a
+    // temporal fact for the read model, not a change to its geometry.
+    validityStatus: text("validity_status"),
+    // What the loose detector saw vs. what the extractor produced. A row with
+    // coordinate_like > 0 and ring_count = 0 is the gap alert, legible without
+    // re-running anything.
+    coordinateLike: integer("coordinate_like").notNull().default(0),
+    ringCount: integer("ring_count").notNull().default(0),
+    vertexCount: integer("vertex_count").notNull().default(0),
+    withheldCount: integer("withheld_count").notNull().default(0),
+    detectors: jsonb("detectors").notNull().default([]),
+    reviewStatus: text("review_status").notNull().default("pending"),
+    reviewReason: text("review_reason").notNull(),
+    // `{type:"annual", from:"MM-DD", to:"MM-DD"}`, set BY A REVIEWER only. No
+    // statute states its own recurrence (`árliga` appears zero times), so this
+    // is an interpretation and can never be written by the parser.
+    recurrence: jsonb("recurrence"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    declineReason: text("decline_reason"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.fragmentId, table.contentHash] }),
+    statusIdx: index("logasavn_review_status_idx").on(table.reviewStatus),
+    currentIdx: index("logasavn_review_current_idx").on(
+      table.isCurrent,
+      table.reviewStatus,
+    ),
+  }),
+);

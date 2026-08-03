@@ -30,6 +30,7 @@ import { JobRunner } from "./jobs/runner";
 import { JobScheduler } from "./jobs/scheduler";
 import { seedJobStateFromUsable } from "./jobs/seed-from-usable";
 import { JobStateStore } from "./jobs/state-store";
+import { LogasavnReviewRepository } from "./logasavn/review-repository";
 import { createPathwayRuntime } from "./pathways";
 import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
@@ -51,6 +52,7 @@ const gillnetProjector = new GillnetProjector(db);
 const gillnetRepository = new GillnetRepository(db);
 const gebcoProjector = new GebcoProjector(db);
 const gebcoRepository = new GebcoRepository(db);
+const logasavnReviewRepository = new LogasavnReviewRepository(db);
 const poiRepository = new PoiRepository(usable, env);
 // Invalidation hook: a durable POI write becomes servable on the next
 // GET /api/poi instead of waiting out the read cache's 5-min TTL.
@@ -113,6 +115,7 @@ const jobs = createJobDefinitions(
   aisIngestState,
   aisChRepo,
   aisBucketReader,
+  logasavnReviewRepository,
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);

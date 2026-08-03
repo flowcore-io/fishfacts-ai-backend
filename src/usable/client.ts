@@ -38,16 +38,15 @@ function asRecord(value: unknown): JsonObject | null {
 }
 
 /**
- * Usable's REST responses do NOT include the parsed `frontmatter` JSONB
- * column (it's an internal search projection; verified against usable's
- * `getMemoryFragmentById` select) — but stored `content` retains the YAML
- * block verbatim, so parse it out here. Mirrors usable's own
- * `parseFrontmatter` (packages/core/src/utils/frontmatter.ts): first line
- * exactly `---`, closed by a `---` (or `...`) line, YAML between.
+ * Cut stored `content` at the closing frontmatter delimiter.
+ *
+ * Mirrors usable's own `parseFrontmatter`
+ * (packages/core/src/utils/frontmatter.ts): first line exactly `---`, closed by
+ * a `---` (or `...`) line, YAML between, document below.
  */
-export function frontmatterFromContent(
+function splitFrontmatter(
   content: string | undefined,
-): JsonObject | null {
+): { yaml: string; body: string } | null {
   if (!content) return null;
   const lines = content.trim().split("\n");
   if (lines[0]?.trim() !== "---") return null;
@@ -55,11 +54,46 @@ export function frontmatterFromContent(
     (line, i) => i > 0 && (line.trim() === "---" || line.trim() === "..."),
   );
   if (end === -1) return null;
+  return {
+    yaml: lines.slice(1, end).join("\n"),
+    body: lines.slice(end + 1).join("\n"),
+  };
+}
+
+/**
+ * Usable's REST responses do NOT include the parsed `frontmatter` JSONB
+ * column (it's an internal search projection; verified against usable's
+ * `getMemoryFragmentById` select) — but stored `content` retains the YAML
+ * block verbatim, so parse it out here.
+ */
+export function frontmatterFromContent(
+  content: string | undefined,
+): JsonObject | null {
+  const split = splitFrontmatter(content);
+  if (!split) return null;
   try {
-    return asRecord(Bun.YAML.parse(lines.slice(1, end).join("\n")));
+    return asRecord(Bun.YAML.parse(split.yaml));
   } catch {
     return null;
   }
+}
+
+/**
+ * The document below the frontmatter — for Lógasavn, the statute text itself.
+ *
+ * This is the half that must be HASHED. A Lógasavn fragment's frontmatter
+ * carries `scraped_at`, which Jaspur's ingest moves on every pass whether or not
+ * the law changed (fragment `82ac0b0e`: created 2026-05-20, `scraped_at`
+ * 2026-08-01). Hashing whole `content` would therefore flip every approval in
+ * the review queue back to pending on every re-scrape — the drift watchdog
+ * firing constantly is the same as it not firing at all.
+ *
+ * Content with no frontmatter is returned unchanged: a fragment that lost its
+ * YAML block still has a statute in it, and dropping it would read as "this law
+ * no longer exists".
+ */
+export function bodyFromContent(content: string | undefined): string {
+  return splitFrontmatter(content)?.body ?? content ?? "";
 }
 
 function normalizeFragment(value: unknown): UsableFragment | null {
