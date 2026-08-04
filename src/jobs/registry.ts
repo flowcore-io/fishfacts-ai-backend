@@ -89,15 +89,17 @@ export function createJobDefinitions(
     {
       id: "logasavn-sweep",
       name: "Lógasavn corpus index (Faroese statutes mentioning coordinates)",
-      // Manual only for now — impossible date (Feb 31) ⇒ the scheduler never
-      // fires it; run via POST /api/jobs/run, `dryRun: true` first.
+      // 05:00 UTC, after the upstream logir.fo scrape, which timestamps its
+      // fragments around 04:00 (`scraped_at: 2026-07-24T06:00:24Z` on a 04:02
+      // pass).
       //
-      // The schedule it WANTS is `0 5 * * *` — 05:00 UTC, after the upstream
-      // logir.fo scrape, which timestamps its fragments around 04:00
-      // (`scraped_at: 2026-07-24T06:00:24Z` on a 04:02 pass). Daily, because
-      // the corpus is re-scraped IN PLACE and the index carries a freshness
-      // stamp that a reader is told to distrust once it ages.
-      schedule: "0 0 31 2 *",
+      // DAILY, and that is the point rather than a convenience. The index
+      // carries a `scanned_at` stamp and tells its reader to search the corpus
+      // directly for anything after that date — so a stale index does not lie,
+      // it just stops being worth reading, and everything degrades to the cold
+      // search it was measured against. Left unscheduled it would go stale from
+      // the day it was published while the corpus kept growing underneath it.
+      schedule: "0 5 * * *",
       inputSchema: z.object({
         // Classify and log the counts, publish nothing. For checking a detector
         // change against the live corpus without moving the index.
