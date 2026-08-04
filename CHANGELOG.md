@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.31.0...v2.0.0) (2026-08-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **logasavn:** `logasavn_review` is dropped and `GET/PATCH /api/logasavn/review` no longer exist. Re-run `logasavn-sweep` after deploying to publish the index.
+
+### Features
+
+* **logasavn:** index the corpus, stop authoring geometry ([d4a0118](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d4a0118d296767cd6bf40f3cc221cca42a62f08a))
+
 ## [1.31.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.30.0...v1.31.0) (2026-08-03)
 
 
