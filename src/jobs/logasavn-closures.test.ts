@@ -25,6 +25,8 @@ const context = {
 };
 
 const STATUTE_FRAGMENT_ID = "aaaaaaaa-1111-4111-8111-111111111111";
+/** A second statute, so a failure on one can be shown not to end the run. */
+const SECOND_FRAGMENT_ID = "bbbbbbbb-2222-4222-8222-222222222222";
 
 /** K 30/2018 § 5 — `Øki A` closed all year, `øki a` reopened inside it. */
 const OKI_A_AND_LOWER_A = `**Stk. 1.** Í øki A alt árið innan fyri linjur drignar millum hesi støð:
@@ -129,7 +131,7 @@ function harness(options: {
           }
         : options.index,
     getFragmentById: async (fragmentId) =>
-      fragmentId === STATUTE_FRAGMENT_ID
+      fragmentId === STATUTE_FRAGMENT_ID || fragmentId === SECOND_FRAGMENT_ID
         ? { id: fragmentId, content: options.body ?? OKI_A_AND_LOWER_A }
         : null,
   };
@@ -256,6 +258,86 @@ describe("what reaches the map", () => {
     expect(h.readTitles).toEqual(["Kunngerð nr. 30 (2018)"]);
     expect(h.emitted).toEqual([]);
     expect(result.message).toContain("Dry run");
+    expect(result.message).toContain("rings drawn: 1");
+  });
+});
+
+describe("the run summary is an instrument", () => {
+  test("a correct declination is not counted as a disagreement", async () => {
+    // The fixture yields one closure and one exemption. Reporting both under a
+    // single `withheld` total makes a run that rightly refused the exemption
+    // read like a run where the two readers fell out — which is the opposite of
+    // what happened, and the reason `WithholdReason` separates them.
+    const h = harness({});
+
+    const result = await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: true }, context);
+
+    expect(result.message).toContain("withheld (readers disagree): 0");
+    expect(result.message).toContain("declined (not closures): 1");
+  });
+
+  test("a genuine disagreement lands in the withheld count, not the declined one", async () => {
+    const moved = [...OKI_A_QUOTES];
+    moved[1] = { lat: `61°03,500'N`, lon: `007°57,000'V` };
+    const h = harness({
+      reading: {
+        ...GOOD_READING,
+        rings: [
+          { ...GOOD_READING.rings[0], vertices: moved } as never,
+          GOOD_READING.rings[1] as never,
+        ],
+      },
+    });
+
+    const result = await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: true }, context);
+
+    expect(result.message).toContain("withheld (readers disagree): 1");
+    expect(result.message).toContain("declined (not closures): 1");
+  });
+});
+
+describe("one flaky call costs one statute", () => {
+  test("a reader that throws does not abandon the statutes after it", async () => {
+    // A 429, a fenced or null `content`, a body that is not JSON. Unguarded,
+    // the throw ends the run — and on a live run everything already emitted
+    // stays emitted, so the map is half updated and the job only says it failed.
+    const h = harness({
+      entries: [
+        indexEntry({ title: "Kunngerð nr. 30 (2018)" }),
+        indexEntry({
+          fragmentId: SECOND_FRAGMENT_ID,
+          title: "Kunngerð nr. 45 (2022)",
+        }),
+      ],
+    });
+    let call = 0;
+    const flaky: StatuteReader = async (statute) => {
+      call += 1;
+      if (call === 1) throw new Error("OpenRouter answered 429");
+      return h.read(statute);
+    };
+
+    const result = await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      flaky,
+    )(undefined, { dryRun: false }, context);
+
+    // The second statute still drew, and the failure is reported rather than
+    // being indistinguishable from a statute with nothing in it.
+    expect(h.emitted).toHaveLength(1);
+    expect(result.message).toContain("statutes not read: 1");
     expect(result.message).toContain("rings drawn: 1");
   });
 });

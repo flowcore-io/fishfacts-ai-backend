@@ -6,6 +6,7 @@ import {
   compareReading,
   ringLabel,
 } from "@/logasavn/closure-reading";
+import type { StatuteReading } from "@/logasavn/closure-reading";
 import {
   INDEX_FRAGMENT_KEY,
   type IndexCandidate,
@@ -212,8 +213,21 @@ export function createLogasavnClosuresJob(
 
     const lines: string[] = [];
     let drawn = 0;
+    /** Rings the two readers could not agree on — the number that means trouble. */
     let withheld = 0;
+    /**
+     * Rings the reader correctly declined to call closures.
+     *
+     * Counted apart from `withheld` because lumping them together makes a run
+     * that rightly refuses thirteen fishing-ground tables read exactly like a
+     * run that broke. On the measured corpus the declinations dominate, so the
+     * combined figure buried the two real disagreements behind a number that
+     * looked alarming — this is the intent `WithholdReason` already documents,
+     * finally applied to the aggregate and not only to the per-statute line.
+     */
+    let notClosures = 0;
     let unclaimed = 0;
+    let failures = 0;
 
     for (const [position, candidate] of candidates.entries()) {
       if (context.signal.aborted || context.isStopRequested()) {
@@ -235,14 +249,32 @@ export function createLogasavnClosuresJob(
       // The two readings, taken independently of one another on purpose: the
       // parser is not shown the model's answer and vice versa, because a witness
       // that has seen the defendant's statement is not a second observation.
-      const reading = await read({
-        title: candidate.title,
-        body,
-        url: candidate.url,
-      });
+      //
+      // Guarded per statute rather than around the loop. Everything in here can
+      // fail on one bad response — a 429, a `content` that is fenced or null
+      // despite `strict: true`, a body that is not JSON — and an unguarded throw
+      // would abandon the remaining statutes. On a live run the ones already
+      // emitted would stay emitted, leaving the map half-updated and the job
+      // reporting only that it failed. One flaky call should cost one statute.
+      let reading: StatuteReading;
+      try {
+        reading = await read({
+          title: candidate.title,
+          body,
+          url: candidate.url,
+        });
+      } catch (error) {
+        failures += 1;
+        const detail = error instanceof Error ? error.message : String(error);
+        lines.push(`${candidate.title} — NOT READ: ${detail}`);
+        continue;
+      }
       const result = compareReading(reading, extractAreas(body));
 
-      withheld += result.withheld.length;
+      for (const ring of result.withheld) {
+        if (ring.reason === "not-a-closure") notClosures += 1;
+        else withheld += 1;
+      }
       unclaimed += result.unclaimed.length;
 
       const statuteNumber = statuteNumberOf(candidate.title);
@@ -298,12 +330,15 @@ export function createLogasavnClosuresJob(
       });
     }
 
-    // Unconditional, like the sweep's: the withheld and unclaimed counts are the
-    // instrument, and an instrument that reports only when unhappy cannot show
-    // you the day it stopped working.
+    // Unconditional, like the sweep's: these counts are the instrument, and an
+    // instrument that reports only when unhappy cannot show you the day it
+    // stopped working. `withheld` and `notClosures` stay apart — the first is
+    // the two readers failing to agree, the second is the reader doing its job.
     const summary =
       `statutes: ${candidates.length}, rings drawn: ${drawn}, ` +
-      `withheld: ${withheld}, unclaimed by the reader: ${unclaimed}`;
+      `withheld (readers disagree): ${withheld}, ` +
+      `declined (not closures): ${notClosures}, ` +
+      `unclaimed by the reader: ${unclaimed}, statutes not read: ${failures}`;
     console.info("[LogasavnClosures]", summary);
     for (const line of lines) console.info("[LogasavnClosures]", line);
 
