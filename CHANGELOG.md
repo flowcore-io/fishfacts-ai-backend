@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.0.0...v2.1.0) (2026-08-04)
+
+
+### Features
+
+* **logasavn:** ingest statutory closures — LLM author, parser cross-check ([473eca5](https://github.com/flowcore-io/fishfacts-ai-backend/commit/473eca5e8326d0a5a9520898e5ca3e64c3cd274e))
+* **logasavn:** ingest statutory closures with an LLM author and the parser as cross-check ([5a0de88](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5a0de88db07f49992a5d0227a03f4e0fcb2e07ee))
+
+
+### Bug Fixes
+
+* **logasavn:** contain a statute failure to that statute ([350ecfa](https://github.com/flowcore-io/fishfacts-ai-backend/commit/350ecfab0bb6ad89abd01c20b337ca33626d69cd))
+* **logasavn:** contain a statute failure to that statute, not just a flaky call ([c67864e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c67864e9d6c0aad3393974690ca80a3bc18df49d))
+* **logasavn:** let the sweep create its own index, and run it daily ([f7c63b6](https://github.com/flowcore-io/fishfacts-ai-backend/commit/f7c63b6fc44f0ac4a180bb9e06f86a81f7bbdcc1))
+* **logasavn:** let the sweep create its own index, and run it daily ([ba16a9d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/ba16a9d9fbc0b696ac6c3b4f34c9e0f82b9ea765))
+* **logasavn:** separate gate failures from correct declinations, guard each statute ([6bd984a](https://github.com/flowcore-io/fishfacts-ai-backend/commit/6bd984a428d471e857b39e20d4dcee933bc2592d))
+
 ## [2.0.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v1.31.0...v2.0.0) (2026-08-04)
 
 
