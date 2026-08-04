@@ -340,6 +340,46 @@ describe("one flaky call costs one statute", () => {
     expect(result.message).toContain("statutes not read: 1");
     expect(result.message).toContain("rings drawn: 1");
   });
+
+  test("a throw from the compare step also costs only one statute", async () => {
+    // The network call is the obvious flaky surface, but it is not the only
+    // thing inside the loop that can throw. Neither `extractAreas` nor
+    // `compareReading` throws on any input seen so far — which is a statement
+    // about the corpus so far, and this pipeline has already been surprised
+    // twice by a character nobody had met. Forced here with a reading whose
+    // `vertices` is not iterable, standing in for whatever the next surprise is.
+    const h = harness({
+      entries: [
+        indexEntry({ title: "Kunngerð nr. 30 (2018)" }),
+        indexEntry({
+          fragmentId: SECOND_FRAGMENT_ID,
+          title: "Kunngerð nr. 45 (2022)",
+        }),
+      ],
+    });
+    let call = 0;
+    const hostile: StatuteReader = async (statute) => {
+      call += 1;
+      if (call === 1) {
+        return {
+          ...GOOD_READING,
+          rings: [{ ...GOOD_READING.rings[0], vertices: null }],
+        } as unknown as StatuteReading;
+      }
+      return h.read(statute);
+    };
+
+    const result = await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      hostile,
+    )(undefined, { dryRun: false }, context);
+
+    expect(h.emitted).toHaveLength(1);
+    expect(result.message).toContain("statutes not read: 1");
+    expect(result.message).toContain("rings drawn: 1");
+  });
 });
 
 describe("refusing to look clean", () => {
