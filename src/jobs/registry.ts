@@ -6,6 +6,7 @@ import { createAisChRefillJob } from "@/ais/job-ch-refill";
 import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
 import type { Env } from "@/env";
+import { createOpenRouterReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
@@ -14,6 +15,7 @@ import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
+import { createLogasavnClosuresJob } from "./logasavn-closures";
 import { createLogasavnSweepJob } from "./logasavn-sweep";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
@@ -106,6 +108,32 @@ export function createJobDefinitions(
         dryRun: z.coerce.boolean().default(false),
       }),
       execute: createLogasavnSweepJob(env, usable),
+    },
+    {
+      id: "logasavn-closures",
+      name: "Lógasavn statutory closures (Faroese statute geometry)",
+      // Manual only for now — impossible date (Feb 31) ⇒ the scheduler never
+      // fires it; run via POST /api/jobs/run, `dryRun: true` first.
+      //
+      // Deliberately not scheduled yet. It costs an LLM call per statute and
+      // the first passes are for looking at the output by eye; a job that draws
+      // on a fisherman's chart earns its schedule after someone has checked what
+      // it draws, not before. It also has to run AFTER `logasavn-sweep` (05:00),
+      // whose index it reads.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        // Read, compare and log; emit nothing. The counts alone answer "would
+        // this have drawn the right things".
+        dryRun: z.coerce.boolean().default(true),
+        // `number/year`, e.g. `["30/2018"]`. Defaults to the first-pass set.
+        statutes: z.array(z.string()).optional(),
+      }),
+      execute: createLogasavnClosuresJob(
+        env,
+        writer,
+        usable,
+        createOpenRouterReader(env),
+      ),
     },
     {
       id: "gebco-ingest",

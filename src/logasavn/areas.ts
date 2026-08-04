@@ -60,10 +60,33 @@ export type ParsedArea = {
 // inside one regex is unreadable and its group numbering is a maintenance trap.
 /** Degree sign proper, plus the `º` masculine ordinal it gets typed as. */
 const DEGREE_SIGN = String.raw`[°º]`;
-/** Apostrophe, acute accent, typographic right quote, prime. */
-const MINUTE_CHARS = String.raw`'´’′`;
-/** Double quote and the double-prime; two minute marks in a row read as one. */
-const SECOND_CHARS = String.raw`"″`;
+/**
+ * Apostrophe, acute accent, typographic single quotes, prime — and the cent
+ * sign.
+ *
+ * `¢` (U+00A2) is not a punctuation mark anybody chose: K 38/2017 writes
+ * `48° 27¢ N`, an encoding artefact where the prime became a currency symbol
+ * somewhere upstream of logir.fo. It is the only statute in the corpus that
+ * does it, and it accounts for every remaining coordinate the tokenizer could
+ * not read across all 48 in-force candidates.
+ */
+const MINUTE_CHARS = String.raw`'´’‘′¢`;
+/**
+ * Double quote, typographic double quotes and the double-prime; two minute
+ * marks in a row read as one.
+ *
+ * `”` (U+201D, RIGHT DOUBLE QUOTATION MARK) earns its place from K 197/2021,
+ * the NAFO closures, which writes `42°31’33” N` — a typographic double quote as
+ * the seconds mark where the rest of the corpus uses `"` (U+0022) or `″`
+ * (U+2033). The minute mark in the same coordinate is `’`, which WAS known, so
+ * the tokenizer read halfway through each vertex and then stopped: eighteen of
+ * that statute's nineteen closures parsed to nothing.
+ *
+ * Found by the gap between this and `COORD_LIKE`, which does not care what sits
+ * between the degree sign and the hemisphere and so saw every one of them. That
+ * is the whole reason the loose detector is written to over-trigger.
+ */
+const SECOND_CHARS = String.raw`"”“″`;
 const HEMISPHERE = String.raw`[NSVWEA]`;
 /** Digits, whitespace and separators only — no letters, so prose can't leak in. */
 const COORD_BODY = String.raw`[\d\s.,${MINUTE_CHARS}${SECOND_CHARS}]*?`;
@@ -119,7 +142,7 @@ type RawCoordinate = { degrees: number; minutes: number; hemisphere: string };
 function minutesFrom(body: string): number {
   // Normalise the mark zoo first: every minute mark to `'`, every seconds mark
   // to `"`, so the checks below don't have to repeat the character classes.
-  const marks = body.replace(/[´’′]/g, "'").replace(/″/g, '"');
+  const marks = body.replace(/[´’‘′¢]/g, "'").replace(/[″”“]/g, '"');
   const normalised = marks.replace(/''/g, '"');
 
   const secondsMark = normalised.indexOf('"');
@@ -351,6 +374,29 @@ function pairByHemisphere(coords: RawCoordinate[]): {
   }
   if (pendingLat != null) orphans += 1;
   return { points, orphans };
+}
+
+/**
+ * Read ONE vertex written in the statute's own notation.
+ *
+ * Exported for the closure gate, which compares an LLM's reading of a statute
+ * against this parser's. The LLM is asked to quote each vertex VERBATIM rather
+ * than to convert it, and the quote is then run through this — the same
+ * tokenizer, the same arithmetic — so the two sides differ only where they
+ * disagree about what the statute SAYS. Ask the model for decimal degrees
+ * instead and every comparison also carries its rounding, which buries a
+ * transcription error under a rounding tolerance wide enough to hide one.
+ *
+ * Fails closed, like everything else here: a notation this tokenizer cannot
+ * read, or text carrying anything other than exactly one latitude and one
+ * longitude, returns null rather than a best guess.
+ */
+export function parseVertex(text: string): AreaPoint | null {
+  const coords = matchCoordinates(text);
+  if (coords.length !== 2) return null;
+  const { points, orphans } = pairByHemisphere(coords);
+  if (orphans > 0 || points.length !== 1) return null;
+  return points[0] ?? null;
 }
 
 /**

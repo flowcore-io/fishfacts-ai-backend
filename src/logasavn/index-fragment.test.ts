@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { INDEX_FRAGMENT_KEY, buildIndexFragment } from "./index-fragment";
+import {
+  INDEX_FRAGMENT_KEY,
+  buildIndexFragment,
+  parseIndexFragment,
+} from "./index-fragment";
 import type { IndexEntry, SweepResult } from "./sweep";
 
 const SCANNED_AT = "2026-08-04T05:00:00.000Z";
@@ -151,5 +155,80 @@ describe("the table", () => {
     expect(
       buildIndexFragment(resultOf([entry()]), "2026-09-01T05:00:00.000Z").key,
     ).toBe(INDEX_FRAGMENT_KEY);
+  });
+});
+
+// The closure ingest takes its candidate set from this page rather than
+// re-sweeping 7,405 fragments to recompute a list written the same morning.
+// That makes the page a contract between two jobs, so it is round-tripped here:
+// move a column and these fail, instead of the ingest silently finding nothing.
+describe("reading the index back", () => {
+  test("recovers every statute, with its validity and its link", () => {
+    const page = buildIndexFragment(
+      resultOf([
+        entry({ title: "In force one" }),
+        entry({
+          fragmentId: "22222222-2222-4222-8222-222222222222",
+          title: "Superseded one",
+          url: "https://logir.fo/Kunngerd/1-fra-1999",
+          validityStatus: "Áður galdandi",
+        }),
+      ]),
+      SCANNED_AT,
+    );
+
+    expect(parseIndexFragment(page.content)).toEqual([
+      {
+        fragmentId: "11111111-1111-4111-8111-111111111111",
+        title: "In force one",
+        url: "https://logir.fo/Kunngerd/35-fra-2026",
+        inForce: true,
+      },
+      {
+        fragmentId: "22222222-2222-4222-8222-222222222222",
+        title: "Superseded one",
+        url: "https://logir.fo/Kunngerd/1-fra-1999",
+        inForce: false,
+      },
+    ]);
+  });
+
+  test("a pipe in a title survives the round trip", () => {
+    const page = buildIndexFragment(
+      resultOf([entry({ title: "Kunngerð | nr. 35" })]),
+      SCANNED_AT,
+    );
+
+    expect(parseIndexFragment(page.content)[0]?.title).toBe(
+      "Kunngerð | nr. 35",
+    );
+  });
+
+  test("a statute with no link is still a candidate", () => {
+    // `url` comes from frontmatter and is not guaranteed. Dropping the row for
+    // want of a link would be a filter, and filters are how holes happen.
+    const page = buildIndexFragment(
+      resultOf([entry({ url: null })]),
+      SCANNED_AT,
+    );
+
+    const [candidate] = parseIndexFragment(page.content);
+    expect(candidate?.fragmentId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(candidate?.url).toBeNull();
+  });
+
+  test("an empty section is read as empty, not as broken", () => {
+    const page = buildIndexFragment(resultOf([entry()]), SCANNED_AT);
+
+    expect(page.content).toContain("_none_");
+    expect(parseIndexFragment(page.content)).toHaveLength(1);
+  });
+
+  test("a page that is not this page refuses rather than reporting no statutes", () => {
+    // A confidently empty answer is the failure mode here: "the corpus holds no
+    // closures" and "I could not read the index" must not look the same.
+    expect(() => parseIndexFragment("# Something else entirely")).toThrow(
+      /Cannot read the Lógasavn index/,
+    );
   });
 });
