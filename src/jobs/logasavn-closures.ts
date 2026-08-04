@@ -250,26 +250,34 @@ export function createLogasavnClosuresJob(
       // parser is not shown the model's answer and vice versa, because a witness
       // that has seen the defendant's statement is not a second observation.
       //
-      // Guarded per statute rather than around the loop. Everything in here can
-      // fail on one bad response — a 429, a `content` that is fenced or null
+      // Guarded per statute rather than around the loop. The obvious flaky
+      // surface is the call itself — a 429, a `content` that is fenced or null
       // despite `strict: true`, a body that is not JSON — and an unguarded throw
       // would abandon the remaining statutes. On a live run the ones already
       // emitted would stay emitted, leaving the map half-updated and the job
-      // reporting only that it failed. One flaky call should cost one statute.
+      // reporting only that it failed. One bad statute should cost one statute.
+      //
+      // The parse and the compare are INSIDE the guard too, though neither
+      // throws today. That is the point: "it cannot throw" is a claim about the
+      // inputs seen so far, and this pipeline has already been surprised twice
+      // by a corpus character nobody had met (`”`, `¢`). A malformed statute
+      // taking out the other 47 would be the same failure as a 429 doing it,
+      // and the containment is one line wider.
       let reading: StatuteReading;
+      let result: ComparisonResult;
       try {
         reading = await read({
           title: candidate.title,
           body,
           url: candidate.url,
         });
+        result = compareReading(reading, extractAreas(body));
       } catch (error) {
         failures += 1;
         const detail = error instanceof Error ? error.message : String(error);
         lines.push(`${candidate.title} — NOT READ: ${detail}`);
         continue;
       }
-      const result = compareReading(reading, extractAreas(body));
 
       for (const ring of result.withheld) {
         if (ring.reason === "not-a-closure") notClosures += 1;
