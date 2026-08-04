@@ -67,6 +67,14 @@ export class JMeldingGeoProjector {
     // closed, so a "repair" here could silently move a vertex — the one failure
     // class (parsed successfully to the WRONG value) that nothing downstream can
     // detect. `sourceFragmentId` marks the statute-derived events.
+    //
+    // DORMANT since the Lógasavn teardown: nothing emits `sourceFragmentId` any
+    // more, so every FO row reaching here is a Vørn ban and the guard is always
+    // true. It is kept rather than simplified away because its protection comes
+    // back the moment statute geometry does — and it fails SILENTLY. Anyone
+    // restoring a Lógasavn ingest must emit `sourceFragmentId` with it, or
+    // statute rings get "repaired" by a rule written for hand-transcribed ones,
+    // and nothing downstream can tell.
     if (
       areas &&
       areas.length > 0 &&
