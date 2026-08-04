@@ -61,12 +61,12 @@ const HEADER = [
 ].join("\n");
 
 /**
- * In-force first, then by how much geometry is in question.
+ * Order WITHIN one table: most geometry first, ties broken by title.
  *
- * The in-force set is the ~47 that decide what the map shows today. A
- * superseded statute still has to be listed — they come back, and an index that
- * cannot show you one cannot tell you it did — it just is not what a reader
- * meets first.
+ * In-force vs superseded is NOT decided here — `buildIndexFragment` splits the
+ * entries into two tables and calls this on each. Sorting by validity as well
+ * would be a second, silent ordering rule that disagrees with the headings a
+ * reader can actually see.
  */
 function ranked(entries: IndexEntry[]): IndexEntry[] {
   return [...entries].sort(
