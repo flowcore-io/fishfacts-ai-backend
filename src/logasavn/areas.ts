@@ -192,6 +192,30 @@ export function countCoordinateLike(text: string): number {
   return count;
 }
 
+/**
+ * A row of a `Talva N … Breiddarstig Longdarstig` table: an index, a signed
+ * latitude and a signed longitude, all in plain decimal degrees.
+ *
+ * This is the regex the deleted table EXTRACTOR was built on, kept alive on the
+ * detection side only. The notation carries no degree sign and no hemisphere
+ * letter, so `COORD_LIKE` cannot see it at all — and K 102/2024's annex is
+ * written entirely in it. Without this the sweep would omit those statutes from
+ * the index outright, which is the one failure recall cannot tolerate: the
+ * expert answers what it is asked and cannot ask about a statute nobody listed.
+ *
+ * Detecting is safe where extracting was not. The shape says "these are
+ * coordinates"; only the prose above the table says whether they mean keep out
+ * or fish here, and the reader who can tell is the one the index is for.
+ */
+const TABLE_ROW_RE = /(?:^|\s)\d{1,3}\s+-?\d{1,3}\.\d+\s+-?\d{1,3}\.\d+/g;
+
+export function countDecimalDegreeRows(text: string): number {
+  TABLE_ROW_RE.lastIndex = 0;
+  let count = 0;
+  while (TABLE_ROW_RE.exec(text) != null) count += 1;
+  return count;
+}
+
 const countLoose = countCoordinateLike;
 
 /** Nothing but separators before the first coordinate — see `isVertexItem`. */
@@ -349,57 +373,18 @@ function ringClosedFor(points: AreaPoint[]): boolean {
 }
 
 /**
- * The second extraction mode: coordinate TABLES, not list items.
+ * Parse one statute's markdown into its areas.
  *
- * K 102/2024 replaced the whole of the NEAFC statute's Fylgiskjal 1 with plain
- * signed decimal degrees in tables — no degree sign, no hemisphere letter, the
- * sign carrying the hemisphere, and the whole thing inline in one paragraph:
- *
- *   Talva 2 HAR 1 Breiddarstig Longdarstig 1 60.0557 -14.2048 2 59.6708 …
- *
- * That form shares nothing with the list-item grammar, so it needs its own
- * reader rather than another branch in the tokenizer. It is worth having: this
- * is the CURRENTLY IN FORCE geometry for Hatton Bank, the Mid-Atlantic Ridge
- * boxes, Josephine and Reykjanes Ridge — the base statute's own body still
- * carries the superseded 2014 rings, so reading only the base draws the wrong
- * shapes with no warning.
- *
- * The header also gives better names than the `Øki A` path does (`HAR 1`,
- * `Reykjanes Ridge`), so they are kept verbatim.
+ * List items only. There was a second mode that read the `Talva N …
+ * Breiddarstig Longdarstig` decimal-degree tables, and it is gone on purpose:
+ * in `K 113/2014` those tables are `Skjal 1`, *"Knattstøður fyri verandi
+ * fiskileiðir"* — coordinates for EXISTING FISHING GROUNDS, which `§ 6` says
+ * bottom fishing outside of needs an exploratory licence. Drawing them as
+ * closures closes the open water and opens the closed. All 13 rings parsed
+ * perfectly, so no check on the output could have caught it; the tables are
+ * shaped identically whether they mean "keep out" or "fish here", and only
+ * their prose says which. A tokenizer cannot read prose.
  */
-const TABLE_RE =
-  /Talva\s+\d+\s+(.+?)\s+Breiddarstig\s+Longdarstig\s+((?:\s*\d{1,3}\s+-?\d{1,3}\.\d+\s+-?\d{1,3}\.\d+)+)/gi;
-const TABLE_ROW_RE = /(\d{1,3})\s+(-?\d{1,3}\.\d+)\s+(-?\d{1,3}\.\d+)/g;
-
-function extractTableAreas(content: string): ParsedArea[] {
-  const areas: ParsedArea[] = [];
-  TABLE_RE.lastIndex = 0;
-  let table = TABLE_RE.exec(content);
-  while (table != null) {
-    const [, name, body] = table;
-    const points: AreaPoint[] = [];
-    TABLE_ROW_RE.lastIndex = 0;
-    let row = TABLE_ROW_RE.exec(body);
-    while (row != null) {
-      points.push({ lat: Number(row[2]), lng: Number(row[3]) });
-      row = TABLE_ROW_RE.exec(body);
-    }
-    if (points.length >= 3) {
-      areas.push({
-        name: name.trim() || null,
-        points,
-        descriptorCount: 0,
-        ringClosed: ringClosedFor(points),
-        descriptive: false,
-        unparsed: 0,
-      });
-    }
-    table = TABLE_RE.exec(content);
-  }
-  return areas;
-}
-
-/** Parse one statute's markdown into its areas. */
 export function extractAreas(content: string): ParsedArea[] {
   const areas: ParsedArea[] = [];
   for (const block of splitBlocks(content)) {
@@ -432,7 +417,7 @@ export function extractAreas(content: string): ParsedArea[] {
       unparsed,
     });
   }
-  return [...areas, ...extractTableAreas(content)];
+  return areas;
 }
 
 /**

@@ -35,10 +35,16 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
   category: z.string().optional(),
   bodyMarkdown: z.string().default(""),
   contentHash: z.string().optional(),
-  // Points at a fragment that ALREADY exists and that we do not own — today the
+  // Points at a fragment that ALREADY exists and that we do not own — the
   // Lógasavn mirror of logir.fo. When set, the announcement projector does not
   // write its own fragment copy: the statute is the record, this is a derived
   // index over it, and a second copy would be a second thing to keep in sync.
+  //
+  // NOTHING EMITS THIS TODAY — the Lógasavn closure ingest that did was removed
+  // in the teardown. Kept, not deleted: it is read in two places
+  // (`jmelding-chunk-assembler`, and the Vørn ring-repair guard in
+  // `geo-projector`) and both are wanted again if statute geometry returns. It
+  // is dormant, not dead.
   sourceFragmentId: z.string().optional(),
   checkedAt: z.string().datetime(),
   partNumber: z.number().int().min(1).optional(),

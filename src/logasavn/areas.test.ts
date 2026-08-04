@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { drawableAreas, extractAreas, isVertexItem } from "./areas";
+import {
+  countCoordinateLike,
+  countDecimalDegreeRows,
+  drawableAreas,
+  extractAreas,
+  isVertexItem,
+} from "./areas";
 
 // Every fixture below is copied verbatim out of the Lógasavn fragment for the
 // statute named, so each one pins a real shape the corpus actually contains.
@@ -231,36 +237,32 @@ describe("notation coverage (corpus census 714320cb)", () => {
   }
 });
 
-// Kunngerð 102/2024 § 2, Skjal 1 — the IN-FORCE replacement of the NEAFC
-// statute's Fylgiskjal 1. Plain signed decimal degrees in an inline table: no
-// degree sign, no hemisphere letter, the sign carrying the hemisphere. The base
-// statute K 113/2014 still contains the superseded 2014 rings in its own body,
-// so a reader that only knows the list-item grammar draws the wrong shapes and
-// raises nothing.
+// Kunngerð 102/2024 § 2, Skjal 1 — the NEAFC annex, in plain signed decimal
+// degrees. Read the heading: *"Knattstøður fyri verandi fiskileiðir"*,
+// coordinates for EXISTING FISHING GROUNDS. K 113/2014 § 6 says bottom fishing
+// OUTSIDE these needs an exploratory licence, so they map where fishing is
+// permitted — the exact inverse of a closure.
 const NEAFC_TABLE = `### § 2
 
  Henda kunngerð kemur í gildi dagin eftir, at hon er kunngjørd. Skjal 1 “Skjal 1 Knattstøður fyri verandi fiskileiðir í NEAFC-skipanarøkinum Talva 1 BAR 1 Breiddarstig Longdarstig 1 74.1356 41.0604 2 73.7439 41.36 3 73.4273 41.0317 4 73.1143 40.7075 5 74.1356 41.0604 Talva 2 HAR 1 Breiddarstig Longdarstig 1 60.0557 -14.2048 2 59.6708 -14.0275 3 59.5262 -14.2562 4 59.3197 -14.6393 5 60.0557 -14.2048 Talva 13 Reykjanes Ridge Breiddarstig Longdarstig 1 60.9844 -27.0000 2 60.8811 -27.4432 3 60.8893 -27.6897 4 60.9592 -27.8432 5 60.9844 -27.0000 „`;
 
-describe("decimal-degree tables (K 102/2024)", () => {
-  test("reads every table in the annex", () => {
-    const areas = drawableAreas(NEAFC_TABLE);
-    expect(areas.map((a) => a.name)).toEqual([
-      "BAR 1",
-      "HAR 1",
-      "Reykjanes Ridge",
-    ]);
+describe("decimal-degree tables are not areas", () => {
+  test("reads no ring out of the fishing-grounds annex", () => {
+    // Every one of these 13 tables parsed perfectly when we had a reader for
+    // them, which is why this has to be asserted rather than assumed: the shape
+    // is valid geometry and the ONLY thing marking it as fishing grounds rather
+    // than closures is the Faroese prose above it.
+    expect(drawableAreas(NEAFC_TABLE)).toHaveLength(0);
   });
 
-  test("the sign carries the hemisphere — BAR 1 is east, HAR 1 is west", () => {
-    const [bar, har] = drawableAreas(NEAFC_TABLE);
-    expect(bar.points[0]).toEqual({ lat: 74.1356, lng: 41.0604 });
-    expect(har.points[0]).toEqual({ lat: 60.0557, lng: -14.2048 });
-  });
-
-  test("the row index is not mistaken for a coordinate", () => {
-    const [bar] = drawableAreas(NEAFC_TABLE);
-    expect(bar.points).toHaveLength(5);
-    expect(bar.ringClosed).toBe(true);
+  test("still sees the coordinates, so the fragment stays a candidate", () => {
+    // Detection and extraction must NOT agree here. The statute genuinely holds
+    // coordinates and belongs in the index for a reader who can understand it;
+    // what we refuse is to decide on our own what they mean. Note the degree-sign
+    // detector is blind to this notation — losing the table reader without this
+    // second counter would have dropped K 102/2024 out of the corpus entirely.
+    expect(countCoordinateLike(NEAFC_TABLE)).toBe(0);
+    expect(countDecimalDegreeRows(NEAFC_TABLE)).toBeGreaterThan(0);
   });
 });
 
