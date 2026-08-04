@@ -197,3 +197,98 @@ above is the record of how the corpus moved.
     ],
   };
 }
+
+/**
+ * One statute, as the closure ingest needs to know about it.
+ *
+ * Deliberately less than an `IndexEntry`: the ingest picks WHICH statutes to
+ * read and then reads them itself, so the parser's counts are none of its
+ * business. Carrying them here would invite the ingest to trust a number the
+ * page itself describes as a witness rather than an author.
+ */
+export type IndexCandidate = {
+  fragmentId: string;
+  title: string;
+  url: string | null;
+  inForce: boolean;
+};
+
+/**
+ * `| a | b | c |` → `["a", "b", "c"]`, with `cell()`'s escaping undone.
+ *
+ * Splits on UNESCAPED pipes only. Splitting first and unescaping after looks
+ * equivalent and is not: `cell()` writes a statute titled `Kunngerð | nr. 35`
+ * as `Kunngerð \| nr. 35`, and a naive split tears that row into an extra
+ * column, shifting the link out of the cell the reader looks in.
+ */
+function cellsOf(line: string): string[] {
+  return line
+    .slice(1, -1)
+    .split(/(?<!\\)\|/)
+    .map((value) => value.replace(/\\\|/g, "|").trim());
+}
+
+const ROW_RE = /^\s*\|.*\|\s*$/;
+const IN_FORCE_HEADING = "## In force";
+const SUPERSEDED_HEADING = "## Superseded";
+const LINK_RE = /^\[source\]\((.+)\)$/;
+
+function candidatesInSection(
+  section: string,
+  inForce: boolean,
+): IndexCandidate[] {
+  const out: IndexCandidate[] = [];
+  for (const line of section.split("\n")) {
+    if (!ROW_RE.test(line)) continue;
+    const cells = cellsOf(line.trim());
+    const [fragmentId, title, , , , , , link] = cells;
+    // Skips the header and its `| --- |` rule without having to count lines:
+    // neither carries a fragment id in the first column.
+    if (
+      !fragmentId ||
+      fragmentId === "fragment id" ||
+      /^-+$/.test(fragmentId)
+    ) {
+      continue;
+    }
+    out.push({
+      fragmentId,
+      title: title ?? "",
+      url: LINK_RE.exec(link ?? "")?.[1] ?? null,
+      inForce,
+    });
+  }
+  return out;
+}
+
+/**
+ * Read the published index back.
+ *
+ * The ingest needs the candidate set, and this page already IS the candidate
+ * set — re-running the sweep to recompute it would re-read the whole ~99 MB
+ * corpus to arrive at a list that was written down this morning, and would give
+ * the two jobs separate opinions about what a candidate is the first time the
+ * detectors changed under one of them.
+ *
+ * Reading your own generated markdown back is a coupling worth being honest
+ * about, which is why the reader lives in the same module as the writer and why
+ * `index-fragment.test.ts` round-trips one through the other. Move the columns
+ * and the test fails, rather than the ingest quietly finding no statutes.
+ */
+export function parseIndexFragment(content: string): IndexCandidate[] {
+  const inForceAt = content.indexOf(IN_FORCE_HEADING);
+  const supersededAt = content.indexOf(SUPERSEDED_HEADING);
+  if (inForceAt === -1 || supersededAt === -1 || supersededAt < inForceAt) {
+    // An index whose shape we do not recognise is not an index with no statutes
+    // in it. Saying so beats returning an empty list that reads as "the corpus
+    // has no closures" — the same confidently-empty failure `rejectSweep` exists
+    // to prevent one layer up.
+    throw new Error(
+      "Cannot read the Lógasavn index — its in-force and superseded sections are not where they should be",
+    );
+  }
+  return [
+    ...candidatesInSection(content.slice(inForceAt, supersededAt), true),
+    ...candidatesInSection(content.slice(supersededAt), false),
+  ];
+}

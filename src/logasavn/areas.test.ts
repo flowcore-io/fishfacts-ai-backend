@@ -5,6 +5,7 @@ import {
   drawableAreas,
   extractAreas,
   isVertexItem,
+  parseVertex,
 } from "./areas";
 
 // Every fixture below is copied verbatim out of the Lógasavn fragment for the
@@ -97,7 +98,50 @@ const ACUTE_ACCENT = `**Stk. 2.** Í tíðarskeiðinum 1. apríl til 1. november
 - **3)**62°05´000 N 07°50´000 V
 - **4)**62°00´000 N 07°40´000 V `;
 
+// Kunngerð 197/2021 § 3 — the NAFO closures, verbatim. The seconds mark is `”`
+// (U+201D, a typographic RIGHT DOUBLE QUOTE), not `"` or `″`, while the minute
+// mark `’` was already known. So the tokenizer read halfway through each vertex
+// and then stopped, and eighteen of this statute's nineteen closures parsed to
+// nothing at all. Stk. 16 adds fractional seconds and a space after the minute
+// mark — both appear in the same statute.
+const NAFO_TYPOGRAPHIC_SECONDS = `**Stk. 2.** Fogo Seamount Chain:
+- **1)**42°31’33” N - 53°23’17” V
+- **2)**42°31’33” N - 52°33’37” V
+- **3)**41°51’00” N - 52°07’00” V
+- **4)**42°31’33” N - 53°23’17” V
+
+**Stk. 16.** leið 1, Tail of the Bank:
+- **1)**44°02’ 53.88” N - 48°49’ 09.48” V
+- **2)**44°21’ 43.50” N - 48°49’ 09.48” V
+- **3)**44°21’ 43.50” N - 48°30’ 44.40” V
+- **4)**44°02’ 53.88” N - 48°49’ 09.48” V `;
+
 describe("coordinate notations", () => {
+  test("parses a typographic seconds mark (NAFO, K 197/2021)", () => {
+    const areas = drawableAreas(NAFO_TYPOGRAPHIC_SECONDS);
+    expect(areas).toHaveLength(2);
+
+    // 42°31'33" N = 42 + 31/60 + 33/3600; 53°23'17" V is WEST, so negative.
+    expect(areas[0].points[0].lat).toBeCloseTo(42.5258333333, 9);
+    expect(areas[0].points[0].lng).toBeCloseTo(-53.3880555556, 9);
+
+    // Fractional seconds must survive here too: 44°02'53.88" N. Reading it as
+    // 53" moves the vertex ~27 m, and no test on vertex COUNT can see that.
+    expect(areas[1].points[0].lat).toBeCloseTo(44.0483, 9);
+    expect(areas[1].points[0].lng).toBeCloseTo(-48.8192999999, 9);
+  });
+
+  test("reads a cent sign standing in for the minute mark (K 38/2017)", () => {
+    // Verbatim from K 38/2017: `48° 27¢ N, 6° 25¢ V`. `¢` (U+00A2) is not a
+    // notation anyone chose — the prime became a currency symbol somewhere
+    // upstream of logir.fo. One statute does it, and it was the last coordinate
+    // shape in the whole in-force corpus the tokenizer could not read.
+    const point = parseVertex("48° 27¢ N 6° 25¢ V");
+
+    expect(point?.lat).toBeCloseTo(48.45, 9);
+    expect(point?.lng).toBeCloseTo(-6.4166666667, 9);
+  });
+
   test("parses degrees-minutes-seconds (Føroyabanki, K 35/2026)", () => {
     const areas = drawableAreas(FOROYABANKI);
     expect(areas).toHaveLength(1);
