@@ -80,28 +80,86 @@ export function closureJmNumber(statuteNumber: string): string {
   return `LOG-K-${statuteNumber.replace("/", "-")}`;
 }
 
+export const FAROESE_WATERS_CATEGORY = "lógasavn friðing (statutory closure)";
+export const INTERNATIONAL_WATERS_CATEGORY =
+  "lógasavn økisfriðing í altjóða sjógvi (NEAFC/NAFO)";
+
 /**
- * Everything that can change about what we drew.
+ * Statutes that close INTERNATIONAL water, not Faroese water.
  *
- * The pathway suppresses a re-emit whose signature is unchanged, so anything
- * omitted here is a correction that silently never lands. The ring labels are
- * included because a ring being re-classified from closure to exemption changes
- * the map without changing a single coordinate.
+ * The Faroes legislate for NEAFC and NAFO areas too, and those closures are
+ * real — but they sit in the mid-Atlantic and off Newfoundland, thousands of
+ * kilometres from the Faroe Islands. On the first live draw, 50 of the 76 rings
+ * returned for "show me the Faroese closures" were these: correct geometry,
+ * correct law, wrong answer to the question asked.
+ *
+ * Detected from the statute's own title rather than from a bounding box. The
+ * law says which regime it implements — `altjóða sjógvi` is "international
+ * waters" — and a box drawn round the Faroes cannot separate them cleanly
+ * anyway: `K 113/2014` reaches 59.8°N / 13.2°W, which any box wide enough to
+ * hold the Faroese closures also contains.
+ *
+ * Region stays `FO` (the Faroes are the publishing jurisdiction, and the region
+ * enum has no third option); the CATEGORY is what lets a caller tell them apart.
  */
-function signatureFor(input: {
+const INTERNATIONAL_WATERS_RE = /NEAFC|NAFO|altjóða sjógvi/i;
+
+export function categoryFor(title: string): string {
+  return INTERNATIONAL_WATERS_RE.test(title)
+    ? INTERNATIONAL_WATERS_CATEGORY
+    : FAROESE_WATERS_CATEGORY;
+}
+
+/**
+ * Bump to force one re-emit of every statute, once.
+ *
+ * The pathway suppresses a re-emit whose signature is unchanged, which is
+ * exactly what you want until the day you need already-ingested rows to pick up
+ * a new column. Then you need a deliberate, one-shot trigger — and the honest
+ * one is a version you bump on purpose, not a field you smuggle into the hash
+ * hoping it differs.
+ *
+ * 2 — `summary` and `category` were added to `jmelding_geo`; the rows ingested
+ *     under version 1 carry neither.
+ */
+const SIGNATURE_VERSION = 2;
+
+/**
+ * What "the same drawing" means, for suppression purposes.
+ *
+ * Deliberately covers the INPUTS and the GEOMETRY, and nothing the model wrote
+ * in prose. `summary` and the ring labels are LLM output: `temperature: 0`
+ * narrows drift but does not remove it, and through OpenRouter the same model
+ * id can be served by a different provider or quantisation between runs. This
+ * pipeline has already been measured wobbling — the same statute enumerated 8
+ * rings on one run and 5 on the next. Put that in the suppression key and every
+ * statute re-emits on every run forever, for no change a reader could see: the
+ * upsert keeps the row correct, so it is not corruption, just permanent event
+ * growth on a pathway whose pump is already running behind.
+ *
+ * What DOES belong: `contentHash` (the statute text moved), `category` (derived
+ * deterministically from the title), and the vertices. A re-classification from
+ * closure to exemption is caught by the geometry, because an exemption is not
+ * emitted at all and the ring leaves `areas` entirely.
+ *
+ * Corollary: a label that changes while the statute text does not is model
+ * drift, not new information, and should not re-emit. When something real does
+ * change, the fresh labels ride along on the same event.
+ */
+export function signatureFor(input: {
   statuteNumber: string;
   contentHash: string;
-  areas: Array<{ name: string; points: Array<{ lat: number; lon: number }> }>;
+  category: string;
+  areas: Array<{ points: Array<{ lat: number; lon: number }> }>;
 }): string {
   return createHash("sha256")
     .update(
       JSON.stringify({
+        version: SIGNATURE_VERSION,
         statuteNumber: input.statuteNumber,
         contentHash: input.contentHash,
-        areas: input.areas.map((area) => ({
-          name: area.name,
-          points: area.points,
-        })),
+        category: input.category,
+        areas: input.areas.map((area) => ({ points: area.points })),
       }),
     )
     .digest("hex");
@@ -314,16 +372,27 @@ export function createLogasavnClosuresJob(
         signature: signatureFor({
           statuteNumber,
           contentHash: hashBody(body),
+          category: categoryFor(candidate.title),
           areas,
         }),
         title: candidate.title,
         url: candidate.url ?? "",
         status: "current",
         jmNumber: closureJmNumber(statuteNumber),
-        category: "lógasavn friðing (statutory closure)",
+        category: categoryFor(candidate.title),
         region: "FO",
         areas,
-        bodyMarkdown: reading.summary,
+        // The reading goes in `summary`, which `jmelding_geo` keeps. NOT also
+        // in `bodyMarkdown`: that field is the SOURCE text, and for a statute
+        // the source is the Lógasavn fragment `sourceFragmentId` already points
+        // at — copying a one-line reading into it would make the event claim to
+        // carry a body it does not have.
+        summary: reading.summary,
+        // Empty on purpose. For a statute the source text is the Lógasavn
+        // fragment `sourceFragmentId` points at, so there is no body of ours to
+        // carry — and putting the one-line reading here instead would make the
+        // event claim a body it does not have.
+        bodyMarkdown: "",
         contentHash: hashBody(body),
         // Load-bearing — see the class doc and `geo-projector.ts:78`.
         sourceFragmentId: candidate.fragmentId,

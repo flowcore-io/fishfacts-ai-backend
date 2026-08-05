@@ -134,6 +134,13 @@
       "when": 1785799955110,
       "tag": "0018_brainy_phalanx",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785890303909,
+      "tag": "0019_plain_language_summary",
+      "breakpoints": true
     }
   ]
 }

@@ -8,8 +8,12 @@ import type { IndexEntry, SweepResult } from "@/logasavn/sweep";
 import type { PathwayWriter } from "@/pathways";
 import type { UsableFragment } from "@/usable/client";
 import {
+  FAROESE_WATERS_CATEGORY,
+  INTERNATIONAL_WATERS_CATEGORY,
   type LogasavnClosuresUsable,
+  categoryFor,
   createLogasavnClosuresJob,
+  signatureFor,
   statuteNumberOf,
 } from "./logasavn-closures";
 
@@ -409,6 +413,203 @@ describe("refusing to look clean", () => {
         h.read,
       )(undefined, { dryRun: true, statutes: ["999/2099"] }, context),
     ).rejects.toThrow(/999\/2099/);
+  });
+});
+
+describe("what the popup gets to say", () => {
+  test("the reader's plain-language line reaches the row, not just the body", async () => {
+    // `jmelding_geo` keeps no body, so a summary carried only in `bodyMarkdown`
+    // is discarded at projection and the popup is left with
+    // `title - category (status)` — which cannot tell a skipper whether the
+    // shape is a closure, a permit regime or a seasonal carve-out.
+    const h = harness({});
+
+    await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: false }, context);
+
+    expect(h.emitted[0]?.summary).toBe(
+      "Øki A on Føroyabanki is closed to all gear all year.",
+    );
+  });
+
+  test("the logir.fo link travels with the row", async () => {
+    const h = harness({});
+
+    await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: false }, context);
+
+    expect(h.emitted[0]?.url).toBe("https://logir.fo/Kunngerd/30-fra-2018");
+  });
+});
+
+describe("Faroese water vs international water", () => {
+  test("a Faroese-waters statute keeps the Faroese category", () => {
+    expect(
+      categoryFor(
+        "Kunngerð nr. 30 frá 11. apríl 2018 um at friða ávísar leiðir í føroyskum sjógvi",
+      ),
+    ).toBe(FAROESE_WATERS_CATEGORY);
+  });
+
+  test("NEAFC, NAFO and altjóða sjógvi are separated out", () => {
+    // 50 of the 76 rings drawn on the first live run were these — correct
+    // geometry, correct law, and thousands of kilometres from the Faroes. They
+    // must be distinguishable from a closure in Faroese water.
+    for (const title of [
+      "Kunngerð nr. 113 frá 11. desember 2014 um økisfriðingar í altjóða sjógvi í NEAFC",
+      "Kunngerð nr. 197 frá 22. desember 2021 um økisfriðingar í NAFO-skipanarøkinum",
+      "Kunngerð nr. 229 frá 30. desember 2025 um at skipa fiskiskapin eftir djúphavsfiski í altjóða sjógvi í NEAFC í 2026",
+    ]) {
+      expect(categoryFor(title)).toBe(INTERNATIONAL_WATERS_CATEGORY);
+    }
+  });
+
+  test("the emitted row carries the category the title implies", async () => {
+    const h = harness({
+      entries: [
+        indexEntry({
+          title:
+            "Kunngerð nr. 113 (2014) - um økisfriðingar í altjóða sjógvi í NEAFC",
+        }),
+      ],
+    });
+
+    await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: false }, context);
+
+    expect(h.emitted[0]?.category).toBe(INTERNATIONAL_WATERS_CATEGORY);
+    // Region is unchanged — the Faroes publish these, and the enum has no third
+    // option. Category is what makes them separable.
+    expect(h.emitted[0]?.region).toBe("FO");
+  });
+
+  test("model prose cannot move the signature", async () => {
+    // The signature is the pathway's re-emit SUPPRESSION key. `summary` and the
+    // ring labels are LLM output, and this pipeline has been measured wobbling
+    // run to run — one statute enumerated 8 rings on one pass and 5 on the next.
+    // If prose drift flipped the signature, every statute would re-emit on every
+    // run forever, growing the event stream for a change no reader could see.
+    const runs = [];
+    for (const reading of [
+      GOOD_READING,
+      { ...GOOD_READING, summary: "A completely different sentence entirely." },
+      {
+        ...GOOD_READING,
+        rings: [
+          { ...GOOD_READING.rings[0], section: "§ 5 stk 1", name: "OKI A" },
+          GOOD_READING.rings[1],
+        ],
+      } as StatuteReading,
+    ]) {
+      const h = harness({ reading });
+      await createLogasavnClosuresJob(
+        env,
+        h.writer,
+        h.usable,
+        h.read,
+      )(undefined, { dryRun: false }, context);
+      runs.push(h.emitted[0]);
+    }
+
+    expect(runs[0]?.signature).toBe(runs[1]?.signature);
+    expect(runs[0]?.signature).toBe(runs[2]?.signature);
+    // ...but the drifted prose still rides along on whatever does get emitted.
+    expect(runs[1]?.summary).toBe("A completely different sentence entirely.");
+  });
+
+  test("moving a vertex DOES move the signature", () => {
+    // The other half: suppression must not swallow a real geometry change.
+    // Driven through `signatureFor` directly, with contentHash held IDENTICAL,
+    // so the only difference is the vertex. Going through the job would also
+    // change the statute body and therefore the hash, and the assertion would
+    // pass on that account instead — proving less than it appears to.
+    const base = {
+      statuteNumber: "30/2018",
+      contentHash: "identical-on-both-sides",
+      category: FAROESE_WATERS_CATEGORY,
+    };
+
+    expect(
+      signatureFor({
+        ...base,
+        areas: [{ points: [{ lat: 61.25, lon: -8.26 }] }],
+      }),
+    ).not.toBe(
+      signatureFor({
+        ...base,
+        areas: [{ points: [{ lat: 61.26, lon: -8.26 }] }],
+      }),
+    );
+  });
+
+  test("re-categorising a statute changes its signature, so the fix lands", async () => {
+    // The pathway suppresses a re-emit whose signature is unchanged. If the
+    // category were left out of the signature, every already-ingested statute
+    // would keep its old category forever and this fix would be inert.
+    const faroese = harness({});
+    const international = harness({
+      entries: [
+        indexEntry({ title: "Kunngerð nr. 30 (2018) - NEAFC altjóða sjógvi" }),
+      ],
+    });
+
+    for (const h of [faroese, international]) {
+      await createLogasavnClosuresJob(
+        env,
+        h.writer,
+        h.usable,
+        h.read,
+      )(undefined, { dryRun: false }, context);
+    }
+
+    expect(faroese.emitted[0]?.signature).not.toBe(
+      international.emitted[0]?.signature,
+    );
+  });
+});
+
+describe("the signature is pinned on purpose", () => {
+  // A golden value, so nothing in the suppression key can drift unnoticed —
+  // including SIGNATURE_VERSION, which is the ONLY thing that makes rows
+  // already in production pick up a newly added column. Changing this test is
+  // the deliberate act; changing it by accident is what it exists to prevent.
+  test("hashes exactly these inputs, at this version", () => {
+    expect(
+      signatureFor({
+        statuteNumber: "30/2018",
+        contentHash: "abc",
+        category: FAROESE_WATERS_CATEGORY,
+        areas: [{ points: [{ lat: 1, lon: 2 }] }],
+      }),
+    ).toBe("8bbef33e92eda5393e05c455c1f9af8ff7164f4211da96c4483d68ede520010e");
+  });
+
+  test("a version bump re-emits every statute exactly once", () => {
+    // Rows ingested before `summary`/`category` existed carry a v1 signature.
+    // Without a differing signature the pathway suppresses the re-emit and the
+    // new columns stay empty forever — the fix would ship and do nothing.
+    const v1 =
+      "313b9af40abb61d7f04da167e7649469da85e1f8b09dc8378e386358c12f5fc6";
+    expect(
+      signatureFor({
+        statuteNumber: "30/2018",
+        contentHash: "abc",
+        category: FAROESE_WATERS_CATEGORY,
+        areas: [{ points: [{ lat: 1, lon: 2 }] }],
+      }),
+    ).not.toBe(v1);
   });
 });
 
