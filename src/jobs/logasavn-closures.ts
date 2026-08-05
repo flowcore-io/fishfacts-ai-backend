@@ -80,6 +80,36 @@ export function closureJmNumber(statuteNumber: string): string {
   return `LOG-K-${statuteNumber.replace("/", "-")}`;
 }
 
+export const FAROESE_WATERS_CATEGORY = "lógasavn friðing (statutory closure)";
+export const INTERNATIONAL_WATERS_CATEGORY =
+  "lógasavn økisfriðing í altjóða sjógvi (NEAFC/NAFO)";
+
+/**
+ * Statutes that close INTERNATIONAL water, not Faroese water.
+ *
+ * The Faroes legislate for NEAFC and NAFO areas too, and those closures are
+ * real — but they sit in the mid-Atlantic and off Newfoundland, thousands of
+ * kilometres from the Faroe Islands. On the first live draw, 50 of the 76 rings
+ * returned for "show me the Faroese closures" were these: correct geometry,
+ * correct law, wrong answer to the question asked.
+ *
+ * Detected from the statute's own title rather than from a bounding box. The
+ * law says which regime it implements — `altjóða sjógvi` is "international
+ * waters" — and a box drawn round the Faroes cannot separate them cleanly
+ * anyway: `K 113/2014` reaches 59.8°N / 13.2°W, which any box wide enough to
+ * hold the Faroese closures also contains.
+ *
+ * Region stays `FO` (the Faroes are the publishing jurisdiction, and the region
+ * enum has no third option); the CATEGORY is what lets a caller tell them apart.
+ */
+const INTERNATIONAL_WATERS_RE = /NEAFC|NAFO|altjóða sjógvi/i;
+
+export function categoryFor(title: string): string {
+  return INTERNATIONAL_WATERS_RE.test(title)
+    ? INTERNATIONAL_WATERS_CATEGORY
+    : FAROESE_WATERS_CATEGORY;
+}
+
 /**
  * Everything that can change about what we drew.
  *
@@ -91,6 +121,8 @@ export function closureJmNumber(statuteNumber: string): string {
 function signatureFor(input: {
   statuteNumber: string;
   contentHash: string;
+  category: string;
+  summary: string;
   areas: Array<{ name: string; points: Array<{ lat: number; lon: number }> }>;
 }): string {
   return createHash("sha256")
@@ -98,6 +130,8 @@ function signatureFor(input: {
       JSON.stringify({
         statuteNumber: input.statuteNumber,
         contentHash: input.contentHash,
+        category: input.category,
+        summary: input.summary,
         areas: input.areas.map((area) => ({
           name: area.name,
           points: area.points,
@@ -314,15 +348,22 @@ export function createLogasavnClosuresJob(
         signature: signatureFor({
           statuteNumber,
           contentHash: hashBody(body),
+          category: categoryFor(candidate.title),
+          summary: reading.summary,
           areas,
         }),
         title: candidate.title,
         url: candidate.url ?? "",
         status: "current",
         jmNumber: closureJmNumber(statuteNumber),
-        category: "lógasavn friðing (statutory closure)",
+        category: categoryFor(candidate.title),
         region: "FO",
         areas,
+        // The reading goes in `summary`, which `jmelding_geo` keeps, rather
+        // than only in `bodyMarkdown`, which it does not. Both are set: the
+        // event stays a faithful record, and the read model gains the one
+        // sentence that says what the shape means.
+        summary: reading.summary,
         bodyMarkdown: reading.summary,
         contentHash: hashBody(body),
         // Load-bearing — see the class doc and `geo-projector.ts:78`.

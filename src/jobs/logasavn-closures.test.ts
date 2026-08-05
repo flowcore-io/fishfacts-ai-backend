@@ -8,7 +8,10 @@ import type { IndexEntry, SweepResult } from "@/logasavn/sweep";
 import type { PathwayWriter } from "@/pathways";
 import type { UsableFragment } from "@/usable/client";
 import {
+  FAROESE_WATERS_CATEGORY,
+  INTERNATIONAL_WATERS_CATEGORY,
   type LogasavnClosuresUsable,
+  categoryFor,
   createLogasavnClosuresJob,
   statuteNumberOf,
 } from "./logasavn-closures";
@@ -409,6 +412,111 @@ describe("refusing to look clean", () => {
         h.read,
       )(undefined, { dryRun: true, statutes: ["999/2099"] }, context),
     ).rejects.toThrow(/999\/2099/);
+  });
+});
+
+describe("what the popup gets to say", () => {
+  test("the reader's plain-language line reaches the row, not just the body", async () => {
+    // `jmelding_geo` keeps no body, so a summary carried only in `bodyMarkdown`
+    // is discarded at projection and the popup is left with
+    // `title - category (status)` — which cannot tell a skipper whether the
+    // shape is a closure, a permit regime or a seasonal carve-out.
+    const h = harness({});
+
+    await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: false }, context);
+
+    expect(h.emitted[0]?.summary).toBe(
+      "Øki A on Føroyabanki is closed to all gear all year.",
+    );
+  });
+
+  test("the logir.fo link travels with the row", async () => {
+    const h = harness({});
+
+    await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: false }, context);
+
+    expect(h.emitted[0]?.url).toBe("https://logir.fo/Kunngerd/30-fra-2018");
+  });
+});
+
+describe("Faroese water vs international water", () => {
+  test("a Faroese-waters statute keeps the Faroese category", () => {
+    expect(
+      categoryFor(
+        "Kunngerð nr. 30 frá 11. apríl 2018 um at friða ávísar leiðir í føroyskum sjógvi",
+      ),
+    ).toBe(FAROESE_WATERS_CATEGORY);
+  });
+
+  test("NEAFC, NAFO and altjóða sjógvi are separated out", () => {
+    // 50 of the 76 rings drawn on the first live run were these — correct
+    // geometry, correct law, and thousands of kilometres from the Faroes. They
+    // must be distinguishable from a closure in Faroese water.
+    for (const title of [
+      "Kunngerð nr. 113 frá 11. desember 2014 um økisfriðingar í altjóða sjógvi í NEAFC",
+      "Kunngerð nr. 197 frá 22. desember 2021 um økisfriðingar í NAFO-skipanarøkinum",
+      "Kunngerð nr. 229 frá 30. desember 2025 um at skipa fiskiskapin eftir djúphavsfiski í altjóða sjógvi í NEAFC í 2026",
+    ]) {
+      expect(categoryFor(title)).toBe(INTERNATIONAL_WATERS_CATEGORY);
+    }
+  });
+
+  test("the emitted row carries the category the title implies", async () => {
+    const h = harness({
+      entries: [
+        indexEntry({
+          title:
+            "Kunngerð nr. 113 (2014) - um økisfriðingar í altjóða sjógvi í NEAFC",
+        }),
+      ],
+    });
+
+    await createLogasavnClosuresJob(
+      env,
+      h.writer,
+      h.usable,
+      h.read,
+    )(undefined, { dryRun: false }, context);
+
+    expect(h.emitted[0]?.category).toBe(INTERNATIONAL_WATERS_CATEGORY);
+    // Region is unchanged — the Faroes publish these, and the enum has no third
+    // option. Category is what makes them separable.
+    expect(h.emitted[0]?.region).toBe("FO");
+  });
+
+  test("re-categorising a statute changes its signature, so the fix lands", async () => {
+    // The pathway suppresses a re-emit whose signature is unchanged. If the
+    // category were left out of the signature, every already-ingested statute
+    // would keep its old category forever and this fix would be inert.
+    const faroese = harness({});
+    const international = harness({
+      entries: [
+        indexEntry({ title: "Kunngerð nr. 30 (2018) - NEAFC altjóða sjógvi" }),
+      ],
+    });
+
+    for (const h of [faroese, international]) {
+      await createLogasavnClosuresJob(
+        env,
+        h.writer,
+        h.usable,
+        h.read,
+      )(undefined, { dryRun: false }, context);
+    }
+
+    expect(faroese.emitted[0]?.signature).not.toBe(
+      international.emitted[0]?.signature,
+    );
   });
 });
 

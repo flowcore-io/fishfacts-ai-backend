@@ -110,6 +110,12 @@ export const jmeldingGeo = pgTable(
     // "bráðfeingis veiðibann"). Lets the assistant colour-code + describe by type.
     category: text("category"),
     url: text("url").notNull(),
+    // One plain-language sentence about what the regulation actually does,
+    // written by whoever read the source. The popup is the only place a skipper
+    // finds out whether a shape is a closure, a permit regime or a seasonal
+    // carve-out, and `title - category (status)` does not say. Nullable: the
+    // Norwegian and Icelandic collectors have no such line to give.
+    summary: text("summary"),
     signature: text("signature").notNull(),
     // The exact source text this geometry was derived from. A row pointing at a
     // MUTATING source fragment otherwise means "whatever it says now" rather

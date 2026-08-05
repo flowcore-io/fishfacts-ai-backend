@@ -33,6 +33,16 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
   validFrom: z.string().optional(),
   validTo: z.string().optional(),
   category: z.string().optional(),
+  /**
+   * One plain-language sentence about what the regulation actually does.
+   *
+   * Distinct from `bodyMarkdown`, which is the SOURCE text — this is a reading
+   * of it. It needs its own field because `jmelding_geo` keeps no body at all,
+   * so a summary smuggled through `bodyMarkdown` is discarded at projection and
+   * never reaches the popup. Optional: the Norwegian and Icelandic collectors
+   * have no such line to give.
+   */
+  summary: z.string().optional(),
   bodyMarkdown: z.string().default(""),
   contentHash: z.string().optional(),
   // Points at a fragment that ALREADY exists and that we do not own — the

@@ -296,6 +296,16 @@ export class JMeldingGeoRepository {
    * (e.g. "show all Icelandic closures") instead of one get_regulation per area.
    * Optional region + bbox filter; only geometry-bearing rows; capped.
    */
+  /**
+   * Everything the caller needs to DRAW a regulation and say what it is.
+   *
+   * `url` and `summary` are here because the drawing path is the only one most
+   * users ever hit, and without them a drawn shape can only be described as
+   * `title - category (status)` — no source to check, no statement of what the
+   * regulation actually does. A skipper who cannot tell what a shape means, or
+   * follow it back to the text, cannot report it as wrong either, and reports
+   * are the whole feedback loop for this data.
+   */
   async listForDrawing(params: {
     region?: string;
     bbox?: GeoBbox;
@@ -308,6 +318,8 @@ export class JMeldingGeoRepository {
       status: string;
       region: string;
       category: string | null;
+      url: string;
+      summary: string | null;
       validFrom: string | null;
       validTo: string | null;
       areas: unknown;
@@ -329,11 +341,13 @@ export class JMeldingGeoRepository {
       status: string;
       region: string;
       category: string | null;
+      url: string;
+      summary: string | null;
       valid_from: Date | string | null;
       valid_to: Date | string | null;
       areas: unknown;
     }>(sql`
-      SELECT jm_number, title, status, region, category, valid_from, valid_to, areas
+      SELECT jm_number, title, status, region, category, url, summary, valid_from, valid_to, areas
       FROM jmelding_geo
       ${whereClause(conditions)}
       ORDER BY jm_number DESC
@@ -348,6 +362,8 @@ export class JMeldingGeoRepository {
       status: r.status as string,
       region: r.region as string,
       category: (r.category as string | null) ?? null,
+      url: (r.url as string) ?? "",
+      summary: (r.summary as string | null) ?? null,
       validFrom: toIso((r.valid_from as Date | string | null) ?? null),
       validTo: toIso((r.valid_to as Date | string | null) ?? null),
       areas: r.areas,
