@@ -529,32 +529,29 @@ describe("Faroese water vs international water", () => {
     expect(runs[1]?.summary).toBe("A completely different sentence entirely.");
   });
 
-  test("moving a vertex DOES move the signature", async () => {
+  test("moving a vertex DOES move the signature", () => {
     // The other half: suppression must not swallow a real geometry change.
-    const moved = [...OKI_A_QUOTES];
-    moved[2] = { lat: `61°15,600'N`, lon: `008°16,000'V` };
-    const a = harness({});
-    const b = harness({
-      body: OKI_A_AND_LOWER_A.replace("61°15,500'N", "61°15,600'N"),
-      reading: {
-        ...GOOD_READING,
-        rings: [
-          { ...GOOD_READING.rings[0], vertices: moved },
-          GOOD_READING.rings[1],
-        ],
-      } as StatuteReading,
-    });
+    // Driven through `signatureFor` directly, with contentHash held IDENTICAL,
+    // so the only difference is the vertex. Going through the job would also
+    // change the statute body and therefore the hash, and the assertion would
+    // pass on that account instead — proving less than it appears to.
+    const base = {
+      statuteNumber: "30/2018",
+      contentHash: "identical-on-both-sides",
+      category: FAROESE_WATERS_CATEGORY,
+    };
 
-    for (const h of [a, b]) {
-      await createLogasavnClosuresJob(
-        env,
-        h.writer,
-        h.usable,
-        h.read,
-      )(undefined, { dryRun: false }, context);
-    }
-
-    expect(a.emitted[0]?.signature).not.toBe(b.emitted[0]?.signature);
+    expect(
+      signatureFor({
+        ...base,
+        areas: [{ points: [{ lat: 61.25, lon: -8.26 }] }],
+      }),
+    ).not.toBe(
+      signatureFor({
+        ...base,
+        areas: [{ points: [{ lat: 61.26, lon: -8.26 }] }],
+      }),
+    );
   });
 
   test("re-categorising a statute changes its signature, so the fix lands", async () => {
