@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.2.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.1.0...v2.2.0) (2026-08-05)
+
+
+### Features
+
+* **jmelding:** give drawn regulations a summary, a link, and an honest category ([c563718](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c5637184f091ae382ddb6c0958aa942123d0c8b8))
+* **jmelding:** give drawn regulations a summary, a link, and an honest category ([509b290](https://github.com/flowcore-io/fishfacts-ai-backend/commit/509b290c679a7ab80ba983c72eb011040c4dbfd0))
+
+
+### Bug Fixes
+
+* **logasavn:** keep model prose out of the re-emit suppression key ([9fec2d5](https://github.com/flowcore-io/fishfacts-ai-backend/commit/9fec2d5aa9aa528a816bb132f943d769858d1c02))
+
 ## [2.1.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.0.0...v2.1.0) (2026-08-04)
 
 
