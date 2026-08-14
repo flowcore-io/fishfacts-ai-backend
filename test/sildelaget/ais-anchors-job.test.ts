@@ -34,7 +34,16 @@ const CONTEXT = {
   reportProgress: () => {},
 };
 
-const ARGS = { windowDays: 0, recompute: false, limit: 5000 };
+const ARGS = {
+  windowDays: 0,
+  recompute: false,
+  limit: 5000,
+  retryAfterHours: 0,
+  retryWithinDays: 0,
+};
+
+const RESOLVED = (vesselId: number) => async () =>
+  ({ outcome: "resolved", vesselId }) as const;
 
 function candidate(
   index: number,
@@ -90,7 +99,7 @@ describe("sildelaget-ais-anchors job", () => {
 
     const run = createSildelagetAisAnchorsJob(ENV, {
       anchors: store,
-      vessels: { resolve: async () => 932 },
+      vessels: { resolve: RESOLVED(932) },
       fixes: {
         getFixesForWindows: async (requests) => {
           requestBatches.push(requests);
@@ -119,7 +128,10 @@ describe("sildelaget-ais-anchors job", () => {
     const run = createSildelagetAisAnchorsJob(ENV, {
       anchors: store,
       vessels: {
-        resolve: async (name) => (name === "Vessel 1" ? 932 : null),
+        resolve: async (name) =>
+          name === "Vessel 1"
+            ? { outcome: "resolved", vesselId: 932 }
+            : { outcome: "not-found" },
       },
       fixes: {
         getFixesForWindows: async (requests) => {
@@ -145,7 +157,7 @@ describe("sildelaget-ais-anchors job", () => {
     const requested: AisFixWindowRequest[] = [];
     const run = createSildelagetAisAnchorsJob(ENV, {
       anchors: store,
-      vessels: { resolve: async () => 932 },
+      vessels: { resolve: RESOLVED(932) },
       fixes: {
         getFixesForWindows: async (requests) => {
           requested.push(...requests);
@@ -163,25 +175,128 @@ describe("sildelaget-ais-anchors job", () => {
     expect(store.stored[0]?.status).toBe("no-track");
   });
 
+  test("a registry OUTAGE stores nothing — it is not an answer about the vessel", async () => {
+    // The failure this guards: registry down → every report in the 50-day
+    // window written as no-vessel → the staleness predicate never lists them
+    // again → the window is permanently wrong from one bad run.
+    const store = fakeStore([candidate(1), candidate(2)]);
+    const requested: AisFixWindowRequest[] = [];
+    const run = createSildelagetAisAnchorsJob(ENV, {
+      anchors: store,
+      vessels: {
+        resolve: async () => ({
+          outcome: "unavailable",
+          reason: "registry HTTP 500",
+        }),
+      },
+      fixes: {
+        getFixesForWindows: async (requests) => {
+          requested.push(...requests);
+          return new Map();
+        },
+      },
+    });
+
+    const result = await run(undefined, ARGS, CONTEXT);
+
+    expect(store.stored).toEqual([]);
+    expect(requested).toEqual([]);
+    expect(result.changed).toBe(false);
+    expect(result.message).toContain("2 left undecided (registry HTTP 500)");
+    // The headline count is rows written, not candidates walked past.
+    expect(result.message).toContain("Derived positions for 0 reports");
+  });
+
+  test("one report's outage does not stop the reports around it", async () => {
+    const store = fakeStore([candidate(1), candidate(2), candidate(3)]);
+    const run = createSildelagetAisAnchorsJob(ENV, {
+      anchors: store,
+      vessels: {
+        resolve: async (name) =>
+          name === "Vessel 2"
+            ? { outcome: "unavailable", reason: "registry timeout" }
+            : { outcome: "resolved", vesselId: 932 },
+      },
+      fixes: {
+        getFixesForWindows: async (requests) =>
+          new Map(
+            requests.map((request) => [request.key, fishingFixes(61.2, -6.2)]),
+          ),
+      },
+    });
+
+    await run(undefined, ARGS, CONTEXT);
+
+    expect(store.stored.map((a) => a.innmeldingId).sort()).toEqual([
+      "report-1",
+      "report-3",
+    ]);
+  });
+
+  test("non-ok answers are re-listed for a while — they are provisional", async () => {
+    const store = fakeStore([]);
+    const run = createSildelagetAisAnchorsJob(ENV, {
+      anchors: store,
+      vessels: { resolve: async () => ({ outcome: "not-found" }) },
+      fixes: { getFixesForWindows: async () => new Map() },
+    });
+
+    await run(undefined, ARGS, CONTEXT);
+
+    // A vessel can join the registry, and AIS ingest can still be catching up
+    // with the window — so no-vessel/no-track/no-run are asked again, bounded
+    // by an interval and by the report's age.
+    expect(store.listCalls[0]).toMatchObject({
+      retryStatuses: ["no-vessel", "no-track", "no-run"],
+      retryAfterHours: 6,
+    });
+    const call = store.listCalls[0] as { retryReportedFrom: string };
+    expect(call.retryReportedFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  test("the candidate window is dated the way the journal dates things", async () => {
+    const store = fakeStore([]);
+    const run = createSildelagetAisAnchorsJob(ENV, {
+      anchors: store,
+      vessels: { resolve: async () => ({ outcome: "not-found" }) },
+      fixes: { getFixesForWindows: async () => new Map() },
+    });
+
+    await run(undefined, ARGS, CONTEXT);
+
+    // Oslo is ahead of UTC, so just after local midnight the journal's "today"
+    // is the server's "tomorrow"; taking the server's UTC date would drop a
+    // report filed in that hour out of its own window.
+    const call = store.listCalls[0] as { from: string; to: string };
+    const osloToday = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Europe/Oslo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    expect(call.to).toBe(osloToday);
+    expect(call.from < call.to).toBe(true);
+  });
+
   test("a report with no usable date is skipped, not stored as a guess", async () => {
     const store = fakeStore([candidate(1, { reportedDate: null })]);
     const run = createSildelagetAisAnchorsJob(ENV, {
       anchors: store,
-      vessels: { resolve: async () => 932 },
+      vessels: { resolve: RESOLVED(932) },
       fixes: { getFixesForWindows: async () => new Map() },
     });
 
     const result = await run(undefined, ARGS, CONTEXT);
 
     expect(store.stored).toEqual([]);
-    expect(result.message).toContain("no-date=1");
+    expect(result.message).toContain("1 unusable dates");
   });
 
   test("candidates are selected against the current parameter fingerprint", async () => {
     const store = fakeStore([]);
     const run = createSildelagetAisAnchorsJob(ENV, {
       anchors: store,
-      vessels: { resolve: async () => null },
+      vessels: { resolve: async () => ({ outcome: "not-found" }) },
       fixes: { getFixesForWindows: async () => new Map() },
     });
 

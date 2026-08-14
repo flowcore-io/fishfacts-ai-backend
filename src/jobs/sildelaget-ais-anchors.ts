@@ -5,12 +5,19 @@ import type {
 } from "@/ais/clickhouse-repository";
 import type { FishingRunThresholds } from "@/ais/fishing-runs";
 import type { Env } from "@/env";
-import type { VesselDirectory } from "@/fishfacts/vessel-directory";
+import type {
+  VesselDirectory,
+  VesselLookup,
+} from "@/fishfacts/vessel-directory";
 import type { JobExecutionResult, JobState } from "@/jobs/types";
 import {
+  AIS_ANCHOR_RETRY_AFTER_HOURS,
+  AIS_ANCHOR_RETRY_STATUSES,
+  AIS_ANCHOR_RETRY_WITHIN_DAYS,
   type SildelagetAisAnchor,
   anchorWindow,
   deriveSildelagetAisAnchor,
+  journalDateOnly,
   reportEpochMs,
 } from "@/sildelaget/ais-anchor";
 import type {
@@ -70,6 +77,10 @@ type Args = {
   windowDays: number;
   recompute: boolean;
   limit: number;
+  /** 0 ⇒ AIS_ANCHOR_RETRY_AFTER_HOURS. */
+  retryAfterHours: number;
+  /** 0 ⇒ AIS_ANCHOR_RETRY_WITHIN_DAYS. */
+  retryWithinDays: number;
 };
 
 type Context = {
@@ -108,16 +119,26 @@ export function createSildelagetAisAnchorsJob(
     context: Context,
   ): Promise<JobExecutionResult> {
     const checkedAt = new Date().toISOString();
+    const now = Date.now();
     const params = anchorParamsFromEnv(env);
     const paramsHash = hashAnchorParams(params);
     const windowDays = args.windowDays || env.SILDELAGET_AIS_ANCHOR_WINDOW_DAYS;
-    const range = dateRange(windowDays);
+    const retryWithinDays =
+      args.retryWithinDays || AIS_ANCHOR_RETRY_WITHIN_DAYS;
+    const range = dateRange(now, windowDays, params.timeZone);
 
     const candidates = await deps.anchors.listCandidates({
       ...range,
       paramsHash,
       recompute: args.recompute,
       limit: args.limit,
+      retryStatuses: AIS_ANCHOR_RETRY_STATUSES,
+      retryAfterHours: args.retryAfterHours || AIS_ANCHOR_RETRY_AFTER_HOURS,
+      retryReportedFrom: journalDateOnly(
+        now,
+        params.timeZone,
+        -retryWithinDays,
+      ),
     });
     context.reportProgress({
       phase: "derive",
@@ -139,11 +160,14 @@ export function createSildelagetAisAnchorsJob(
       "no-vessel": 0,
       "no-track": 0,
       "no-run": 0,
-      "no-date": 0,
     };
     let runsTotal = 0;
-    let processed = 0;
+    let stored = 0;
     let flagged = 0;
+    // Reports deliberately left alone this run, with nothing written for them.
+    let skippedUnavailable = 0;
+    let skippedNoDate = 0;
+    let firstUnavailableReason: string | null = null;
 
     const batchSize = env.SILDELAGET_AIS_ANCHOR_BATCH_REPORTS;
     for (let i = 0; i < candidates.length; i += batchSize) {
@@ -155,10 +179,10 @@ export function createSildelagetAisAnchorsJob(
 
       const requests: AisFixWindowRequest[] = [];
       for (const item of prepared) {
-        if (item.vesselId !== null && item.window) {
+        if (item.vessel.outcome === "resolved" && item.window) {
           requests.push({
             key: item.candidate.innmeldingId,
-            vesselId: item.vesselId,
+            vesselId: item.vessel.vesselId,
             from: item.window.from,
             to: item.window.to,
           });
@@ -169,15 +193,26 @@ export function createSildelagetAisAnchorsJob(
       const derived: SildelagetAisAnchor[] = [];
       for (const item of prepared) {
         if (!item.window || item.reportedAtMs === null) {
-          // No usable report timestamp ⇒ no window to look in. Counted, not
-          // stored: there is nothing to recompute later.
-          counts["no-date"] = (counts["no-date"] ?? 0) + 1;
+          // No usable report timestamp ⇒ no window to look in. The candidate
+          // query already excludes malformed dates, so this is a belt-and-
+          // braces skip rather than the normal path.
+          skippedNoDate += 1;
+          continue;
+        }
+        if (item.vessel.outcome === "unavailable") {
+          // The REGISTRY could not be consulted. That is not a fact about this
+          // report, and writing it as no-vessel would bury the report under a
+          // terminal-looking answer produced by an outage. Skip it: it stays a
+          // candidate and the next run tries again.
+          skippedUnavailable += 1;
+          firstUnavailableReason ??= item.vessel.reason;
           continue;
         }
         const anchor = deriveSildelagetAisAnchor(
           {
             innmeldingId: item.candidate.innmeldingId,
-            vesselId: item.vesselId,
+            vesselId:
+              item.vessel.outcome === "resolved" ? item.vessel.vesselId : null,
             reportedAtMs: item.reportedAtMs,
             reportedLatitude: item.candidate.reportedLatitude,
             reportedLongitude: item.candidate.reportedLongitude,
@@ -194,11 +229,11 @@ export function createSildelagetAisAnchorsJob(
       }
 
       await deps.anchors.upsertMany(derived, params, paramsHash);
-      processed += batch.length;
+      stored += derived.length;
       context.reportProgress({
         phase: "derive",
-        message: `${processed}/${candidates.length} reports derived`,
-        detailsProcessed: processed,
+        message: `${stored}/${candidates.length} reports derived`,
+        detailsProcessed: stored,
         detailsTotal: candidates.length,
       });
     }
@@ -207,18 +242,29 @@ export function createSildelagetAisAnchorsJob(
       .filter(([, count]) => count > 0)
       .map(([status, count]) => `${status}=${count}`)
       .join(", ");
+    const skipped: string[] = [];
+    if (skippedUnavailable > 0) {
+      skipped.push(
+        `${skippedUnavailable} left undecided (${firstUnavailableReason})`,
+      );
+    }
+    if (skippedNoDate > 0) skipped.push(`${skippedNoDate} unusable dates`);
     return {
       checkedAt,
       changed: (counts.ok ?? 0) > 0,
       latestItems: [],
-      message: `Derived positions for ${processed} reports (${summary}; ${runsTotal} runs, ${flagged} beyond ${params.sanityKm} km)`,
+      // `stored` counts rows actually written — skipped reports are named
+      // separately rather than folded into the headline number.
+      message: `Derived positions for ${stored} reports (${summary}; ${runsTotal} runs, ${flagged} beyond ${params.sanityKm} km)${
+        skipped.length > 0 ? `; skipped: ${skipped.join(", ")}` : ""
+      }`,
     };
   };
 }
 
 type PreparedCandidate = {
   candidate: SildelagetAnchorCandidate;
-  vesselId: number | null;
+  vessel: VesselLookup;
   reportedAtMs: number | null;
   window: { from: string; to: string } | null;
 };
@@ -233,13 +279,15 @@ async function prepare(
     candidate.reportedTime,
     params.timeZone,
   );
-  const vesselId = await vessels.resolve(
+  // The report's `registrationMark` is the registry's `registrationNumber`;
+  // the directory owns that rename.
+  const vessel = await vessels.resolve(
     candidate.vesselName,
     candidate.registrationMark,
   );
   return {
     candidate,
-    vesselId,
+    vessel,
     reportedAtMs,
     window:
       reportedAtMs === null
@@ -248,13 +296,21 @@ async function prepare(
   };
 }
 
-/** Reported-date range covering the last `windowDays` days, inclusive. */
-function dateRange(windowDays: number): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date(to.getTime() - windowDays * 86_400_000);
-  return { from: dateOnly(from), to: dateOnly(to) };
-}
-
-function dateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
+/**
+ * Reported-date range covering the last `windowDays` days, inclusive, dated
+ * the way the journal dates things. `reported_date` is journal-local, so
+ * taking "today" off the server's UTC clock would put a report filed just
+ * after local midnight outside the window for the first hour or two of the
+ * day — the reader's clock deciding the answer, which is the habit
+ * reportEpochMs exists to break.
+ */
+function dateRange(
+  nowMs: number,
+  windowDays: number,
+  timeZone: string,
+): { from: string; to: string } {
+  return {
+    from: journalDateOnly(nowMs, timeZone, -windowDays),
+    to: journalDateOnly(nowMs, timeZone),
+  };
 }

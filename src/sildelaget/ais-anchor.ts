@@ -40,12 +40,43 @@ export const AIS_ANCHOR_SANITY_KM = 150;
  */
 export const SILDELAGET_JOURNAL_TIME_ZONE = "Europe/Oslo";
 
-/** Why a report has no derived position — mirrors the FE's status union. */
+/**
+ * Why a report has no derived position — mirrors the FE's status union.
+ *
+ * None of these is a dead end for the report: a vessel can appear in the
+ * registry later, AIS ingest can still be catching up on the window, and a
+ * backfill can add the fixes that turn a "no-run" into runs. They are stored
+ * as the best current answer, and re-derived for a while (see
+ * AIS_ANCHOR_RETRY_*). What must NEVER be written here is a failure to
+ * consult a dependency — that is not an answer about the report at all.
+ */
 export type SildelagetAisAnchorStatus =
   | "ok"
   | "no-vessel"
   | "no-track"
   | "no-run";
+
+/** Statuses worth asking again about — everything except a settled "ok". */
+export const AIS_ANCHOR_RETRY_STATUSES: SildelagetAisAnchorStatus[] = [
+  "no-vessel",
+  "no-track",
+  "no-run",
+];
+
+/**
+ * How long a non-ok answer is left alone before it is re-derived. Registry
+ * updates and AIS ingest lag both resolve on the scale of hours, so asking
+ * again more often than this only re-reads ClickHouse for the same answer.
+ */
+export const AIS_ANCHOR_RETRY_AFTER_HOURS = 6;
+
+/**
+ * How long a report keeps being retried, measured from its reported date.
+ * Without this the retry has no end and every undecided report in the window
+ * is re-derived forever; with it, the churn is bounded to the days where the
+ * inputs are actually still moving.
+ */
+export const AIS_ANCHOR_RETRY_WITHIN_DAYS = 7;
 
 /** One derived fishing run, measured against what the skipper reported. */
 export type SildelagetAisRun = AisFishingRun & {
@@ -205,6 +236,24 @@ export function reportEpochMs(
   // repeated hour of a DST fall-back, where the earlier (summer) offset wins.
   const firstGuess = asIfUtc - timeZoneOffsetMs(asIfUtc, timeZone);
   return asIfUtc - timeZoneOffsetMs(firstGuess, timeZone);
+}
+
+/**
+ * `YYYY-MM-DD` for an instant AS THE JOURNAL WOULD DATE IT, optionally shifted
+ * by whole days. The candidate window is compared against `reported_date`,
+ * which is journal-local — so taking "today" from the server's UTC clock makes
+ * the answer depend on where the process runs. Between 00:00 and 02:00 Oslo
+ * that costs a report its first hour or two in the window, for the same reason
+ * reportEpochMs exists.
+ */
+export function journalDateOnly(
+  epochMs: number,
+  timeZone: string = SILDELAGET_JOURNAL_TIME_ZONE,
+  dayOffset = 0,
+): string {
+  const local = epochMs + timeZoneOffsetMs(epochMs, timeZone);
+  const shifted = new Date(local + dayOffset * 86_400_000);
+  return shifted.toISOString().slice(0, 10);
 }
 
 const zoneFormatters = new Map<string, Intl.DateTimeFormat>();

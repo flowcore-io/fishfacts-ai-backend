@@ -4,6 +4,7 @@ import {
   AIS_ANCHOR_SANITY_KM,
   anchorWindow,
   deriveSildelagetAisAnchor,
+  journalDateOnly,
   reportEpochMs,
 } from "../../src/sildelaget/ais-anchor";
 
@@ -163,6 +164,39 @@ describe("reportEpochMs — the journal's timezone, not the reader's", () => {
   test("a missing or malformed date yields null, never a guess", () => {
     expect(reportEpochMs(null, "10:30:00")).toBeNull();
     expect(reportEpochMs("28.05.2026", "10:30:00")).toBeNull();
+  });
+});
+
+describe("journalDateOnly — the window is dated in the journal's zone", () => {
+  // 00:30 Oslo on the 28th is still 22:30 UTC on the 27th. The candidate
+  // window is compared against `reported_date`, which is journal-local, so
+  // dating it off the server's UTC clock would leave a report filed just
+  // after local midnight outside its own window until 02:00.
+  const justAfterOsloMidnight = Date.parse("2026-05-27T22:30:00.000Z");
+
+  test("just after local midnight, the journal is already on the next day", () => {
+    expect(journalDateOnly(justAfterOsloMidnight, "Europe/Oslo")).toBe(
+      "2026-05-28",
+    );
+    // What the server's own clock would have said.
+    expect(new Date(justAfterOsloMidnight).toISOString().slice(0, 10)).toBe(
+      "2026-05-27",
+    );
+  });
+
+  test("shifts by whole days for the window's lower bound", () => {
+    expect(journalDateOnly(justAfterOsloMidnight, "Europe/Oslo", -50)).toBe(
+      "2026-04-08",
+    );
+    expect(journalDateOnly(justAfterOsloMidnight, "Europe/Oslo", -7)).toBe(
+      "2026-05-21",
+    );
+  });
+
+  test("winter, when Oslo is UTC+1", () => {
+    expect(
+      journalDateOnly(Date.parse("2026-01-14T23:30:00.000Z"), "Europe/Oslo"),
+    ).toBe("2026-01-15");
   });
 });
 

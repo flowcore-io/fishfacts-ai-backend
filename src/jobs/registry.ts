@@ -181,6 +181,11 @@ export function createJobDefinitions(
         // change lands outside the params hash, and for one-off backfills.
         recompute: z.coerce.boolean().default(false),
         limit: z.coerce.number().int().min(1).default(5000),
+        // Both 0 = use the AIS_ANCHOR_RETRY_* defaults. A report stored with a
+        // non-ok status is re-derived at most once per retryAfterHours, and
+        // only while it is younger than retryWithinDays.
+        retryAfterHours: z.coerce.number().min(0).default(0),
+        retryWithinDays: z.coerce.number().int().min(0).default(0),
       }),
       execute: createSildelagetAisAnchorsJob(env, {
         anchors: sildelagetAisAnchorRepository,

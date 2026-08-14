@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { AisClickhouseRepository } from "../../src/ais/clickhouse-repository";
+import {
+  AIS_FIX_WINDOW_MAX_FIXES_PER_VESSEL,
+  AisClickhouseRepository,
+} from "../../src/ais/clickhouse-repository";
 
 // Same approach as tracks-repository.test.ts: a fake ClickHouse client that
 // captures the emitted SQL and replays canned rows, so a SQL-construction bug
@@ -96,6 +99,88 @@ describe("getFixesForWindows SQL construction", () => {
     expect(captured.query).not.toContain("speed IS NOT NULL");
     // ...and the fixes must not be bucket-downsampled either.
     expect(captured.query).not.toContain("toStartOfInterval");
+  });
+
+  test("the per-vessel cap keeps the NEWEST fixes, not the oldest", async () => {
+    const captured: { query?: string; params?: Record<string, unknown> } = {};
+    const repository = repo(captured);
+    await repository.getFixesForWindows([
+      {
+        key: "a",
+        vesselId: 11,
+        from: "2026-05-26T00:00:00.000Z",
+        to: "2026-05-28T00:00:00.000Z",
+      },
+    ]);
+    await repository.close();
+
+    // One batch unions several overlapping windows per vessel, so the cap can
+    // bite on a busy vessel. LIMIT BY keeps whichever end the ORDER BY puts
+    // first: ascending would discard the fixes NEAREST the newest report —
+    // the ones that decide its runs.
+    expect(captured.query).toContain("ORDER BY vessel_id, event_time DESC");
+    expect(captured.query).toContain("LIMIT {perVessel:UInt32} BY vessel_id");
+    expect(captured.params?.perVessel).toBe(20_000);
+  });
+
+  test("the cap is a named constant, and is the one the query binds", async () => {
+    const captured: { query?: string; params?: Record<string, unknown> } = {};
+    const repository = repo(captured);
+    await repository.getFixesForWindows(
+      [
+        {
+          key: "a",
+          vesselId: 11,
+          from: "2026-05-26T00:00:00.000Z",
+          to: "2026-05-28T00:00:00.000Z",
+        },
+      ],
+      AIS_FIX_WINDOW_MAX_FIXES_PER_VESSEL,
+    );
+    await repository.close();
+
+    expect(AIS_FIX_WINDOW_MAX_FIXES_PER_VESSEL).toBe(20_000);
+    expect(captured.params?.perVessel).toBe(
+      AIS_FIX_WINDOW_MAX_FIXES_PER_VESSEL,
+    );
+  });
+
+  test("fixes come back chronological, whatever order the query returned", async () => {
+    // The query reads newest-first (for the cap); the run walker and the
+    // window filter both want oldest-first.
+    const captured = {
+      rows: [
+        {
+          vesselId: 11,
+          t: "2026-05-27 23:00:00.000",
+          lat: 61.1,
+          lon: -6.1,
+          speed: 3,
+        },
+        {
+          vesselId: 11,
+          t: "2026-05-27 10:00:00.000",
+          lat: 61,
+          lon: -6,
+          speed: 2,
+        },
+      ],
+    };
+    const repository = repo(captured);
+    const result = await repository.getFixesForWindows([
+      {
+        key: "a",
+        vesselId: 11,
+        from: "2026-05-27T00:00:00.000Z",
+        to: "2026-05-28T00:00:00.000Z",
+      },
+    ]);
+    await repository.close();
+
+    expect(result.get("a")?.map((fix) => fix.epochMs)).toEqual([
+      Date.parse("2026-05-27T10:00:00.000Z"),
+      Date.parse("2026-05-27T23:00:00.000Z"),
+    ]);
   });
 
   test("overlapping windows both get the fixes they contain", async () => {

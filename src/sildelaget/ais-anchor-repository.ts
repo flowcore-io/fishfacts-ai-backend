@@ -54,9 +54,16 @@ export class SildelagetAisAnchorRepository {
   constructor(private readonly db: Database) {}
 
   /**
-   * Reports in the window whose anchor is missing, was derived under a
-   * different threshold set, or predates the last change to the report itself.
+   * Reports in the window that need deriving: never derived, derived under a
+   * different threshold set, derived before the report itself last changed —
+   * or derived to a non-ok status recently enough to be worth asking again.
    * `recompute` takes everything in the window regardless.
+   *
+   * That last clause is what keeps a temporary answer temporary. A report
+   * stored as no-vessel (registry did not have the vessel yet) or no-track
+   * (AIS ingest had not caught up with the window yet) would otherwise be
+   * final the moment it was written, because nothing else in this predicate
+   * ever looks at it again.
    */
   async listCandidates(options: {
     from: string;
@@ -64,13 +71,31 @@ export class SildelagetAisAnchorRepository {
     paramsHash: string;
     recompute: boolean;
     limit: number;
+    /** Non-ok statuses to re-derive. Empty ⇒ no status-based retry. */
+    retryStatuses: string[];
+    /** Leave a stored answer alone for this long before asking again. */
+    retryAfterHours: number;
+    /** Only retry reports dated on or after this (journal-local) date. */
+    retryReportedFrom: string;
   }): Promise<SildelagetAnchorCandidate[]> {
+    const retry =
+      options.retryStatuses.length === 0
+        ? sql`FALSE`
+        : sql`(
+            a.status IN (${sql.join(
+              options.retryStatuses.map((status) => sql`${status}`),
+              sql`, `,
+            )})
+            AND a.computed_at < NOW() - MAKE_INTERVAL(hours => ${options.retryAfterHours})
+            AND e.reported_date >= ${options.retryReportedFrom}
+          )`;
     const staleness = options.recompute
       ? sql`TRUE`
       : sql`(
           a.innmelding_id IS NULL
           OR a.params_hash <> ${options.paramsHash}
           OR a.computed_at < e.updated_at
+          OR ${retry}
         )`;
     const rows = await execRows<{
       innmelding_id: string;
@@ -106,6 +131,12 @@ export class SildelagetAisAnchorRepository {
           LIMIT 1
         ) r ON TRUE
         WHERE e.reported_date IS NOT NULL
+          -- A date this shape is one reportEpochMs can read. Anything else has
+          -- no window to look in and would be re-listed, re-resolved and
+          -- skipped on every run, forever. Character classes, not \\d: this
+          -- SQL is a TS template literal, where a backslash escape is eaten
+          -- before Postgres ever sees it (\\d becomes a literal 'd').
+          AND e.reported_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
           AND e.reported_date >= ${options.from}
           AND e.reported_date <= ${options.to}
           AND ${staleness}

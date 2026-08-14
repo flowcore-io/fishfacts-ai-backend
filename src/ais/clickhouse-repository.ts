@@ -462,7 +462,7 @@ export class AisClickhouseRepository {
    */
   async getFixesForWindows(
     requests: AisFixWindowRequest[],
-    maxFixesPerVessel = 20_000,
+    maxFixesPerVessel = AIS_FIX_WINDOW_MAX_FIXES_PER_VESSEL,
   ): Promise<Map<string, AisFixWindowRow[]>> {
     const byKey = new Map<string, AisFixWindowRow[]>();
     for (const request of requests) byKey.set(request.key, []);
@@ -491,7 +491,14 @@ export class AisClickhouseRepository {
         FROM ais_position_fixes
         WHERE ${clauses.join(" OR ")}
         GROUP BY vessel_id, event_time
-        ORDER BY vessel_id, event_time
+        -- event_time DESCENDING is load-bearing, not cosmetic. One batch's
+        -- windows for a single vessel are unioned here and overlap by design,
+        -- so a vessel with three reports can span several days; if the cap
+        -- bites, LIMIT BY keeps whichever end this ORDER BY puts first.
+        -- Ascending would throw away the fixes NEAREST the newest report --
+        -- exactly the ones that decide its runs. Rows are re-sorted ascending
+        -- below, before anyone walks them.
+        ORDER BY vessel_id, event_time DESC
         LIMIT {perVessel:UInt32} BY vessel_id
       `,
       query_params: params,
@@ -518,11 +525,14 @@ export class AisClickhouseRepository {
       byVessel.set(Number(row.vesselId), fixes);
     }
     for (const [vesselId, fixes] of byVessel) {
+      // The query returned newest-first (see the ORDER BY above); the run
+      // walker and the window filter both want chronological order.
+      fixes.sort((a, b) => a.epochMs - b.epochMs);
       if (fixes.length >= maxFixesPerVessel) {
-        console.warn("[AIS] fix window hit the per-vessel cap", {
-          vesselId,
-          maxFixesPerVessel,
-        });
+        console.warn(
+          "[AIS] fix window hit the per-vessel cap — the OLDEST fixes in this batch's windows were dropped",
+          { vesselId, maxFixesPerVessel },
+        );
       }
     }
 
@@ -551,6 +561,15 @@ export class AisClickhouseRepository {
     await this.client.close();
   }
 }
+
+/**
+ * Per-vessel ceiling on the fixes one getFixesForWindows call returns, across
+ * ALL of that vessel's windows in the batch. A 48 h window at a 10 s cadence
+ * is already ~17k fixes, so a vessel with several reports in one batch can
+ * approach this — the cap is a safety ceiling against an unbounded read, not
+ * a normal operating point. Raise it here, in one place.
+ */
+export const AIS_FIX_WINDOW_MAX_FIXES_PER_VESSEL = 20_000;
 
 /** One (vessel, time window) request for getFixesForWindows. */
 export type AisFixWindowRequest = {

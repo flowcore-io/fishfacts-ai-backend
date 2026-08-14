@@ -10,6 +10,12 @@ const DATABASE_URL =
 
 const PARAMS = { minKnots: 0.3, maxKnots: 5.5 };
 const HASH = "hash-a";
+/** Retry disabled — the tests that exercise it pass their own values. */
+const NO_RETRY = {
+  retryStatuses: [] as string[],
+  retryAfterHours: 6,
+  retryReportedFrom: "2026-05-01",
+};
 
 let runCtx: Awaited<ReturnType<typeof connect>> | null = null;
 
@@ -164,6 +170,7 @@ describe("SildelagetAisAnchorRepository", () => {
       paramsHash: HASH,
       recompute: false,
       limit: 100,
+      ...NO_RETRY,
     });
     const candidate = candidates.find(
       (row) => row.innmeldingId === "anchor-test-3",
@@ -193,6 +200,7 @@ describe("SildelagetAisAnchorRepository", () => {
           paramsHash: options?.paramsHash ?? HASH,
           recompute: options?.recompute ?? false,
           limit: 100,
+          ...NO_RETRY,
         })
       ).map((row) => row.innmeldingId);
 
@@ -208,6 +216,86 @@ describe("SildelagetAisAnchorRepository", () => {
     // And when the report itself is re-projected, its anchor is stale.
     await seedEntry(runCtx.client, "anchor-test-4");
     expect(await ids()).toContain("anchor-test-4");
+  });
+
+  test("a non-ok answer is re-listed once it is old enough — it is provisional", async () => {
+    if (!runCtx) return;
+    await seedEntry(runCtx.client, "anchor-test-6");
+    const repository = new SildelagetAisAnchorRepository(runCtx.db);
+    const ids = async (retry: {
+      statuses: string[];
+      afterHours: number;
+      from?: string;
+    }) =>
+      (
+        await repository.listCandidates({
+          from: "2026-05-01",
+          to: "2026-06-30",
+          paramsHash: HASH,
+          recompute: false,
+          limit: 100,
+          retryStatuses: retry.statuses,
+          retryAfterHours: retry.afterHours,
+          retryReportedFrom: retry.from ?? "2026-05-01",
+        })
+      ).map((row) => row.innmeldingId);
+
+    // The registry was down for this report, or AIS had not caught up yet.
+    await repository.upsertMany(
+      [anchor("anchor-test-6", { status: "no-track", runs: [] })],
+      PARAMS,
+      HASH,
+    );
+
+    const retryStatuses = ["no-vessel", "no-track", "no-run"];
+    // Just derived: left alone.
+    expect(await ids({ statuses: retryStatuses, afterHours: 6 })).not.toContain(
+      "anchor-test-6",
+    );
+    // Old enough (0 h): asked again.
+    expect(await ids({ statuses: retryStatuses, afterHours: 0 })).toContain(
+      "anchor-test-6",
+    );
+    // ...but only while the REPORT is young enough, so the retry ends.
+    expect(
+      await ids({
+        statuses: retryStatuses,
+        afterHours: 0,
+        from: "2026-06-01",
+      }),
+    ).not.toContain("anchor-test-6");
+
+    // A settled "ok" is not in the retry set at all.
+    await repository.upsertMany([anchor("anchor-test-6")], PARAMS, HASH);
+    expect(await ids({ statuses: retryStatuses, afterHours: 0 })).not.toContain(
+      "anchor-test-6",
+    );
+  });
+
+  test("a report whose date cannot be parsed is never a candidate", async () => {
+    if (!runCtx) return;
+    await seedEntry(runCtx.client, "anchor-test-7");
+    // Sildelaget hands dates through as text; a shape reportEpochMs cannot
+    // read has no window, so listing it would burn a registry lookup and a
+    // skip on every hourly run, forever.
+    await runCtx.client`
+      UPDATE sildelaget_catch_entries
+      SET reported_date = '2026-5-28'
+      WHERE innmelding_id = 'anchor-test-7'
+    `;
+    const repository = new SildelagetAisAnchorRepository(runCtx.db);
+
+    const ids = (
+      await repository.listCandidates({
+        from: "2026-01-01",
+        to: "2026-12-31",
+        paramsHash: HASH,
+        recompute: true,
+        limit: 500,
+        ...NO_RETRY,
+      })
+    ).map((row) => row.innmeldingId);
+    expect(ids).not.toContain("anchor-test-7");
   });
 
   test("loadForDateRange returns anchors for the reports in range", async () => {
