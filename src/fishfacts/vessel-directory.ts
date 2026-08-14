@@ -66,7 +66,16 @@ type VesselIndex = {
  * for — while cutting name ambiguity from 3.21% of names (whole table) to
  * 1.65% (197 of 11 942).
  */
-const ACTIVE_VESSEL_STATUS_ID = 1;
+export const ACTIVE_VESSEL_STATUS_ID = 1;
+
+/**
+ * Exported so a test can assert what this service sends to a PRODUCTION
+ * replica, the way test/ais guards the ClickHouse SQL: the columns the
+ * matching depends on, and the status filter the ambiguity measurements
+ * assume. Neither can be checked from the outside without a live pool.
+ */
+export const VESSEL_ROWS_QUERY =
+  "SELECT id, name, registration_number, call_sign, mmsi FROM vessel WHERE vessel_status_id = ?";
 
 type VesselDbRow = RowDataPacket & {
   id: number;
@@ -173,10 +182,9 @@ export class ReplicaVesselDirectory implements VesselDirectory {
  */
 async function readVesselRows(env: Env): Promise<VesselRow[]> {
   const pool = await getAisPool(env, "backfill");
-  const [rows] = await pool.query<VesselDbRow[]>(
-    "SELECT id, name, registration_number, call_sign, mmsi FROM vessel WHERE vessel_status_id = ?",
-    [ACTIVE_VESSEL_STATUS_ID],
-  );
+  const [rows] = await pool.query<VesselDbRow[]>(VESSEL_ROWS_QUERY, [
+    ACTIVE_VESSEL_STATUS_ID,
+  ]);
   return rows.map((row) => ({
     id: Number(row.id),
     name: row.name,

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ACTIVE_VESSEL_STATUS_ID,
   ReplicaVesselDirectory,
+  VESSEL_ROWS_QUERY,
   type VesselRow,
   compactMark,
   indexVessels,
@@ -118,6 +120,31 @@ describe("matching", () => {
     expect(lookup("Havbris", "")).toEqual({ outcome: "resolved", vesselId: 7 });
     expect(lookup(null, "")).toEqual({ outcome: "not-found" });
     expect(INDEX.byMark.has("")).toBe(false);
+  });
+});
+
+describe("the query sent to the production replica", () => {
+  test("reads only active vessels, and only the matching columns", () => {
+    // This statement never runs in tests (it needs the Cloud SQL pool), so it
+    // is asserted directly — the same reason test/ais asserts the ClickHouse
+    // SQL text. The status filter is not cosmetic: every measurement behind
+    // the matching rules was taken over `vessel_status_id = 1`, and all 8 404
+    // AIS-active vessel ids sampled carry it.
+    expect(VESSEL_ROWS_QUERY).toContain("FROM vessel");
+    expect(VESSEL_ROWS_QUERY).toContain("WHERE vessel_status_id = ?");
+    expect(ACTIVE_VESSEL_STATUS_ID).toBe(1);
+    for (const column of [
+      "id",
+      "name",
+      "registration_number",
+      "call_sign",
+      "mmsi",
+    ]) {
+      expect(VESSEL_ROWS_QUERY).toContain(column);
+    }
+    // Read-only, and one statement — never a per-report lookup.
+    expect(VESSEL_ROWS_QUERY.toUpperCase()).toStartWith("SELECT ");
+    expect(VESSEL_ROWS_QUERY).not.toContain(";");
   });
 });
 
