@@ -86,9 +86,16 @@ curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
 ```
 
 - **Needs `FISHFACTS_SERVICE_TOKEN`.** Resolving a report's vessel name /
-  registration mark to a FishFacts vessel id reads `GET /api/v3/vessel`, which
-  is auth-gated, and a scheduled job has no user session to borrow. Without the
-  token every report is stored with status `no-vessel` — visible, not silent.
+  registration mark to a FishFacts vessel id reads `GET /api/v3/vessels`
+  (PLURAL — the singular path has no GET and answers 500), which is auth-gated:
+  401 without a token, 200 with, ~11.4k records. A scheduled job has no user
+  session to borrow. Without the token the job derives NOTHING and says so —
+  an unreadable registry is not evidence that a vessel does not exist, so it is
+  never written as `no-vessel`.
+- **Non-ok statuses are provisional.** `no-vessel` / `no-track` / `no-run` are
+  re-derived every `AIS_ANCHOR_RETRY_AFTER_HOURS` while the report is younger
+  than `AIS_ANCHOR_RETRY_WITHIN_DAYS`, because the registry gains vessels and
+  AIS ingest lags the catch-journal collector. Only `ok` settles.
 - **Thresholds are env-tunable** (`AIS_FISHING_MIN_KNOTS`, `AIS_RUN_*`,
   `SILDELAGET_AIS_ANCHOR_*`) because PRD OQ9 is open on the low end of the
   band. Each row stores the fingerprint of the parameters it was derived
