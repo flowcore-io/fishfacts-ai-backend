@@ -1,3 +1,15 @@
+import {
+  AIS_FISHING_MAX_KNOTS,
+  AIS_FISHING_MIN_KNOTS,
+  AIS_RUN_MAX_GAP_MINUTES,
+  AIS_RUN_MIN_FIXES,
+  AIS_RUN_MIN_MINUTES,
+} from "@/ais/fishing-runs";
+import {
+  AIS_ANCHOR_LOOKBACK_HOURS,
+  AIS_ANCHOR_SANITY_KM,
+  SILDELAGET_JOURNAL_TIME_ZONE,
+} from "@/sildelaget/ais-anchor";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -109,11 +121,76 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://api.sildelaget.no/catchmap/MapService.svc/CatchAreas"),
+
+  // Derived catch positions (sildelaget/ais-anchor.ts). The band and the run
+  // thresholds are tunable because PRD OQ9 is open with Jón Poulsen over
+  // whether below 1 kn (pumping/drifting, as against towing) is fishing at
+  // all — the low end is expected to move. Defaults are the house values in
+  // ais/fishing-runs.ts, which /api/ais/effort also reads; overriding these
+  // moves BOTH so the two can never drift apart.
+  AIS_FISHING_MIN_KNOTS: z.coerce
+    .number()
+    .nonnegative()
+    .default(AIS_FISHING_MIN_KNOTS),
+  AIS_FISHING_MAX_KNOTS: z.coerce
+    .number()
+    .positive()
+    .default(AIS_FISHING_MAX_KNOTS),
+  AIS_RUN_MAX_GAP_MINUTES: z.coerce
+    .number()
+    .positive()
+    .default(AIS_RUN_MAX_GAP_MINUTES),
+  AIS_RUN_MIN_FIXES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(AIS_RUN_MIN_FIXES),
+  AIS_RUN_MIN_MINUTES: z.coerce
+    .number()
+    .nonnegative()
+    .default(AIS_RUN_MIN_MINUTES),
+  SILDELAGET_AIS_ANCHOR_LOOKBACK_HOURS: z.coerce
+    .number()
+    .positive()
+    .default(AIS_ANCHOR_LOOKBACK_HOURS),
+  SILDELAGET_AIS_ANCHOR_SANITY_KM: z.coerce
+    .number()
+    .positive()
+    .default(AIS_ANCHOR_SANITY_KM),
+  /** IANA zone the innmeldingsjournal's dates and times are written in. */
+  SILDELAGET_JOURNAL_TIME_ZONE: z
+    .string()
+    .min(1)
+    .default(SILDELAGET_JOURNAL_TIME_ZONE),
+  /** Backfill window for the anchor job — the bubble map shows 50 days. */
+  SILDELAGET_AIS_ANCHOR_WINDOW_DAYS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(50),
+  /** Reports per ClickHouse fix query. Bounds the OR-chain in one statement. */
+  SILDELAGET_AIS_ANCHOR_BATCH_REPORTS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(25),
+
   FISHFACTS_API_BASE_URL: z
     .string()
     .url()
     .default("https://api-test.fishfacts.fo"),
   FISHFACTS_APPLICATION: z.string().min(1).default("FISHFACTS"),
+  /**
+   * Service token for reading the FishFacts vessel registry (vessel name /
+   * registration mark → vessel id) outside a user request. Unset ⇒ no vessel
+   * can be resolved and every derived catch position is honestly "no-vessel".
+   */
+  FISHFACTS_SERVICE_TOKEN: z.string().min(1).optional(),
+  FISHFACTS_VESSEL_CACHE_TTL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3_600_000),
   AUTH_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(60000),
   DISABLE_EVENT_STREAMING: z
     .enum(["true", "false"])

@@ -17,6 +17,7 @@ import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
 import { FinancialsRepository } from "./financials/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
+import { FishfactsVesselDirectory } from "./fishfacts/vessel-directory";
 import { GebcoProjector } from "./gebco/projector";
 import { GebcoRepository } from "./gebco/repository";
 import { GillnetProjector } from "./gillnet/projector";
@@ -34,6 +35,7 @@ import { createPathwayRuntime } from "./pathways";
 import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
+import { SildelagetAisAnchorRepository } from "./sildelaget/ais-anchor-repository";
 import { SildelagetCatchProjector } from "./sildelaget/projector";
 import { SildelagetCatchRepository } from "./sildelaget/repository";
 import { TilesRepository } from "./tiles/repository";
@@ -60,7 +62,15 @@ const poiFragmentProjector = new PoiFragmentProjector(env, usable, () =>
 const tilesRepository = new TilesRepository(db);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
-const sildelagetCatchRepository = new SildelagetCatchRepository(db);
+const sildelagetAisAnchorRepository = new SildelagetAisAnchorRepository(db);
+const sildelagetCatchRepository = new SildelagetCatchRepository(
+  db,
+  sildelagetAisAnchorRepository,
+);
+// Vessel name / registration mark → FishFacts vessel id, for the derived
+// catch positions. Without FISHFACTS_SERVICE_TOKEN it resolves nothing and the
+// job records status "no-vessel" rather than guessing.
+const vesselDirectory = new FishfactsVesselDirectory(env);
 const financialsRepository = new FinancialsRepository(env, db);
 const sildelagetCatchProjector = new SildelagetCatchProjector(
   sildelagetCatchRepository,
@@ -113,6 +123,8 @@ const jobs = createJobDefinitions(
   aisIngestState,
   aisChRepo,
   aisBucketReader,
+  sildelagetAisAnchorRepository,
+  vesselDirectory,
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);

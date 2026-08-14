@@ -141,6 +141,13 @@
       "when": 1785890303909,
       "tag": "0019_plain_language_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786698538236,
+      "tag": "0020_fixed_thunderbolt",
+      "breakpoints": true
     }
   ]
 }

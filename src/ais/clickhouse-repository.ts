@@ -447,6 +447,101 @@ export class AisClickhouseRepository {
     };
   }
 
+  /**
+   * Raw fixes for a batch of (vessel, window) requests — one ClickHouse round
+   * trip for many requests, which is the whole point of deriving Sildelaget
+   * catch positions server-side instead of one /tracks fetch per report.
+   *
+   * Deliberately NOT downsampled and NOT speed-filtered, unlike getTracks:
+   * run segmentation needs every fix, because an out-of-band fix (or one with
+   * no speed at all) is what ENDS a fishing run. Filtering those out in SQL
+   * would silently weld two runs together across the gap between them.
+   *
+   * Windows are inclusive at both ends: a fix landing exactly on the report
+   * timestamp is part of the report's track.
+   */
+  async getFixesForWindows(
+    requests: AisFixWindowRequest[],
+    maxFixesPerVessel = 20_000,
+  ): Promise<Map<string, AisFixWindowRow[]>> {
+    const byKey = new Map<string, AisFixWindowRow[]>();
+    for (const request of requests) byKey.set(request.key, []);
+    if (requests.length === 0) return byKey;
+
+    const params: Record<string, unknown> = { perVessel: maxFixesPerVessel };
+    const clauses = requests.map((request, i) => {
+      params[`v${i}`] = request.vesselId;
+      params[`f${i}`] = isoToCh(request.from);
+      params[`t${i}`] = isoToCh(request.to);
+      return `(vessel_id = {v${i}:Int32} AND event_time >= {f${i}:DateTime64(3)} AND event_time <= {t${i}:DateTime64(3)})`;
+    });
+
+    const rs = await this.client.query({
+      // GROUP BY (vessel_id, event_time) is a prefix of the ReplacingMergeTree
+      // sort key, so it collapses pre-merge duplicates and multi-source
+      // same-second fixes far more cheaply than FINAL; argMax by ingest_time
+      // makes the winner deterministic rather than arbitrary.
+      query: `
+        SELECT
+          vessel_id                      AS vesselId,
+          event_time                     AS t,
+          argMax(latitude, ingest_time)  AS lat,
+          argMax(longitude, ingest_time) AS lon,
+          argMax(speed, ingest_time)     AS speed
+        FROM ais_position_fixes
+        WHERE ${clauses.join(" OR ")}
+        GROUP BY vessel_id, event_time
+        ORDER BY vessel_id, event_time
+        LIMIT {perVessel:UInt32} BY vessel_id
+      `,
+      query_params: params,
+      format: "JSONEachRow",
+      clickhouse_settings: { max_execution_time: 55 },
+    });
+    const rows = (await rs.json()) as Array<{
+      vesselId: number;
+      t: string;
+      lat: number;
+      lon: number;
+      speed: number | null;
+    }>;
+
+    const byVessel = new Map<number, AisFixWindowRow[]>();
+    for (const row of rows) {
+      const fixes = byVessel.get(Number(row.vesselId)) ?? [];
+      fixes.push({
+        epochMs: Date.parse(chToIso(row.t)),
+        latitude: row.lat,
+        longitude: row.lon,
+        speed: row.speed,
+      });
+      byVessel.set(Number(row.vesselId), fixes);
+    }
+    for (const [vesselId, fixes] of byVessel) {
+      if (fixes.length >= maxFixesPerVessel) {
+        console.warn("[AIS] fix window hit the per-vessel cap", {
+          vesselId,
+          maxFixesPerVessel,
+        });
+      }
+    }
+
+    // Windows may overlap (two reports from one vessel a day apart), so a fix
+    // can belong to more than one request — assign by containment, not by
+    // partitioning.
+    for (const request of requests) {
+      const from = Date.parse(request.from);
+      const to = Date.parse(request.to);
+      byKey.set(
+        request.key,
+        (byVessel.get(request.vesselId) ?? []).filter(
+          (fix) => fix.epochMs >= from && fix.epochMs <= to,
+        ),
+      );
+    }
+    return byKey;
+  }
+
   async close(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
@@ -456,6 +551,23 @@ export class AisClickhouseRepository {
     await this.client.close();
   }
 }
+
+/** One (vessel, time window) request for getFixesForWindows. */
+export type AisFixWindowRequest = {
+  /** Caller's identifier for the window — the innmelding id, in practice. */
+  key: string;
+  vesselId: number;
+  from: string;
+  to: string;
+};
+
+/** A fix as the run walker wants it: epoch ms, position, speed-or-null. */
+export type AisFixWindowRow = {
+  epochMs: number;
+  latitude: number;
+  longitude: number;
+  speed: number | null;
+};
 
 export type AisDensityCell = {
   lat: number;

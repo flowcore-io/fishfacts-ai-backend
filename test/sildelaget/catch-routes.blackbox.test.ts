@@ -32,6 +32,8 @@ const TEST_IDS = [
   "api-sild-1001",
   "api-sild-1002",
   "api-sild-1003",
+  "api-sild-1004",
+  "api-sild-1005",
   "api-sild-job-1001",
 ];
 
@@ -361,6 +363,142 @@ describe("Sildelaget catch routes black-box", () => {
     ]);
   });
 
+  test("derived AIS positions ride along on /api/catch, per innmelding", async () => {
+    if (!runBlackbox) return;
+    await seed(makeEntry("api-sild-1004", "Havbris", "FO-004", [["Lodde", 3]]));
+    // A report whose track could not be derived at all — it must still be
+    // present, with its reason, so the client can say "we do not know" instead
+    // of quietly showing the reported box centre as if it were measured.
+    await seed(makeEntry("api-sild-1005", "Havsúla", "FO-005", [["Lodde", 1]]));
+    await seedAnchor("api-sild-1004", {
+      status: "ok",
+      vesselId: 932,
+      runs: [
+        {
+          latitude: 61.0123,
+          longitude: 2.1187,
+          fixCount: 26,
+          runStart: "2026-05-27T22:05:00.000Z",
+          runEnd: "2026-05-27T23:10:00.000Z",
+          avgKnots: 2.4,
+          distanceFromReportedKm: 66.6,
+          beyondSanityLimit: false,
+        },
+        {
+          latitude: 61.2,
+          longitude: 2.3,
+          fixCount: 12,
+          runStart: "2026-05-28T04:00:00.000Z",
+          runEnd: "2026-05-28T04:40:00.000Z",
+          avgKnots: 1.8,
+          distanceFromReportedKm: 78.1,
+          beyondSanityLimit: false,
+        },
+      ],
+    });
+    await seedAnchor("api-sild-1005", {
+      status: "no-track",
+      vesselId: 933,
+      runs: [],
+    });
+
+    const response = await app.fetch(
+      "/api/catch?from=2026-05-01&to=2026-06-30&species=Lodde",
+      { headers: { "x-auth-token": VALID_TOKEN } },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: {
+        locations: unknown[];
+        aisPositions: Array<{
+          innmeldingId: string;
+          status: string;
+          vesselId: number | null;
+          reportedAt: string;
+          fixCount: number;
+          runs: Array<{
+            latitude: number;
+            longitude: number;
+            fixCount: number;
+            avgKnots: number;
+            distanceFromReportedKm: number | null;
+            beyondSanityLimit: boolean;
+          }>;
+        }>;
+      };
+    };
+    const byId = new Map(
+      body.data.aisPositions.map((position) => [
+        position.innmeldingId,
+        position,
+      ]),
+    );
+    // Both bubbles, not just the derivable one — and one bubble PER RUN is
+    // possible because every run is carried, not only the last.
+    expect(byId.get("api-sild-1004")?.status).toBe("ok");
+    expect(byId.get("api-sild-1004")?.runs).toHaveLength(2);
+    expect(byId.get("api-sild-1004")?.runs[0]).toMatchObject({
+      latitude: 61.0123,
+      longitude: 2.1187,
+      avgKnots: 2.4,
+      distanceFromReportedKm: 66.6,
+      beyondSanityLimit: false,
+    });
+    expect(byId.get("api-sild-1005")?.status).toBe("no-track");
+    expect(byId.get("api-sild-1005")?.runs).toEqual([]);
+    // The reported route-area centres are untouched — this is additive.
+    expect(body.data.locations.length).toBeGreaterThan(0);
+  });
+
+  test("/api/catch/full carries the derived position, null when never computed", async () => {
+    if (!runBlackbox) return;
+    await seed(makeEntry("api-sild-1004", "Havbris", "FO-004", [["Lodde", 3]]));
+    await seedAnchor("api-sild-1004", {
+      status: "ok",
+      vesselId: 932,
+      runs: [
+        {
+          latitude: 61.0123,
+          longitude: 2.1187,
+          fixCount: 26,
+          runStart: "2026-05-27T22:05:00.000Z",
+          runEnd: "2026-05-27T23:10:00.000Z",
+          avgKnots: 2.4,
+          distanceFromReportedKm: 66.6,
+          beyondSanityLimit: false,
+        },
+      ],
+    });
+
+    const derived = await app.fetch(
+      "/api/catch/full?from=2026-05-01&to=2026-06-30&innmeldingId=api-sild-1004",
+      { headers: { "x-auth-token": VALID_TOKEN } },
+    );
+    const derivedJson = (await derived.json()) as {
+      rows: Array<{
+        innmeldingId: string;
+        aisPosition: { status: string; runs: unknown[] } | null;
+      }>;
+    };
+    expect(derivedJson.rows[0]?.aisPosition).toMatchObject({
+      status: "ok",
+      vesselId: 932,
+    });
+    expect(derivedJson.rows[0]?.aisPosition?.runs).toHaveLength(1);
+
+    // A report the job has not reached: null, which is "not computed" and is
+    // distinct from a computed "we could not derive one".
+    const untouched = await app.fetch(
+      "/api/catch/full?from=2026-05-01&to=2026-06-30&innmeldingId=api-sild-1002",
+      { headers: { "x-auth-token": VALID_TOKEN } },
+    );
+    const untouchedJson = (await untouched.json()) as {
+      rows: Array<{ innmeldingId: string; aisPosition: unknown }>;
+    };
+    expect(untouchedJson.rows[0]?.innmeldingId).toBe("api-sild-1002");
+    expect(untouchedJson.rows[0]?.aisPosition).toBeNull();
+  });
+
   test("/openapi.json contains Catch paths and schemas", async () => {
     if (!runBlackbox) return;
     const response = await app.fetch("/openapi.json");
@@ -380,13 +518,47 @@ describe("Sildelaget catch routes black-box", () => {
     expect(doc.components.schemas.SildelagetCatchEntry).toBeDefined();
     expect(doc.components.schemas.SildelagetCatchLine).toBeDefined();
     expect(doc.components.schemas.CatchFullPage).toBeDefined();
+    expect(doc.components.schemas.SildelagetAisPosition).toBeDefined();
+    expect(doc.components.schemas.SildelagetAisRun).toBeDefined();
   });
 });
 
 async function cleanup() {
   if (!cleanupClient) return;
+  await cleanupClient`DELETE FROM sildelaget_catch_ais_anchors WHERE innmelding_id = ANY(${TEST_IDS})`;
   await cleanupClient`DELETE FROM sildelaget_catch_lines WHERE innmelding_id = ANY(${TEST_IDS})`;
   await cleanupClient`DELETE FROM sildelaget_catch_entries WHERE innmelding_id = ANY(${TEST_IDS})`;
+}
+
+/**
+ * Stand in for the sildelaget-ais-anchors job, which needs ClickHouse and the
+ * FishFacts vessel registry — neither of which CI has. What is under test here
+ * is the read path: a stored anchor must reach the client, verbatim.
+ */
+async function seedAnchor(
+  innmeldingId: string,
+  anchor: {
+    status: string;
+    vesselId: number | null;
+    runs: unknown[];
+  },
+) {
+  if (!cleanupClient) return;
+  await cleanupClient`
+    INSERT INTO sildelaget_catch_ais_anchors (
+      innmelding_id, status, vessel_id, reported_at,
+      reported_latitude, reported_longitude,
+      window_from, window_to, fix_count, runs, params, params_hash
+    ) VALUES (
+      ${innmeldingId}, ${anchor.status}, ${anchor.vesselId},
+      '2026-05-28T08:30:00.000Z', 60.5, 2.5,
+      '2026-05-26T08:30:00.000Z', '2026-05-28T08:30:00.000Z',
+      ${anchor.runs.length * 100},
+      ${cleanupClient.json(anchor.runs as never)}, '{}'::jsonb, 'test-hash'
+    )
+    ON CONFLICT (innmelding_id) DO UPDATE SET
+      status = EXCLUDED.status, runs = EXCLUDED.runs
+  `;
 }
 
 async function seed(entry: SildelagetCatchEntryObserved) {
