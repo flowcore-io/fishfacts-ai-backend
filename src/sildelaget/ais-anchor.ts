@@ -15,30 +15,26 @@
 import {
   type AisFishingRun,
   type AisRunFix,
-  DEFAULT_FISHING_RUN_THRESHOLDS,
-  type FishingRunThresholds,
   deriveFishingRuns,
   haversineKm,
 } from "@/ais/fishing-runs";
 
-/** How far back from the report timestamp the track is examined. */
-export const AIS_ANCHOR_LOOKBACK_HOURS = 48;
-
 /**
- * A derived position further than this from the reported coordinate is
- * suspect — a wrong vessel match or a stale track. FLAGGED, never dropped:
- * dropping it would hide the disagreement, which is the thing worth seeing.
- */
-export const AIS_ANCHOR_SANITY_KM = 150;
-
-/**
- * The innmeldingsjournal is Norges Sildesalgslag's, and its dates and times
- * are Norwegian wall-clock. Pinned here rather than read from the server's
- * clock: the FE spike parsed them in the VIEWER's timezone, which is fine for
- * a demo and wrong as a contract — the same report would derive a different
+ * The lookback window, the sanity limit and the journal's timezone are
+ * OPERATIONAL settings and live in env.ts (SILDELAGET_AIS_ANCHOR_*,
+ * SILDELAGET_JOURNAL_TIME_ZONE); the job passes them in. What counts as
+ * fishing — the band and the coverage-gap rule — is not a setting at all: it
+ * is fixed in ais/fishing-runs.ts, where /api/ais/effort reads it too.
+ *
+ * A derived position further from the reported coordinate than the sanity
+ * limit is FLAGGED, never dropped: dropping it would hide the disagreement,
+ * which is the thing worth seeing.
+ *
+ * The journal's timezone is pinned rather than read from the server's clock —
+ * the FE spike parsed these timestamps in the VIEWER's timezone, which is fine
+ * for a demo and wrong as a contract: the same report would derive a different
  * window for a reader in Tórshavn and one in Bergen.
  */
-export const SILDELAGET_JOURNAL_TIME_ZONE = "Europe/Oslo";
 
 /**
  * Why a report has no derived position — mirrors the FE's status union.
@@ -106,8 +102,7 @@ export type SildelagetAisAnchor = {
 };
 
 export type SildelagetAisAnchorOptions = {
-  thresholds?: FishingRunThresholds;
-  sanityKm?: number;
+  sanityKm: number;
 };
 
 export type SildelagetAisAnchorInput = {
@@ -126,10 +121,9 @@ export type SildelagetAisAnchorInput = {
 
 export function deriveSildelagetAisAnchor(
   input: SildelagetAisAnchorInput,
-  options: SildelagetAisAnchorOptions = {},
+  options: SildelagetAisAnchorOptions,
 ): SildelagetAisAnchor {
-  const thresholds = options.thresholds ?? DEFAULT_FISHING_RUN_THRESHOLDS;
-  const sanityKm = options.sanityKm ?? AIS_ANCHOR_SANITY_KM;
+  const sanityKm = options.sanityKm;
   const base = {
     innmeldingId: input.innmeldingId,
     vesselId: input.vesselId,
@@ -150,7 +144,7 @@ export function deriveSildelagetAisAnchor(
     return { ...base, status: "no-track", fixCount: 0, runs: [] };
   }
 
-  const runs = deriveFishingRuns(input.fixes, thresholds).map((run) =>
+  const runs = deriveFishingRuns(input.fixes).map((run) =>
     withReportedDistance(
       run,
       input.reportedLatitude,
@@ -194,7 +188,7 @@ function withReportedDistance(
 /** The track window for a report: `lookbackHours` back from the report. */
 export function anchorWindow(
   reportedAtMs: number,
-  lookbackHours: number = AIS_ANCHOR_LOOKBACK_HOURS,
+  lookbackHours: number,
 ): { from: string; to: string } {
   return {
     from: new Date(reportedAtMs - lookbackHours * 3_600_000).toISOString(),
@@ -211,7 +205,7 @@ export function anchorWindow(
 export function reportEpochMs(
   reportedDate: string | null,
   reportedTime: string | null,
-  timeZone: string = SILDELAGET_JOURNAL_TIME_ZONE,
+  timeZone: string,
 ): number | null {
   if (!reportedDate) return null;
   const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(reportedDate.trim());
@@ -248,7 +242,7 @@ export function reportEpochMs(
  */
 export function journalDateOnly(
   epochMs: number,
-  timeZone: string = SILDELAGET_JOURNAL_TIME_ZONE,
+  timeZone: string,
   dayOffset = 0,
 ): string {
   const local = epochMs + timeZoneOffsetMs(epochMs, timeZone);

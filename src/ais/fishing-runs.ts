@@ -28,15 +28,20 @@ export const AIS_FISHING_MIN_KNOTS = 0.3;
 export const AIS_FISHING_MAX_KNOTS = 5.5;
 
 /**
- * A coverage gap longer than this ends a run. An AIS hole is not evidence of
- * fishing, so a run is never bridged across one (mirrors /api/ais/effort,
- * which discards over-gap deltas rather than crediting them as effort).
+ * A coverage gap longer than this ends a run.
+ *
+ * This is the ONLY rule besides the band, and it is deliberately not a
+ * qualification rule — it is a don't-invent-data rule. A run's centroid is a
+ * positional claim; computed across an AIS blackout it averages over water
+ * where nothing was observed, and asserts fishing there. The front end draws
+ * the same distinction for the same reason: a track leg spanning a coverage
+ * hole renders faded, because a bright leg would claim fishing the data cannot
+ * evidence. /api/ais/effort discards over-gap deltas on the same grounds.
+ *
+ * Because band + gap is now the whole heuristic, the bright stretches of track
+ * are exactly the stretches that place the bubbles.
  */
 export const AIS_RUN_MAX_GAP_MINUTES = 30;
-
-/** Anything shorter than this (fixes or minutes) is a momentary slowdown. */
-export const AIS_RUN_MIN_FIXES = 3;
-export const AIS_RUN_MIN_MINUTES = 15;
 
 /** One position fix, as the run walker needs it. */
 export type AisRunFix = {
@@ -51,7 +56,15 @@ export type AisRunFix = {
   speed: number | null;
 };
 
-/** One contiguous fishing-speed run, anchored at its centroid. */
+/**
+ * One contiguous fishing-speed run, anchored at its centroid.
+ *
+ * There is no minimum length. Gilli N. Lorenzen asked for a bubble at every
+ * stretch of track where the vessel was moving at fishing speed — speed, and
+ * nothing else. The `>= 3 fixes` and `>= 15 minutes` rules this module used to
+ * apply came from the front-end spike's own docstring, were never put to him,
+ * and are gone rather than defaulted.
+ */
 export type AisFishingRun = {
   /** Centroid of the run's fixes. */
   latitude: number;
@@ -67,24 +80,16 @@ export type AisFishingRun = {
   avgKnots: number;
 };
 
-export type FishingBand = {
-  minKnots: number;
-  maxKnots: number;
-};
-
-export type FishingRunThresholds = FishingBand & {
-  maxGapMinutes: number;
-  minRunFixes: number;
-  minRunMinutes: number;
-};
-
-export const DEFAULT_FISHING_RUN_THRESHOLDS: FishingRunThresholds = {
+/**
+ * The whole heuristic, as a value — for the derivation's parameter
+ * fingerprint, so rows derived under an older band or gap are recomputed once
+ * a new one deploys.
+ */
+export const FISHING_RUN_RULES = {
   minKnots: AIS_FISHING_MIN_KNOTS,
   maxKnots: AIS_FISHING_MAX_KNOTS,
   maxGapMinutes: AIS_RUN_MAX_GAP_MINUTES,
-  minRunFixes: AIS_RUN_MIN_FIXES,
-  minRunMinutes: AIS_RUN_MIN_MINUTES,
-};
+} as const;
 
 /**
  * Is this fix inside the fishing-speed band?
@@ -101,28 +106,26 @@ export const DEFAULT_FISHING_RUN_THRESHOLDS: FishingRunThresholds = {
  * here (0 is below the floor) but would poison the run averages downstream, so
  * the unknown is kept unknown at the only place it is tested.
  */
-export function isFishingSpeed(
-  speed: number | null | undefined,
-  band: FishingBand = DEFAULT_FISHING_RUN_THRESHOLDS,
-): boolean {
+export function isFishingSpeed(speed: number | null | undefined): boolean {
   if (typeof speed !== "number" || !Number.isFinite(speed)) return false;
-  return speed >= band.minKnots && speed <= band.maxKnots;
+  return speed >= AIS_FISHING_MIN_KNOTS && speed <= AIS_FISHING_MAX_KNOTS;
 }
 
 /**
- * Every qualifying fishing run in `fixes`, oldest first.
+ * Every fishing run in `fixes`, oldest first.
  *
  * A run collects consecutive in-band fixes; it ends when a fix is out of band
- * (or has no speed) or when the step to the next fix exceeds maxGapMinutes.
- * Runs too short to be a real cast/tow are dropped. The FE spike keeps only
- * the last run before the report — that is `deriveFishingRuns(...).at(-1)`,
- * so the two stay reconcilable.
+ * (or has no speed), or when the step to the next fix exceeds
+ * AIS_RUN_MAX_GAP_MINUTES. Nothing else ends or discards a run: a two-fix
+ * stretch at fishing speed is a run.
+ *
+ * The band and the gap are module constants rather than parameters on
+ * purpose. /api/ais/effort reads the same two constants, so the endpoints
+ * cannot answer different questions — there is no mechanism by which they
+ * could. Changing what "fishing" means is a one-line edit and a deploy.
  */
-export function deriveFishingRuns(
-  fixes: AisRunFix[],
-  thresholds: FishingRunThresholds = DEFAULT_FISHING_RUN_THRESHOLDS,
-): AisFishingRun[] {
-  const maxGapMs = thresholds.maxGapMinutes * 60_000;
+export function deriveFishingRuns(fixes: AisRunFix[]): AisFishingRun[] {
+  const maxGapMs = AIS_RUN_MAX_GAP_MINUTES * 60_000;
   const ordered = fixes
     .filter((fix) => Number.isFinite(fix.epochMs))
     .sort((a, b) => a.epochMs - b.epochMs);
@@ -131,13 +134,13 @@ export function deriveFishingRuns(
   let current: AisRunFix[] = [];
 
   const flush = () => {
-    const run = qualifyRun(current, thresholds);
+    const run = summariseRun(current);
     if (run) runs.push(run);
     current = [];
   };
 
   for (const fix of ordered) {
-    if (!isFishingSpeed(fix.speed, thresholds)) {
+    if (!isFishingSpeed(fix.speed)) {
       flush();
       continue;
     }
@@ -152,16 +155,11 @@ export function deriveFishingRuns(
   return runs;
 }
 
-/** Centroid + stats, or null when the run is too short to be a cast/tow. */
-function qualifyRun(
-  run: AisRunFix[],
-  thresholds: FishingRunThresholds,
-): AisFishingRun | null {
-  if (run.length < thresholds.minRunFixes) return null;
+/** Centroid + stats for one contiguous in-band stretch. */
+function summariseRun(run: AisRunFix[]): AisFishingRun | null {
+  if (run.length === 0) return null;
   const first = run[0] as AisRunFix;
   const last = run[run.length - 1] as AisRunFix;
-  const durationMinutes = (last.epochMs - first.epochMs) / 60_000;
-  if (durationMinutes < thresholds.minRunMinutes) return null;
 
   // Plain mean of lat/lon — loop clusters are far too small for projection
   // error to matter. (Known limit: a run straddling the ±180° antimeridian

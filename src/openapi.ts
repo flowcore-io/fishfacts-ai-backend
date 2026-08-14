@@ -1943,7 +1943,7 @@ export const openApiDocument = {
       SildelagetAisPosition: {
         type: "object",
         description:
-          "AIS-derived fishing positions for one innmelding: every contiguous run inside the fishing-speed band (0.3–5.5 kn, inclusive) in the 48 h before the report, each anchored at its centroid.",
+          "AIS-derived fishing positions for one innmelding: every contiguous stretch of track inside the fishing-speed band (0.3–5.5 kn, both ends inclusive) in the 48 h before the report, each anchored at its centroid. A stretch ends at an out-of-band fix, at a fix with no speed, or at a coverage gap over 30 minutes — never bridged across one, since a centroid spanning a gap would claim a position nothing was observed at. There is no minimum length.",
         required: [
           "innmeldingId",
           "status",

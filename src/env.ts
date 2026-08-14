@@ -1,15 +1,3 @@
-import {
-  AIS_FISHING_MAX_KNOTS,
-  AIS_FISHING_MIN_KNOTS,
-  AIS_RUN_MAX_GAP_MINUTES,
-  AIS_RUN_MIN_FIXES,
-  AIS_RUN_MIN_MINUTES,
-} from "@/ais/fishing-runs";
-import {
-  AIS_ANCHOR_LOOKBACK_HOURS,
-  AIS_ANCHOR_SANITY_KM,
-  SILDELAGET_JOURNAL_TIME_ZONE,
-} from "@/sildelaget/ais-anchor";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -122,46 +110,20 @@ const envSchema = z.object({
     .url()
     .default("https://api.sildelaget.no/catchmap/MapService.svc/CatchAreas"),
 
-  // Derived catch positions (sildelaget/ais-anchor.ts). The band and the run
-  // thresholds are tunable because PRD OQ9 is open with Jón Poulsen over
-  // whether below 1 kn (pumping/drifting, as against towing) is fishing at
-  // all — the low end is expected to move. Defaults are the house values in
-  // ais/fishing-runs.ts, which /api/ais/effort also reads; overriding these
-  // moves BOTH so the two can never drift apart.
-  AIS_FISHING_MIN_KNOTS: z.coerce
-    .number()
-    .nonnegative()
-    .default(AIS_FISHING_MIN_KNOTS),
-  AIS_FISHING_MAX_KNOTS: z.coerce
-    .number()
-    .positive()
-    .default(AIS_FISHING_MAX_KNOTS),
-  AIS_RUN_MAX_GAP_MINUTES: z.coerce
-    .number()
-    .positive()
-    .default(AIS_RUN_MAX_GAP_MINUTES),
-  AIS_RUN_MIN_FIXES: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(AIS_RUN_MIN_FIXES),
-  AIS_RUN_MIN_MINUTES: z.coerce
-    .number()
-    .nonnegative()
-    .default(AIS_RUN_MIN_MINUTES),
+  // Derived catch positions (sildelaget/ais-anchor.ts). What counts as
+  // "fishing" — the speed band and the coverage-gap rule — is NOT here: those
+  // are constants in ais/fishing-runs.ts, read by both this derivation and
+  // /api/ais/effort, so the two cannot be configured into disagreeing. The
+  // knobs below are operational: how far back to look, how far is too far, and
+  // how much to chew per run.
   SILDELAGET_AIS_ANCHOR_LOOKBACK_HOURS: z.coerce
     .number()
     .positive()
-    .default(AIS_ANCHOR_LOOKBACK_HOURS),
-  SILDELAGET_AIS_ANCHOR_SANITY_KM: z.coerce
-    .number()
-    .positive()
-    .default(AIS_ANCHOR_SANITY_KM),
+    .default(48),
+  /** A derived position further than this from the report is flagged. */
+  SILDELAGET_AIS_ANCHOR_SANITY_KM: z.coerce.number().positive().default(150),
   /** IANA zone the innmeldingsjournal's dates and times are written in. */
-  SILDELAGET_JOURNAL_TIME_ZONE: z
-    .string()
-    .min(1)
-    .default(SILDELAGET_JOURNAL_TIME_ZONE),
+  SILDELAGET_JOURNAL_TIME_ZONE: z.string().min(1).default("Europe/Oslo"),
   /** Backfill window for the anchor job — the bubble map shows 50 days. */
   SILDELAGET_AIS_ANCHOR_WINDOW_DAYS: z.coerce
     .number()

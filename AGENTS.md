@@ -120,14 +120,23 @@ curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
   re-derived every `AIS_ANCHOR_RETRY_AFTER_HOURS` while the report is younger
   than `AIS_ANCHOR_RETRY_WITHIN_DAYS`, because the registry gains vessels and
   AIS ingest lags the catch-journal collector. Only `ok` settles.
-- **Thresholds are env-tunable** (`AIS_FISHING_MIN_KNOTS`, `AIS_RUN_*`,
-  `SILDELAGET_AIS_ANCHOR_*`) because PRD OQ9 is open on the low end of the
-  band. Each row stores the fingerprint of the parameters it was derived
-  under, so changing one automatically re-derives the affected rows.
-- The band constants live in `src/ais/fishing-runs.ts` and are the same ones
-  `/api/ais/effort` defaults to. Do not restate 0.3 / 5.5 anywhere else —
-  fishfacts-fe mirrors this predicate, boundaries included (both ends
-  inclusive), and a drift is invisible until bubbles land in the wrong place.
+- **What counts as fishing is CODE, not config.** The band (0.3–5.5 kn, both
+  ends inclusive) and the 30-minute gap rule are constants in
+  `src/ais/fishing-runs.ts`, read by this derivation and by `/api/ais/effort`.
+  There is deliberately no env override: the two endpoints cannot be
+  configured into disagreeing, and changing the definition is a one-line edit
+  plus a deploy. Do not restate 0.3 / 5.5 anywhere else — fishfacts-fe mirrors
+  the same predicate and a drift is invisible until bubbles land in the wrong
+  place. Each row stores a fingerprint of the rules it was derived under, so a
+  deploy that moves them re-derives the affected rows by itself.
+- **Speed is the whole qualification.** Any contiguous in-band stretch is a
+  run, however short — Gilli asked for a bubble at every stretch of track at
+  fishing speed. The old `>= 3 fixes` / `>= 15 minutes` rules were ours, never
+  put to him, and are gone. The gap rule is not a qualification rule and stays:
+  a centroid computed across an AIS blackout claims a position nothing was
+  observed at, which is why the FE fades a track leg over a hole too.
+- `SILDELAGET_AIS_ANCHOR_*` and the retry knobs remain env/args — those are
+  operational (how far back, how far is too far, how much per run).
 
 ## Drizzle (`drizzle.config.ts`)
 

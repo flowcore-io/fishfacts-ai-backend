@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AIS_FISHING_MAX_KNOTS,
   AIS_FISHING_MIN_KNOTS,
+  AIS_RUN_MAX_GAP_MINUTES,
   type AisRunFix,
   deriveFishingRuns,
   haversineKm,
@@ -48,9 +49,12 @@ describe("isFishingSpeed — the band boundary, shared with fishfacts-fe", () =>
     });
   }
 
-  test("the band constants are the numbers the FE mirrors", () => {
+  test("the band and gap are the numbers /api/ais/effort defaults to", () => {
+    // Not configurable, by decision: ONE definition of "fishing", in code,
+    // read by the effort endpoint and by this derivation.
     expect(AIS_FISHING_MIN_KNOTS).toBe(0.3);
     expect(AIS_FISHING_MAX_KNOTS).toBe(5.5);
+    expect(AIS_RUN_MAX_GAP_MINUTES).toBe(30);
   });
 });
 
@@ -120,21 +124,6 @@ describe("deriveFishingRuns", () => {
     expect(runs[0]?.fixCount).toBe(3);
   });
 
-  test("fewer than 3 fixes is a momentary slowdown, not a run", () => {
-    const runs = deriveFishingRuns([fix(0, 2), fix(30, 2), fix(60, 9)]);
-    expect(runs).toEqual([]);
-  });
-
-  test("under 15 minutes is a momentary slowdown, not a run", () => {
-    const runs = deriveFishingRuns([fix(0, 2), fix(5, 2), fix(14, 2)]);
-    expect(runs).toEqual([]);
-  });
-
-  test("exactly 15 minutes and 3 fixes qualifies", () => {
-    const runs = deriveFishingRuns([fix(0, 2), fix(5, 2), fix(15, 2)]);
-    expect(runs).toHaveLength(1);
-  });
-
   test("a fix with no speed ends the run and never lands in the average", () => {
     const withUnknown = deriveFishingRuns([
       fix(0, 2),
@@ -153,12 +142,45 @@ describe("deriveFishingRuns", () => {
     expect(withUnknown.map((run) => run.fixCount)).toEqual([3, 3]);
   });
 
-  test("an unknown speed cannot make a too-short run qualify", () => {
-    // Two real fishing fixes plus one unknown. Counting the unknown as a
-    // 0 kn fix would still leave it out of band, but counting it as a member
-    // of the run would push the run to 3 fixes and qualify it. It must not.
+  test("an unknown speed splits the stretch rather than joining it", () => {
+    // Two fishing fixes with an unknown between them are two runs, not one
+    // run of three: we do not know the vessel was fishing in between, and a
+    // centroid spanning the unknown would place a bubble on that guess.
     const runs = deriveFishingRuns([fix(0, 2), fix(16, null), fix(30, 2)]);
-    expect(runs).toEqual([]);
+    expect(runs).toHaveLength(2);
+    expect(runs.map((run) => run.fixCount)).toEqual([1, 1]);
+    expect(runs.map((run) => run.avgKnots)).toEqual([2, 2]);
+  });
+
+  test("a SHORT in-band stretch is a run — speed is the whole rule", () => {
+    // Gilli asked for a bubble at every stretch of track at fishing speed.
+    // Two fixes four minutes apart used to be discarded as a momentary
+    // slowdown, by rules that were ours and were never put to him.
+    const runs = deriveFishingRuns([
+      fix(0, 9),
+      fix(10, 2),
+      fix(14, 2),
+      fix(20, 9),
+    ]);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.fixCount).toBe(2);
+    expect(runs[0]?.runStart).toBe(new Date(START + 10 * MINUTE).toISOString());
+    expect(runs[0]?.runEnd).toBe(new Date(START + 14 * MINUTE).toISOString());
+  });
+
+  test("even a single in-band fix between two fast ones is a run", () => {
+    const runs = deriveFishingRuns([fix(0, 9), fix(10, 2), fix(20, 9)]);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.fixCount).toBe(1);
+    expect(runs[0]?.avgKnots).toBe(2);
+  });
+
+  test("the gap rule survives — it is not a qualification rule", () => {
+    // Everything else was dropped; this stays because a centroid computed
+    // across an AIS blackout claims a position nothing was observed at. The
+    // front end fades a track leg over a hole for the same reason.
+    expect(deriveFishingRuns([fix(0, 2), fix(31, 2)])).toHaveLength(2);
+    expect(deriveFishingRuns([fix(0, 2), fix(29, 2)])).toHaveLength(1);
   });
 
   test("out-of-order fixes are sorted before segmenting", () => {
@@ -169,25 +191,6 @@ describe("deriveFishingRuns", () => {
 
   test("no fixes, no runs", () => {
     expect(deriveFishingRuns([])).toEqual([]);
-  });
-
-  test("thresholds are overridable in one place (PRD OQ9 moves the low end)", () => {
-    const fixes = [fix(0, 0.5), fix(8, 0.5), fix(16, 0.5)];
-    expect(deriveFishingRuns(fixes)).toHaveLength(1);
-    const strict = deriveFishingRuns(fixes, {
-      minKnots: 1,
-      maxKnots: 5.5,
-      maxGapMinutes: 30,
-      minRunFixes: 3,
-      minRunMinutes: 15,
-    });
-    expect(strict).toEqual([]);
-  });
-});
-
-describe("haversineKm", () => {
-  test("a degree of latitude is ~111 km", () => {
-    expect(haversineKm(61, -6, 62, -6)).toBeCloseTo(111.19, 1);
   });
 
   test("the same point is zero", () => {

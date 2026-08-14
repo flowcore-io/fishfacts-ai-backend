@@ -3,7 +3,7 @@ import type {
   AisFixWindowRequest,
   AisFixWindowRow,
 } from "@/ais/clickhouse-repository";
-import type { FishingRunThresholds } from "@/ais/fishing-runs";
+import { FISHING_RUN_RULES } from "@/ais/fishing-runs";
 import type { Env } from "@/env";
 import type {
   VesselDirectory,
@@ -25,8 +25,17 @@ import type {
   SildelagetAnchorCandidate,
 } from "@/sildelaget/ais-anchor-repository";
 
-/** Everything the derivation depends on — hashed into each stored row. */
-export type SildelagetAnchorParams = FishingRunThresholds & {
+/**
+ * Everything the derivation depends on — hashed into each stored row. The
+ * band and gap come from the code constants, not from config: they are what
+ * "fishing" means, and they are shared with /api/ais/effort. Including them
+ * here is what makes a row derived under an older definition recompute itself
+ * once a new one deploys.
+ */
+export type SildelagetAnchorParams = {
+  minKnots: number;
+  maxKnots: number;
+  maxGapMinutes: number;
   lookbackHours: number;
   sanityKm: number;
   timeZone: string;
@@ -34,11 +43,7 @@ export type SildelagetAnchorParams = FishingRunThresholds & {
 
 export function anchorParamsFromEnv(env: Env): SildelagetAnchorParams {
   return {
-    minKnots: env.AIS_FISHING_MIN_KNOTS,
-    maxKnots: env.AIS_FISHING_MAX_KNOTS,
-    maxGapMinutes: env.AIS_RUN_MAX_GAP_MINUTES,
-    minRunFixes: env.AIS_RUN_MIN_FIXES,
-    minRunMinutes: env.AIS_RUN_MIN_MINUTES,
+    ...FISHING_RUN_RULES,
     lookbackHours: env.SILDELAGET_AIS_ANCHOR_LOOKBACK_HOURS,
     sanityKm: env.SILDELAGET_AIS_ANCHOR_SANITY_KM,
     timeZone: env.SILDELAGET_JOURNAL_TIME_ZONE,
@@ -222,7 +227,7 @@ export function createSildelagetAisAnchorsJob(
             windowTo: item.window.to,
             fixes: fixesByKey.get(item.candidate.innmeldingId) ?? [],
           },
-          { thresholds: params, sanityKm: params.sanityKm },
+          { sanityKm: params.sanityKm },
         );
         counts[anchor.status] = (counts[anchor.status] ?? 0) + 1;
         runsTotal += anchor.runs.length;
