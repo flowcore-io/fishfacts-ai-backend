@@ -1943,7 +1943,7 @@ export const openApiDocument = {
       SildelagetAisPosition: {
         type: "object",
         description:
-          "AIS-derived fishing positions for one innmelding: every contiguous stretch of track inside the fishing-speed band (0.3–5.5 kn, both ends inclusive) in the 48 h before the report, each anchored at its centroid. A stretch ends at an out-of-band fix, at a fix with no speed, or at a coverage gap over 30 minutes — never bridged across one, since a centroid spanning a gap would claim a position nothing was observed at. There is no minimum length.",
+          "AIS-derived fishing positions for one innmelding: every contiguous stretch of track inside the fishing-speed band (0.3–5.5 kn, both ends inclusive) in the 48 h before the report, each anchored at its centroid. A stretch ends at an out-of-band fix, at a fix with no speed, or at a coverage gap over 30 minutes — never bridged across one, since a centroid spanning a gap would claim a position nothing was observed at. There is no minimum length: a run may rest on a single fix, and `fixCount` is the field to weigh one by.",
         required: [
           "innmeldingId",
           "status",
@@ -2006,7 +2006,7 @@ export const openApiDocument = {
           fixCount: {
             type: "integer",
             description:
-              "Fixes in the run. Every one carries a speed, so avgKnots is the mean over exactly these fixes.",
+              "Fixes in the run — its weight. Every one carries a speed, so avgKnots is the mean over exactly these fixes. A run may have just one: the derivation reports what it observed and leaves the judgement to the client.",
           },
           runStart: { type: "string", format: "date-time" },
           runEnd: { type: "string", format: "date-time" },

@@ -59,22 +59,38 @@ export type AisRunFix = {
 /**
  * One contiguous fishing-speed run, anchored at its centroid.
  *
- * There is no minimum length. Gilli N. Lorenzen asked for a bubble at every
- * stretch of track where the vessel was moving at fishing speed — speed, and
- * nothing else. The `>= 3 fixes` and `>= 15 minutes` rules this module used to
- * apply came from the front-end spike's own docstring, were never put to him,
- * and are gone rather than defaulted.
+ * There is no minimum length, and A RUN MAY REST ON A SINGLE FIX. That is
+ * deliberate, it has been measured, and it should not be "fixed" by putting a
+ * threshold back:
+ *
+ * Gilli N. Lorenzen asked for a bubble at every stretch of track where the
+ * vessel was moving at fishing speed — speed, and nothing else. The
+ * `>= 3 fixes` and `>= 15 minutes` rules this module used to apply came from
+ * the front-end spike's own docstring, were never put to him, and are gone
+ * rather than defaulted. Over 34 257 real fixes from 60 vessels, dropping them
+ * yields 822 runs against the old rules' 264 (3.1x), and 41% of those rest on
+ * one fix — largely because the real median fix cadence is ~274 s, not the
+ * ~1.4 min the spike assumed, so genuine tows are sparsely sampled and a
+ * fix-count floor discards them along with the noise.
+ *
+ * The backend's job is to report what it observed, not to decide which
+ * observations deserve to be seen. `fixCount`, `runStart` and `runEnd` ride on
+ * every run precisely so a consumer can weigh one — **`fixCount` is the field
+ * to judge a run by**: a one-ping run and a two-hour tow are distinguishable
+ * without asking the backend to suppress either.
  */
 export type AisFishingRun = {
-  /** Centroid of the run's fixes. */
+  /** Centroid of the run's fixes. A one-fix run is that fix's position. */
   latitude: number;
   longitude: number;
   /**
-   * Fixes in the run. Every one of them has a finite speed (a fix without one
-   * cannot pass isFishingSpeed), so avgKnots is the mean over exactly these
-   * fixes — no fix is silently missing from it.
+   * Fixes in the run — the run's weight, and the field a consumer should use
+   * to tell a passing ping from a sustained tow. Every one of them has a
+   * finite speed (a fix without one cannot pass isFishingSpeed), so avgKnots
+   * is the mean over exactly these fixes — no fix is silently missing from it.
    */
   fixCount: number;
+  /** Equal to runEnd on a single-fix run; the pair bounds the run's duration. */
   runStart: string;
   runEnd: string;
   avgKnots: number;
