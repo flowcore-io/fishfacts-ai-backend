@@ -69,6 +69,35 @@ Returns `202` + `{ mode: "single", runId, ... }`. The scheduler (cron `0 * * * *
 
 OpenAPI for the FishFacts login: <https://api-test.fishfacts.fo/v3/api-docs/api-v3> (the field name and content-type matter — `application/x-www-form-urlencoded`, body `username=...&password=...`).
 
+## Derived catch positions (`sildelaget-ais-anchors`)
+
+Runs at `20 * * * *` and fills `sildelaget_catch_ais_anchors` — per innmelding,
+every AIS fishing run in the 48 h before the report (band 0.3–5.5 kn, 30-minute
+gap split, ≥3 fixes and ≥15 minutes). `/api/catch` serves them as
+`data.aisPositions` and `/api/catch/full` as `row.aisPosition`, so the map
+places bubbles where the vessel actually worked instead of at the reported
+route-area centre.
+
+```sh
+# Re-derive the whole bubble window (e.g. after changing the band)
+curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
+  -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
+  -d '{"jobId":"sildelaget-ais-anchors","args":{"windowDays":50,"recompute":true}}'
+```
+
+- **Needs `FISHFACTS_SERVICE_TOKEN`.** Resolving a report's vessel name /
+  registration mark to a FishFacts vessel id reads `GET /api/v3/vessel`, which
+  is auth-gated, and a scheduled job has no user session to borrow. Without the
+  token every report is stored with status `no-vessel` — visible, not silent.
+- **Thresholds are env-tunable** (`AIS_FISHING_MIN_KNOTS`, `AIS_RUN_*`,
+  `SILDELAGET_AIS_ANCHOR_*`) because PRD OQ9 is open on the low end of the
+  band. Each row stores the fingerprint of the parameters it was derived
+  under, so changing one automatically re-derives the affected rows.
+- The band constants live in `src/ais/fishing-runs.ts` and are the same ones
+  `/api/ais/effort` defaults to. Do not restate 0.3 / 5.5 anywhere else —
+  fishfacts-fe mirrors this predicate, boundaries included (both ends
+  inclusive), and a drift is invisible until bubbles land in the wrong place.
+
 ## Drizzle (`drizzle.config.ts`)
 
 ```ts
