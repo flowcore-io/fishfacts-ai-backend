@@ -111,6 +111,8 @@ export function createSildelagetAisAnchorsJob(
     anchors: SildelagetAnchorStore;
     vessels: VesselDirectory;
     fixes: AisFixWindowSource;
+    /** Injectable for tests — the window's dating is timezone-sensitive. */
+    now?: () => number;
   },
 ) {
   return async function runSildelagetAisAnchorsJob(
@@ -119,7 +121,7 @@ export function createSildelagetAisAnchorsJob(
     context: Context,
   ): Promise<JobExecutionResult> {
     const checkedAt = new Date().toISOString();
-    const now = Date.now();
+    const now = (deps.now ?? Date.now)();
     const params = anchorParamsFromEnv(env);
     const paramsHash = hashAnchorParams(params);
     const windowDays = args.windowDays || env.SILDELAGET_AIS_ANCHOR_WINDOW_DAYS;

@@ -274,28 +274,43 @@ describe("SildelagetAisAnchorRepository", () => {
 
   test("a report whose date cannot be parsed is never a candidate", async () => {
     if (!runCtx) return;
+    // Sildelaget hands dates through as text. These two are BETWEEN the range
+    // bounds as strings — the date filter cannot be what excludes them — but
+    // reportEpochMs cannot read either, so they have no window. Listing them
+    // would burn a registry lookup and a skip on every hourly run, forever.
     await seedEntry(runCtx.client, "anchor-test-7");
-    // Sildelaget hands dates through as text; a shape reportEpochMs cannot
-    // read has no window, so listing it would burn a registry lookup and a
-    // skip on every hourly run, forever.
     await runCtx.client`
-      UPDATE sildelaget_catch_entries
-      SET reported_date = '2026-5-28'
+      UPDATE sildelaget_catch_entries SET reported_date = '2026-05-2'
       WHERE innmelding_id = 'anchor-test-7'
+    `;
+    await seedEntry(runCtx.client, "anchor-test-8");
+    await runCtx.client`
+      UPDATE sildelaget_catch_entries SET reported_date = '2026-05-28x'
+      WHERE innmelding_id = 'anchor-test-8'
     `;
     const repository = new SildelagetAisAnchorRepository(runCtx.db);
 
-    const ids = (
-      await repository.listCandidates({
-        from: "2026-01-01",
-        to: "2026-12-31",
-        paramsHash: HASH,
-        recompute: true,
-        limit: 500,
-        ...NO_RETRY,
-      })
-    ).map((row) => row.innmeldingId);
+    const listed = async (from: string, to: string) =>
+      (
+        await repository.listCandidates({
+          from,
+          to,
+          paramsHash: HASH,
+          recompute: true,
+          limit: 500,
+          ...NO_RETRY,
+        })
+      ).map((row) => row.innmeldingId);
+
+    // Both sit inside this range lexically...
+    expect("2026-05-2" > "2026-01-01" && "2026-05-2" < "2026-12-31").toBe(true);
+    expect("2026-05-28x" > "2026-01-01" && "2026-05-28x" < "2026-12-31").toBe(
+      true,
+    );
+    // ...and neither is offered for derivation.
+    const ids = await listed("2026-01-01", "2026-12-31");
     expect(ids).not.toContain("anchor-test-7");
+    expect(ids).not.toContain("anchor-test-8");
   });
 
   test("loadForDateRange returns anchors for the reports in range", async () => {

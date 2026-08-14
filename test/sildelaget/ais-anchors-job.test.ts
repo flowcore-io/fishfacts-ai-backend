@@ -256,26 +256,32 @@ describe("sildelaget-ais-anchors job", () => {
 
   test("the candidate window is dated the way the journal dates things", async () => {
     const store = fakeStore([]);
+    // 00:30 in Oslo, still the previous day in UTC — the clock is pinned
+    // because otherwise this test only means anything for two hours a day.
+    const justAfterOsloMidnight = Date.parse("2026-05-27T22:30:00.000Z");
     const run = createSildelagetAisAnchorsJob(ENV, {
       anchors: store,
       vessels: { resolve: async () => ({ outcome: "not-found" }) },
       fixes: { getFixesForWindows: async () => new Map() },
+      now: () => justAfterOsloMidnight,
     });
 
     await run(undefined, ARGS, CONTEXT);
 
-    // Oslo is ahead of UTC, so just after local midnight the journal's "today"
-    // is the server's "tomorrow"; taking the server's UTC date would drop a
-    // report filed in that hour out of its own window.
-    const call = store.listCalls[0] as { from: string; to: string };
-    const osloToday = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/Oslo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
-    expect(call.to).toBe(osloToday);
-    expect(call.from < call.to).toBe(true);
+    // `reported_date` is journal-local. Dating the window off the server's
+    // UTC clock would leave a report filed in this hour outside its own
+    // window until 02:00 local.
+    const call = store.listCalls[0] as {
+      from: string;
+      to: string;
+      retryReportedFrom: string;
+    };
+    expect(call.to).toBe("2026-05-28");
+    expect(new Date(justAfterOsloMidnight).toISOString().slice(0, 10)).toBe(
+      "2026-05-27",
+    );
+    expect(call.from).toBe("2026-04-08");
+    expect(call.retryReportedFrom).toBe("2026-05-21");
   });
 
   test("a report with no usable date is skipped, not stored as a guess", async () => {
