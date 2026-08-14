@@ -98,13 +98,24 @@ curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
   -d '{"jobId":"sildelaget-ais-anchors","args":{"windowDays":50,"recompute":true}}'
 ```
 
-- **Needs `FISHFACTS_SERVICE_TOKEN`.** Resolving a report's vessel name /
-  registration mark to a FishFacts vessel id reads `GET /api/v3/vessels`
-  (PLURAL — the singular path has no GET and answers 500), which is auth-gated:
-  401 without a token, 200 with, ~11.4k records. A scheduled job has no user
-  session to borrow. Without the token the job derives NOTHING and says so —
-  an unreadable registry is not evidence that a vessel does not exist, so it is
-  never written as `no-vessel`.
+- **Vessel resolution reads the replica, not the API.** Name / registration
+  mark → vessel id comes from `vessel` on the FishFacts MySQL replica, through
+  the same `getAisPool` that `financials/repository.ts` uses (`backfill` role —
+  never take connections from the live AIS tail). No extra credential, and
+  `vessel.id` is the keyspace AIS fixes are keyed by (500/500 sampled
+  `location.vessel_id` matched). The index is `vessel_status_id = 1` (12 167
+  rows), held for `VESSEL_DIRECTORY_CACHE_TTL_MS` — one read an hour, never a
+  query per report.
+- **Marks are compared with punctuation stripped.** The journal writes
+  `H -0190-S`, the registry stores `F 0032BD` / `VL0024AV`. Same identifier,
+  different spacing — comparing them verbatim resolves none. Names use the
+  FE's normalisation (trim + lower-case) unchanged.
+- **A replica outage is never written down.** An unreadable registry is not
+  evidence that a vessel does not exist: those reports are skipped, not stored
+  as `no-vessel`.
+- **Coverage, measured on the last 50 days of real reports** (150 distinct
+  vessels): 86 resolve by name, 6 by name + mark, 4 by mark alone, 3 stay
+  ambiguous, 51 are absent from the registry entirely.
 - **Non-ok statuses are provisional.** `no-vessel` / `no-track` / `no-run` are
   re-derived every `AIS_ANCHOR_RETRY_AFTER_HOURS` while the report is younger
   than `AIS_ANCHOR_RETRY_WITHIN_DAYS`, because the registry gains vessels and

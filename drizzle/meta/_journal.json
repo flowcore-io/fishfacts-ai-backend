@@ -148,6 +148,13 @@
       "when": 1786698538236,
       "tag": "0020_fixed_thunderbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786703221882,
+      "tag": "0021_nappy_raider",
+      "breakpoints": true
     }
   ]
 }

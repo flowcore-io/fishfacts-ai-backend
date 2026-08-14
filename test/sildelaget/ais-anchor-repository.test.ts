@@ -272,6 +272,35 @@ describe("SildelagetAisAnchorRepository", () => {
     );
   });
 
+  test("a fractional retry interval runs instead of killing the job", async () => {
+    if (!runCtx) return;
+    await seedEntry(runCtx.client, "anchor-test-9");
+    const repository = new SildelagetAisAnchorRepository(runCtx.db);
+    await repository.upsertMany(
+      [anchor("anchor-test-9", { status: "no-vessel", runs: [] })],
+      PARAMS,
+      HASH,
+    );
+
+    // MAKE_INTERVAL's parameters are integers, so `hours => 0.5` is not a
+    // rounding question — Postgres rejects it and the whole run dies with
+    // `invalid input syntax for type integer`. Half an hour is 30 minutes.
+    const ids = (
+      await repository.listCandidates({
+        from: "2026-05-01",
+        to: "2026-06-30",
+        paramsHash: HASH,
+        recompute: false,
+        limit: 100,
+        retryStatuses: ["no-vessel", "no-track", "no-run"],
+        retryAfterHours: 0.5,
+        retryReportedFrom: "2026-05-01",
+      })
+    ).map((row) => row.innmeldingId);
+    // Just written, so 30 minutes have not passed: not due, and no crash.
+    expect(ids).not.toContain("anchor-test-9");
+  });
+
   test("a report whose date cannot be parsed is never a candidate", async () => {
     if (!runCtx) return;
     // Sildelaget hands dates through as text. These two are BETWEEN the range

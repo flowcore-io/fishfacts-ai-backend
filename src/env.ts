@@ -181,12 +181,11 @@ const envSchema = z.object({
     .default("https://api-test.fishfacts.fo"),
   FISHFACTS_APPLICATION: z.string().min(1).default("FISHFACTS"),
   /**
-   * Service token for reading the FishFacts vessel registry (vessel name /
-   * registration mark → vessel id) outside a user request. Unset ⇒ no vessel
-   * can be resolved and every derived catch position is honestly "no-vessel".
+   * How long the vessel registry index (name / registration mark → vessel id)
+   * is held in memory. It is read from the FishFacts MySQL replica through the
+   * AIS pool, so this bounds how stale a newly registered vessel can be.
    */
-  FISHFACTS_SERVICE_TOKEN: z.string().min(1).optional(),
-  FISHFACTS_VESSEL_CACHE_TTL_MS: z.coerce
+  VESSEL_DIRECTORY_CACHE_TTL_MS: z.coerce
     .number()
     .int()
     .positive()

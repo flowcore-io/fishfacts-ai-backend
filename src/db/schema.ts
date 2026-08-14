@@ -341,10 +341,10 @@ export const sildelagetCatchAisAnchors = pgTable(
       .defaultNow()
       .notNull(),
   },
+  // No index on `status`: the candidate query's retry clause ORs across both
+  // sides of a LEFT JOIN, so one cannot be used (EXPLAIN: Seq Scan, 66 ms at
+  // 20k × 20k, hourly). An index nothing plans for is a claim, not a speedup.
   (table) => ({
-    statusIdx: index("sildelaget_catch_ais_anchors_status_idx").on(
-      table.status,
-    ),
     computedAtIdx: index("sildelaget_catch_ais_anchors_computed_at_idx").on(
       table.computedAt,
     ),

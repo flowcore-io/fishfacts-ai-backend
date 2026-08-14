@@ -17,7 +17,7 @@ import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
 import { FinancialsRepository } from "./financials/repository";
 import { FishfactsApiClient } from "./fishfacts/client";
-import { FishfactsVesselDirectory } from "./fishfacts/vessel-directory";
+import { ReplicaVesselDirectory } from "./fishfacts/vessel-directory";
 import { GebcoProjector } from "./gebco/projector";
 import { GebcoRepository } from "./gebco/repository";
 import { GillnetProjector } from "./gillnet/projector";
@@ -67,10 +67,11 @@ const sildelagetCatchRepository = new SildelagetCatchRepository(
   db,
   sildelagetAisAnchorRepository,
 );
-// Vessel name / registration mark → FishFacts vessel id, for the derived
-// catch positions. Without FISHFACTS_SERVICE_TOKEN it resolves nothing and the
-// job records status "no-vessel" rather than guessing.
-const vesselDirectory = new FishfactsVesselDirectory(env);
+// Vessel name / registration mark → FishFacts vessel id, for the derived catch
+// positions. Reads the `vessel` table off the AIS replica pool, the same way
+// financials reads `annual_report` — no extra credential, and vessel.id is the
+// keyspace the AIS fixes are already keyed by.
+const vesselDirectory = new ReplicaVesselDirectory(env);
 const financialsRepository = new FinancialsRepository(env, db);
 const sildelagetCatchProjector = new SildelagetCatchProjector(
   sildelagetCatchRepository,

@@ -64,6 +64,10 @@ export class SildelagetAisAnchorRepository {
    * (AIS ingest had not caught up with the window yet) would otherwise be
    * final the moment it was written, because nothing else in this predicate
    * ever looks at it again.
+   *
+   * Planned as a Seq Scan, and left that way on purpose: the OR-chain spans
+   * both sides of the LEFT JOIN, so no index on `status` is sargable here.
+   * Measured at 66 ms over 20k entries × 20k anchors, once an hour.
    */
   async listCandidates(options: {
     from: string;
@@ -73,7 +77,11 @@ export class SildelagetAisAnchorRepository {
     limit: number;
     /** Non-ok statuses to re-derive. Empty ⇒ no status-based retry. */
     retryStatuses: string[];
-    /** Leave a stored answer alone for this long before asking again. */
+    /**
+     * Leave a stored answer alone for this long before asking again.
+     * Converted to whole minutes for MAKE_INTERVAL, whose parameters are
+     * integers — `hours => 0.5` is not a slow query, it is a failed run.
+     */
     retryAfterHours: number;
     /** Only retry reports dated on or after this (journal-local) date. */
     retryReportedFrom: string;
@@ -86,7 +94,9 @@ export class SildelagetAisAnchorRepository {
               options.retryStatuses.map((status) => sql`${status}`),
               sql`, `,
             )})
-            AND a.computed_at < NOW() - MAKE_INTERVAL(hours => ${options.retryAfterHours})
+            AND a.computed_at < NOW() - MAKE_INTERVAL(mins => ${Math.round(
+              options.retryAfterHours * 60,
+            )})
             AND e.reported_date >= ${options.retryReportedFrom}
           )`;
     const staleness = options.recompute

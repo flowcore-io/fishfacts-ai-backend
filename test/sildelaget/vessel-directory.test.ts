@@ -1,245 +1,190 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { FishfactsVesselDirectory } from "../../src/fishfacts/vessel-directory";
+import { describe, expect, test } from "bun:test";
+import {
+  ReplicaVesselDirectory,
+  type VesselRow,
+  compactMark,
+  indexVessels,
+  normalizeVesselText,
+  resolveFromIndex,
+} from "../../src/fishfacts/vessel-directory";
 
 /**
- * Records shaped like the live registry: `GET /api/v3/vessels` answers
- * `{ code, errors, message, data: VesselResponse[] }`, and a record carries
- * `id`, `flag`, `name`, `vesselType` and `registrationNumber` — the last of
- * which is NULLABLE on real data.
+ * Rows shaped like the live replica's `vessel` table. Registration numbers are
+ * mostly NULL there (10 182 of 12 167 active rows), call signs never are, and
+ * marks are punctuated differently from the journal's: the registry stores
+ * `VL0024AV` / `F 0032BD`, the report writes `VL-0024-AV` / `F -0032-BD`.
  */
-const VESSELS = [
+const ROWS: VesselRow[] = [
   {
     id: 932,
-    flag: "NO",
     name: "Brattskjær",
-    registrationNumber: "TR-0346-ND",
-    vesselType: { id: 1, supportedApps: ["FISHFACTS"] },
+    registrationNumber: "T 0346ND",
+    callSign: "LKQR",
+    mmsi: "257123000",
   },
+  // Two active vessels of one name — 197 of 11 942 names look like this.
   {
     id: 77,
-    flag: "FO",
     name: "Fiskebas",
-    registrationNumber: "FO-123",
-    vesselType: { id: 1, supportedApps: ["FISHFACTS"] },
+    registrationNumber: null,
+    callSign: "LMAB",
+    mmsi: "257000111",
   },
-  // Same NAME, different id — ~1.2% of registry names are like this.
   {
     id: 78,
-    flag: "FO",
     name: "Fiskebas",
-    registrationNumber: "FO-999",
-    vesselType: { id: 1, supportedApps: ["FISHFACTS"] },
+    registrationNumber: "VL0097B",
+    callSign: "LMCD",
+    mmsi: "257000222",
   },
-  // Live sample record: a registry entry with NO registration number.
   {
     id: 7,
-    flag: "GL",
-    name: "Tasiilaq",
+    name: "Havbris",
     registrationNumber: null,
-    vesselType: { id: 2, supportedApps: ["AQUAFACTS"] },
+    callSign: "OZAA",
+    mmsi: null,
   },
 ];
 
-let server: ReturnType<typeof Bun.serve> | null = null;
-let requests: Array<{
-  path: string;
-  token: string | null;
-  app: string | null;
-}> = [];
+const INDEX = indexVessels(ROWS);
 
-function serveRegistry(
-  handler: (request: Request) => Response | Promise<Response>,
-) {
-  requests = [];
-  server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch: (request) => {
-      requests.push({
-        path: new URL(request.url).pathname,
-        token: request.headers.get("x-auth-token"),
-        app: request.headers.get("x-application"),
-      });
-      return handler(request);
-    },
-  });
-  return `http://127.0.0.1:${server.port}`;
+function lookup(name: string | null, mark: string | null) {
+  return resolveFromIndex(INDEX, normalizeVesselText(name), compactMark(mark));
 }
 
-function makeEnv(baseUrl: string, token?: string) {
-  return {
-    FISHFACTS_API_BASE_URL: baseUrl,
-    FISHFACTS_APPLICATION: "FISHFACTS",
-    FISHFACTS_SERVICE_TOKEN: token,
-    FISHFACTS_VESSEL_CACHE_TTL_MS: 3_600_000,
-    // biome-ignore lint/suspicious/noExplicitAny: env stub for the directory.
-  } as any;
+function makeEnv(ttlMs = 3_600_000) {
+  // biome-ignore lint/suspicious/noExplicitAny: env stub for the directory.
+  return { VESSEL_DIRECTORY_CACHE_TTL_MS: ttlMs } as any;
 }
 
-afterEach(() => {
-  server?.stop(true);
-  server = null;
-});
-
-describe("FishfactsVesselDirectory — the endpoint", () => {
-  test("reads the PLURAL registry path, with the token and X-Application", async () => {
-    // The singular /api/v3/vessel is not the registry: FishFacts' OpenAPI
-    // declares no GET on it, and calling it with a valid session answers 500.
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ data: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
-
-    await directory.resolve("Brattskjær", null);
-
-    expect(requests[0]?.path).toBe("/api/v3/vessels");
-    expect(requests[0]?.token).toBe("tok");
-    expect(requests[0]?.app).toBe("FISHFACTS");
-  });
-
-  test("reads the wrapped payload FishFacts actually returns", async () => {
-    const baseUrl = serveRegistry(
-      () =>
-        new Response(
-          JSON.stringify({ code: 0, errors: [], message: "", data: VESSELS }),
-        ),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
-
-    expect(await directory.resolve("Brattskjær", null)).toEqual({
+describe("matching", () => {
+  test("a unique name resolves", () => {
+    expect(lookup("Brattskjær", null)).toEqual({
       outcome: "resolved",
       vesselId: 932,
     });
-  });
-});
-
-describe("FishfactsVesselDirectory — matching", () => {
-  test("resolves by name, then by the report's registration mark", async () => {
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ data: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
-
-    expect(await directory.resolve("Brattskjær", null)).toEqual({
-      outcome: "resolved",
-      vesselId: 932,
-    });
-    // The report's `registrationMark` matches the registry's
-    // `registrationNumber` — reading `registrationMark` off a registry record
-    // would miss every time.
-    expect(await directory.resolve("Ukjent", "TR-0346-ND")).toEqual({
-      outcome: "resolved",
-      vesselId: 932,
-    });
-    expect(await directory.resolve("  brattskjær ", null)).toEqual({
+    // Trim + lower-case, exactly as fishfacts-fe normalises before comparing.
+    expect(lookup("  brattskjær ", null)).toEqual({
       outcome: "resolved",
       vesselId: 932,
     });
   });
 
-  test("a registry entry with no registration never matches a report with none", async () => {
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ data: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
-
-    // Tasiilaq's registrationNumber is null. An empty mark on the report must
-    // not collide with it — null does not equal null here.
-    expect(await directory.resolve("Ukjent skip", "")).toEqual({
-      outcome: "not-found",
-    });
-    expect(await directory.resolve("Ukjent skip", "   ")).toEqual({
-      outcome: "not-found",
-    });
-    // The vessel is still resolvable by name.
-    expect(await directory.resolve("Tasiilaq", null)).toEqual({
-      outcome: "resolved",
-      vesselId: 7,
-    });
-  });
-
-  test("an ambiguous name is not-found, never an arbitrary pick", async () => {
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ data: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
-
-    expect(await directory.resolve("Fiskebas", null)).toEqual({
-      outcome: "not-found",
-    });
-    // The registration mark disambiguates it.
-    expect(await directory.resolve("Fiskebas", "FO-999")).toEqual({
+  test("a duplicated name is broken by the report's mark", () => {
+    // Name alone cannot decide between vessel 77 and 78.
+    expect(lookup("Fiskebas", null)).toEqual({ outcome: "not-found" });
+    // The journal's punctuation differs from the registry's; comparing the
+    // marks verbatim resolves nothing at all on real data.
+    expect(lookup("Fiskebas", "VL-0097-B")).toEqual({
       outcome: "resolved",
       vesselId: 78,
     });
+    // A call sign separates the row whose registration number is null — which
+    // is most of them.
+    expect(lookup("Fiskebas", "LMAB")).toEqual({
+      outcome: "resolved",
+      vesselId: 77,
+    });
   });
 
-  test("a report with neither name nor mark is not-found, and asks nobody", async () => {
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ data: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
+  test("a mark that matches neither candidate leaves the name ambiguous", () => {
+    expect(lookup("Fiskebas", "XX-9999-Z")).toEqual({ outcome: "not-found" });
+  });
 
-    expect(await directory.resolve(null, "   ")).toEqual({
+  test("an unknown name still resolves on a unique mark", () => {
+    expect(lookup("Feilstavet Navn", "T-0346-ND")).toEqual({
+      outcome: "resolved",
+      vesselId: 932,
+    });
+    expect(lookup("Feilstavet Navn", "257123000")).toEqual({
+      outcome: "resolved",
+      vesselId: 932,
+    });
+  });
+
+  test("a vessel absent from the registry is not-found, not a guess", () => {
+    expect(lookup("Ukjent Skip", "ZZ-0001-Z")).toEqual({
       outcome: "not-found",
     });
-    expect(requests).toHaveLength(0);
+  });
+
+  test("a report with neither name nor mark is not-found", () => {
+    expect(lookup(null, "   ")).toEqual({ outcome: "not-found" });
+  });
+
+  test("null registry marks never match a report that carries none", () => {
+    // Havbris and Fiskebas(77) both have a null registrationNumber, and
+    // Havbris has a null mmsi: an empty mark must not collide with them.
+    expect(lookup("Havbris", "")).toEqual({ outcome: "resolved", vesselId: 7 });
+    expect(lookup(null, "")).toEqual({ outcome: "not-found" });
+    expect(INDEX.byMark.has("")).toBe(false);
   });
 });
 
-describe("FishfactsVesselDirectory — availability is not an answer", () => {
-  test("no service token ⇒ unavailable, NOT not-found", async () => {
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ data: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl));
+describe("the registry read", () => {
+  test("is done once per TTL and shared by concurrent callers", async () => {
+    let reads = 0;
+    const directory = new ReplicaVesselDirectory(makeEnv(), async () => {
+      reads += 1;
+      return ROWS;
+    });
 
-    const lookup = await directory.resolve("Brattskjær", "TR-0346-ND");
-    // Reported as not-found, this would be stored as a terminal "no-vessel"
-    // for every report in the window on the service's first run.
-    expect(lookup.outcome).toBe("unavailable");
-    expect(requests).toHaveLength(0);
+    // The job resolves a whole batch at once; these must share one read, not
+    // race into four queries against a production replica.
+    await Promise.all([
+      directory.resolve("Brattskjær", null),
+      directory.resolve("Fiskebas", "VL-0097-B"),
+      directory.resolve("Havbris", null),
+    ]);
+    await directory.resolve("Brattskjær", null);
+
+    expect(reads).toBe(1);
   });
 
-  test("an HTTP failure is unavailable", async () => {
-    const baseUrl = serveRegistry(() => new Response("nope", { status: 500 }));
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
+  test("re-reads once the TTL has passed", async () => {
+    let reads = 0;
+    const directory = new ReplicaVesselDirectory(makeEnv(1), async () => {
+      reads += 1;
+      return ROWS;
+    });
+
+    await directory.resolve("Brattskjær", null);
+    await Bun.sleep(5);
+    await directory.resolve("Brattskjær", null);
+
+    expect(reads).toBe(2);
+  });
+});
+
+describe("availability is not an answer", () => {
+  test("a database error is unavailable, NOT not-found", async () => {
+    const directory = new ReplicaVesselDirectory(makeEnv(), async () => {
+      throw new Error("ECONNREFUSED");
+    });
+
+    const lookupResult = await directory.resolve("Brattskjær", "T-0346-ND");
+    // As not-found this would be stored as a terminal "no-vessel" for every
+    // report in the window the first time the replica hiccups.
+    expect(lookupResult.outcome).toBe("unavailable");
+    if (lookupResult.outcome === "unavailable") {
+      expect(lookupResult.reason).toContain("ECONNREFUSED");
+    }
+  });
+
+  test("an empty read is unavailable, not a fleet of none", async () => {
+    const directory = new ReplicaVesselDirectory(makeEnv(), async () => []);
 
     expect((await directory.resolve("Brattskjær", null)).outcome).toBe(
       "unavailable",
     );
   });
 
-  test("a 401 is unavailable — a bad token says nothing about a vessel", async () => {
-    const baseUrl = serveRegistry(() => new Response("", { status: 401 }));
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "stale"));
-
-    expect((await directory.resolve("Brattskjær", null)).outcome).toBe(
-      "unavailable",
-    );
-  });
-
-  test("an unexpected payload shape is unavailable, not an empty fleet", async () => {
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ vessels: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
-
-    expect((await directory.resolve("Brattskjær", null)).outcome).toBe(
-      "unavailable",
-    );
-  });
-
-  test("a later outage keeps serving the registry already read", async () => {
+  test("a later outage keeps serving the rows already read", async () => {
     let healthy = true;
-    const baseUrl = serveRegistry(() =>
-      healthy
-        ? new Response(JSON.stringify({ data: VESSELS }))
-        : new Response("", { status: 503 }),
-    );
-    const env = makeEnv(baseUrl, "tok");
-    env.FISHFACTS_VESSEL_CACHE_TTL_MS = 1;
-    const directory = new FishfactsVesselDirectory(env);
+    const directory = new ReplicaVesselDirectory(makeEnv(1), async () => {
+      if (!healthy) throw new Error("replica down");
+      return ROWS;
+    });
 
     expect((await directory.resolve("Brattskjær", null)).outcome).toBe(
       "resolved",
@@ -251,25 +196,5 @@ describe("FishfactsVesselDirectory — availability is not an answer", () => {
       outcome: "resolved",
       vesselId: 932,
     });
-  });
-});
-
-describe("FishfactsVesselDirectory — cost", () => {
-  test("the 11k-record registry is fetched once, not once per report", async () => {
-    const baseUrl = serveRegistry(
-      () => new Response(JSON.stringify({ data: VESSELS })),
-    );
-    const directory = new FishfactsVesselDirectory(makeEnv(baseUrl, "tok"));
-
-    // Concurrent first calls must share one in-flight fetch, not race into
-    // several: the job resolves a whole batch of reports at once.
-    await Promise.all([
-      directory.resolve("Brattskjær", null),
-      directory.resolve("Fiskebas", "FO-123"),
-      directory.resolve("Tasiilaq", null),
-    ]);
-    await directory.resolve("Brattskjær", null);
-
-    expect(requests).toHaveLength(1);
   });
 });
