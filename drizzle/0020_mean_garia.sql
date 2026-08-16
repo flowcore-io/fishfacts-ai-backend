@@ -17,5 +17,4 @@ CREATE TABLE IF NOT EXISTS "sildelaget_catch_ais_anchors" (
 	"computed_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "sildelaget_catch_ais_anchors_status_idx" ON "sildelaget_catch_ais_anchors" USING btree ("status");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "sildelaget_catch_ais_anchors_computed_at_idx" ON "sildelaget_catch_ais_anchors" USING btree ("computed_at");

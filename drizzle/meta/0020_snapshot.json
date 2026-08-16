@@ -1,5 +1,5 @@
 {
-  "id": "d30657f0-c5f4-4f36-85fb-170899539e95",
+  "id": "f25ad527-9e97-4c21-98fe-c2339ae896da",
   "prevId": "6a7dc512-4816-4729-9de8-189a575320e2",
   "version": "7",
   "dialect": "postgresql",
@@ -1273,21 +1273,6 @@
         }
       },
       "indexes": {
-        "sildelaget_catch_ais_anchors_status_idx": {
-          "name": "sildelaget_catch_ais_anchors_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "sildelaget_catch_ais_anchors_computed_at_idx": {
           "name": "sildelaget_catch_ais_anchors_computed_at_idx",
           "columns": [
