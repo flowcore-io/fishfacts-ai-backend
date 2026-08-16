@@ -72,8 +72,9 @@ OpenAPI for the FishFacts login: <https://api-test.fishfacts.fo/v3/api-docs/api-
 ## Derived catch positions (`sildelaget-ais-anchors`)
 
 Runs at `20 * * * *` and fills `sildelaget_catch_ais_anchors` — per innmelding,
-every AIS fishing run in the 48 h before the report (band 0.3–5.5 kn, 30-minute
-gap split, ≥3 fixes and ≥15 minutes). `/api/catch` serves them as
+every AIS fishing run in the 48 h before the report (band 0.3–5.5 kn, split by a
+30-minute coverage gap — speed is the whole rule, see below). `/api/catch`
+serves them as
 `data.aisPositions` and `/api/catch/full` as `row.aisPosition`, so the map
 places bubbles where the vessel actually worked instead of at the reported
 route-area centre.
@@ -122,8 +123,11 @@ curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
   put to him, and are gone. The gap rule is not a qualification rule and stays:
   a centroid computed across an AIS blackout claims a position nothing was
   observed at, which is why the FE fades a track leg over a hole too.
-- `SILDELAGET_AIS_ANCHOR_*` and the retry knobs remain env/args — those are
-  operational (how far back, how far is too far, how much per run).
+- `SILDELAGET_AIS_ANCHOR_*` stays env, and the retry knobs
+  (`AIS_ANCHOR_RETRY_AFTER_HOURS` / `AIS_ANCHOR_RETRY_WITHIN_DAYS`, in
+  `sildelaget/ais-anchor.ts`) are constants a single run can override through
+  its job args. Those are operational — how far back, how far is too far, how
+  much per run — not part of what counts as fishing.
 
 ## Drizzle (`drizzle.config.ts`)
 
