@@ -109,11 +109,49 @@ const envSchema = z.object({
     .string()
     .url()
     .default("https://api.sildelaget.no/catchmap/MapService.svc/CatchAreas"),
+
+  // Derived catch positions (sildelaget/ais-anchor.ts). What counts as
+  // "fishing" — the speed band and the coverage-gap rule — is NOT here: those
+  // are constants in ais/fishing-runs.ts, read by both this derivation and
+  // /api/ais/effort, so the two cannot be configured into disagreeing. The
+  // knobs below are operational: how far back to look, how far is too far, and
+  // how much to chew per run.
+  SILDELAGET_AIS_ANCHOR_LOOKBACK_HOURS: z.coerce
+    .number()
+    .positive()
+    .default(48),
+  /** A derived position further than this from the report is flagged. */
+  SILDELAGET_AIS_ANCHOR_SANITY_KM: z.coerce.number().positive().default(150),
+  /** IANA zone the innmeldingsjournal's dates and times are written in. */
+  SILDELAGET_JOURNAL_TIME_ZONE: z.string().min(1).default("Europe/Oslo"),
+  /** Backfill window for the anchor job — the bubble map shows 50 days. */
+  SILDELAGET_AIS_ANCHOR_WINDOW_DAYS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(50),
+  /** Reports per ClickHouse fix query. Bounds the OR-chain in one statement. */
+  SILDELAGET_AIS_ANCHOR_BATCH_REPORTS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(25),
+
   FISHFACTS_API_BASE_URL: z
     .string()
     .url()
     .default("https://api-test.fishfacts.fo"),
   FISHFACTS_APPLICATION: z.string().min(1).default("FISHFACTS"),
+  /**
+   * How long the vessel registry index (name / registration mark → vessel id)
+   * is held in memory. It is read from the FishFacts MySQL replica through the
+   * AIS pool, so this bounds how stale a newly registered vessel can be.
+   */
+  VESSEL_DIRECTORY_CACHE_TTL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3_600_000),
   AUTH_CACHE_TTL_MS: z.coerce.number().int().nonnegative().default(60000),
   DISABLE_EVENT_STREAMING: z
     .enum(["true", "false"])

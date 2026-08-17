@@ -6,8 +6,10 @@ import { createAisChRefillJob } from "@/ais/job-ch-refill";
 import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
 import type { Env } from "@/env";
+import type { VesselDirectory } from "@/fishfacts/vessel-directory";
 import { createOpenRouterReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
+import type { SildelagetAisAnchorRepository } from "@/sildelaget/ais-anchor-repository";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
 import { z } from "zod";
@@ -17,6 +19,7 @@ import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
 import { createLogasavnClosuresJob } from "./logasavn-closures";
 import { createLogasavnSweepJob } from "./logasavn-sweep";
+import { createSildelagetAisAnchorsJob } from "./sildelaget-ais-anchors";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
 import { createVornVeidibannJob } from "./vorn-veidibann";
@@ -31,6 +34,8 @@ export function createJobDefinitions(
   aisIngestState: AisIngestStateRepository,
   aisChRepo: AisClickhouseRepository,
   aisBucketReader: FlowcoreBucketReader,
+  sildelagetAisAnchorRepository: SildelagetAisAnchorRepository,
+  vesselDirectory: VesselDirectory,
 ): JobDefinition[] {
   return [
     {
@@ -162,6 +167,31 @@ export function createJobDefinitions(
         writer,
         sildelagetCatchRepository,
       ),
+    },
+    {
+      id: "sildelaget-ais-anchors",
+      name: "Sildelaget derived catch positions",
+      // 20 past the hour: the catch-journal collector runs on the hour, so a
+      // report is normally derived within the same hour it lands.
+      schedule: "20 * * * *",
+      inputSchema: z.object({
+        // 0 = use env default (SILDELAGET_AIS_ANCHOR_WINDOW_DAYS).
+        windowDays: z.coerce.number().int().min(0).default(0),
+        // Re-derive rows that are already current — needed after a threshold
+        // change lands outside the params hash, and for one-off backfills.
+        recompute: z.coerce.boolean().default(false),
+        limit: z.coerce.number().int().min(1).default(5000),
+        // Both 0 = use the AIS_ANCHOR_RETRY_* defaults. A report stored with a
+        // non-ok status is re-derived at most once per retryAfterHours, and
+        // only while it is younger than retryWithinDays.
+        retryAfterHours: z.coerce.number().min(0).default(0),
+        retryWithinDays: z.coerce.number().int().min(0).default(0),
+      }),
+      execute: createSildelagetAisAnchorsJob(env, {
+        anchors: sildelagetAisAnchorRepository,
+        vessels: vesselDirectory,
+        fixes: aisChRepo,
+      }),
     },
     {
       id: "ais-position-tail",

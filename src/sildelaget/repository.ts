@@ -3,6 +3,10 @@ import type { Database } from "@/db/client";
 import { sildelagetCatchEntries, sildelagetCatchLines } from "@/db/schema";
 import type { SildelagetCatchEntryObserved } from "@/events/contracts";
 import { type SQL, eq, sql } from "drizzle-orm";
+import {
+  type SildelagetAisAnchorRecord,
+  SildelagetAisAnchorRepository,
+} from "./ais-anchor-repository";
 
 export type CatchFilters = {
   from: string;
@@ -26,6 +30,16 @@ export type FishfactsCatchResponse = {
   data: {
     catches: DayCatchResponse[];
     locations: VesselLocationResponse[];
+    /**
+     * Where the AIS track says the fishing actually happened, per innmelding —
+     * see sildelaget/ais-anchor.ts. Additive to the FishFacts-shaped payload:
+     * `locations` still carries the reported route-area centres, and a client
+     * that ignores this key behaves exactly as before. Reports the derivation
+     * job has not reached yet are absent; reports it could not derive are
+     * present with a status, so "no bubble moved" and "we do not know" are
+     * distinguishable.
+     */
+    aisPositions: SildelagetAisAnchorRecord[];
   };
 };
 
@@ -69,6 +83,8 @@ export type SildelagetCatchEntryRecord = Omit<
   createdAt: string;
   updatedAt: string;
   lines: SildelagetCatchLineRecord[];
+  /** Derived AIS fishing positions; null when never computed for this report. */
+  aisPosition: SildelagetAisAnchorRecord | null;
 };
 
 export type CatchFullPage = {
@@ -221,7 +237,12 @@ const LINE_COLUMNS = sql`
 `;
 
 export class SildelagetCatchRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly anchors: SildelagetAisAnchorRepository = new SildelagetAisAnchorRepository(
+      db,
+    ),
+  ) {}
 
   async getEntryHashes(): Promise<Map<string, string>> {
     const rows = await this.db
@@ -420,6 +441,14 @@ export class SildelagetCatchRepository {
       `,
     );
 
+    const aisPositions = await this.anchors.loadForDateRange({
+      from: filters.from,
+      to: filters.to,
+      // Same species/vessel narrowing as the catches above, so the derived
+      // positions describe the same set of reports the caller asked for.
+      conditions: sharedFilterConditions(filters),
+    });
+
     return {
       code: 0,
       errors: [],
@@ -427,6 +456,7 @@ export class SildelagetCatchRepository {
       data: {
         catches: Array.from(days.values()),
         locations: locationRows.map(toVesselLocation).filter(isDefined),
+        aisPositions,
       },
     };
   }
@@ -448,12 +478,15 @@ export class SildelagetCatchRepository {
     );
     const pageRows = entryRows.slice(0, limit);
     const nextRow = entryRows.length > limit ? pageRows.at(-1) : undefined;
-    const linesByEntry = await this.loadLines(
-      pageRows.map((row) => row.innmelding_id),
-      filters.species,
-    );
+    const innmeldingIds = pageRows.map((row) => row.innmelding_id);
+    const [linesByEntry, anchorsByEntry] = await Promise.all([
+      this.loadLines(innmeldingIds, filters.species),
+      this.anchors.loadByInnmeldingIds(innmeldingIds),
+    ]);
     return {
-      rows: pageRows.map((row) => toEntryRecord(row, linesByEntry)),
+      rows: pageRows.map((row) =>
+        toEntryRecord(row, linesByEntry, anchorsByEntry),
+      ),
       nextCursor: nextRow
         ? encodeCursor(nextRow.reported_date, nextRow.innmelding_id)
         : null,
@@ -576,6 +609,7 @@ async function execRows<T extends Record<string, unknown>>(
 function toEntryRecord(
   row: EntryDbRow,
   linesByEntry: Map<string, SildelagetCatchLineRecord[]>,
+  anchorsByEntry: Map<string, SildelagetAisAnchorRecord>,
 ): SildelagetCatchEntryRecord {
   return {
     innmeldingId: row.innmelding_id,
@@ -591,6 +625,7 @@ function toEntryRecord(
     createdAt: dateToIso(row.created_at),
     updatedAt: dateToIso(row.updated_at),
     lines: linesByEntry.get(row.innmelding_id) ?? [],
+    aisPosition: anchorsByEntry.get(row.innmelding_id) ?? null,
   };
 }
 

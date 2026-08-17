@@ -492,6 +492,32 @@ export const openApiDocument = {
                             lastUpdate: "2026-05-28T10:30:00.000Z",
                           },
                         ],
+                        aisPositions: [
+                          {
+                            innmeldingId: "123456",
+                            status: "ok",
+                            vesselId: 932,
+                            reportedAt: "2026-05-28T08:30:00.000Z",
+                            reportedLatitude: 60.7476,
+                            reportedLongitude: 2.5143,
+                            windowFrom: "2026-05-26T08:30:00.000Z",
+                            windowTo: "2026-05-28T08:30:00.000Z",
+                            fixCount: 1842,
+                            runs: [
+                              {
+                                latitude: 61.0123,
+                                longitude: 2.1187,
+                                fixCount: 26,
+                                runStart: "2026-05-27T22:05:00.000Z",
+                                runEnd: "2026-05-27T23:10:00.000Z",
+                                avgKnots: 2.4,
+                                distanceFromReportedKm: 39.4,
+                                beyondSanityLimit: false,
+                              },
+                            ],
+                            computedAt: "2026-05-28T11:20:00.000Z",
+                          },
+                        ],
                       },
                     },
                   },
@@ -1698,7 +1724,7 @@ export const openApiDocument = {
           message: { type: "string", enum: [""] },
           data: {
             type: "object",
-            required: ["catches", "locations"],
+            required: ["catches", "locations", "aisPositions"],
             properties: {
               catches: {
                 type: "array",
@@ -1708,6 +1734,14 @@ export const openApiDocument = {
                 type: "array",
                 items: {
                   $ref: "#/components/schemas/VesselLocationResponse",
+                },
+              },
+              aisPositions: {
+                type: "array",
+                description:
+                  "Where each report's AIS track says the fishing happened. Reports the derivation has not run for are absent; reports it could not derive carry a status.",
+                items: {
+                  $ref: "#/components/schemas/SildelagetAisPosition",
                 },
               },
             },
@@ -1779,8 +1813,15 @@ export const openApiDocument = {
           "createdAt",
           "updatedAt",
           "lines",
+          "aisPosition",
         ],
         properties: {
+          aisPosition: {
+            allOf: [{ $ref: "#/components/schemas/SildelagetAisPosition" }],
+            nullable: true,
+            description:
+              "Derived AIS fishing positions for this report; null when the derivation has never run for it.",
+          },
           innmeldingId: { type: "string" },
           reportedDate: { type: "string", format: "date", nullable: true },
           reportedTime: { type: "string", nullable: true },
@@ -1897,6 +1938,90 @@ export const openApiDocument = {
           sourceEventId: { type: "string" },
           createdAt: { type: "string", format: "date-time" },
           updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      SildelagetAisPosition: {
+        type: "object",
+        description:
+          "AIS-derived fishing positions for one innmelding: every contiguous stretch of track inside the fishing-speed band (0.3–5.5 kn, both ends inclusive) in the 48 h before the report, each anchored at its centroid. A stretch ends at an out-of-band fix, at a fix with no speed, or at a coverage gap over 30 minutes — never bridged across one, since a centroid spanning a gap would claim a position nothing was observed at. There is no minimum length: a run may rest on a single fix, and `fixCount` is the field to weigh one by.",
+        required: [
+          "innmeldingId",
+          "status",
+          "vesselId",
+          "reportedAt",
+          "reportedLatitude",
+          "reportedLongitude",
+          "windowFrom",
+          "windowTo",
+          "fixCount",
+          "runs",
+          "computedAt",
+        ],
+        properties: {
+          innmeldingId: { type: "string" },
+          status: {
+            type: "string",
+            enum: ["ok", "no-vessel", "no-track", "no-run"],
+            description:
+              "no-vessel: the report's vessel could not be resolved. no-track: no AIS fixes in the window. no-run: fixes, but none form a qualifying fishing run. Anything but ok means runs is empty and the client should say so rather than fall back silently.",
+          },
+          vesselId: { type: "integer", nullable: true },
+          reportedAt: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+            description:
+              "Report timestamp in UTC, resolved from the journal's own timezone.",
+          },
+          reportedLatitude: { type: "number", nullable: true },
+          reportedLongitude: { type: "number", nullable: true },
+          windowFrom: { type: "string", format: "date-time" },
+          windowTo: { type: "string", format: "date-time" },
+          fixCount: {
+            type: "integer",
+            description: "AIS fixes examined in the window.",
+          },
+          runs: {
+            type: "array",
+            items: { $ref: "#/components/schemas/SildelagetAisRun" },
+          },
+          computedAt: { type: "string", format: "date-time" },
+        },
+      },
+      SildelagetAisRun: {
+        type: "object",
+        required: [
+          "latitude",
+          "longitude",
+          "fixCount",
+          "runStart",
+          "runEnd",
+          "avgKnots",
+          "distanceFromReportedKm",
+          "beyondSanityLimit",
+        ],
+        properties: {
+          latitude: { type: "number", description: "Centroid of the run." },
+          longitude: { type: "number" },
+          fixCount: {
+            type: "integer",
+            description:
+              "Fixes in the run — its weight. Every one carries a speed, so avgKnots is the mean over exactly these fixes. A run may have just one: the derivation reports what it observed and leaves the judgement to the client.",
+          },
+          runStart: { type: "string", format: "date-time" },
+          runEnd: { type: "string", format: "date-time" },
+          avgKnots: { type: "number" },
+          distanceFromReportedKm: {
+            type: "number",
+            nullable: true,
+            description:
+              "Great-circle km from the reported coordinate; null when the report carries none.",
+          },
+          beyondSanityLimit: {
+            type: "boolean",
+            description:
+              "Further from the reported coordinate than the 150 km sanity limit — flagged, never dropped.",
+          },
         },
       },
       CatchFullPage: {

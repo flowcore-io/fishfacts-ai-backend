@@ -141,6 +141,13 @@
       "when": 1785890303909,
       "tag": "0019_plain_language_summary",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786923337942,
+      "tag": "0020_mean_garia",
+      "breakpoints": true
     }
   ]
 }

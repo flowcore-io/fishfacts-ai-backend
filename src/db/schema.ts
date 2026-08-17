@@ -312,6 +312,45 @@ export const sildelagetCatchLines = pgTable(
   }),
 );
 
+// Derived catch positions: one row per innmelding, holding every AIS fishing
+// run the report's track yields (sildelaget/ais-anchor.ts). Computed once by
+// the sildelaget-ais-anchors job and read straight off /api/catch, so no user
+// session ever pays for the derivation.
+//
+// `runs` is jsonb rather than a child table: it is written and read whole, is
+// never queried into, and sits next to route_coordinates on the catch lines,
+// which is stored the same way. `params` is the threshold set the row was
+// derived under — when the band moves (PRD OQ9), rows derived under the old
+// numbers are recomputed rather than silently mixed with the new ones.
+export const sildelagetCatchAisAnchors = pgTable(
+  "sildelaget_catch_ais_anchors",
+  {
+    innmeldingId: text("innmelding_id").primaryKey(),
+    status: text("status").notNull(), // ok | no-vessel | no-track | no-run
+    vesselId: integer("vessel_id"),
+    reportedAt: timestamp("reported_at", { withTimezone: true }),
+    reportedLatitude: doublePrecision("reported_latitude"),
+    reportedLongitude: doublePrecision("reported_longitude"),
+    windowFrom: timestamp("window_from", { withTimezone: true }).notNull(),
+    windowTo: timestamp("window_to", { withTimezone: true }).notNull(),
+    fixCount: integer("fix_count").notNull().default(0),
+    runs: jsonb("runs").notNull().default([]),
+    params: jsonb("params").notNull().default({}),
+    paramsHash: text("params_hash").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  // No index on `status`: the candidate query's retry clause ORs across both
+  // sides of a LEFT JOIN, so one cannot be used (EXPLAIN: Seq Scan, 66 ms at
+  // 20k × 20k, hourly). An index nothing plans for is a claim, not a speedup.
+  (table) => ({
+    computedAtIdx: index("sildelaget_catch_ais_anchors_computed_at_idx").on(
+      table.computedAt,
+    ),
+  }),
+);
+
 // AIS ingestion control + emission progress (authoritative; run telemetry lives
 // in the Usable job-state fragment). Rows: "config" (control) and "tail" (cursor).
 //

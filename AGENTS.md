@@ -82,6 +82,66 @@ curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
 
 Writes still go through Flowcore only; do not add a direct DB fallback.
 
+## Derived catch positions (`sildelaget-ais-anchors`)
+
+Runs at `20 * * * *` and fills `sildelaget_catch_ais_anchors` — per innmelding,
+every AIS fishing run in the 48 h before the report (band 0.3–5.5 kn, split by a
+30-minute coverage gap — speed is the whole rule, see below). `/api/catch`
+serves them as
+`data.aisPositions` and `/api/catch/full` as `row.aisPosition`, so the map
+places bubbles where the vessel actually worked instead of at the reported
+route-area centre.
+
+```sh
+# Re-derive the whole bubble window (e.g. after changing the band)
+curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
+  -H "Content-Type: application/json" -H "x-auth-token: $TOKEN" \
+  -d '{"jobId":"sildelaget-ais-anchors","args":{"windowDays":50,"recompute":true}}'
+```
+
+- **Vessel resolution reads the replica, not the API.** Name / registration
+  mark → vessel id comes from `vessel` on the FishFacts MySQL replica, through
+  the same `getAisPool` that `financials/repository.ts` uses (`backfill` role —
+  never take connections from the live AIS tail). No extra credential, and
+  `vessel.id` is the keyspace AIS fixes are keyed by (500/500 sampled
+  `location.vessel_id` matched). The index is `vessel_status_id = 1` (12 167
+  rows), held for `VESSEL_DIRECTORY_CACHE_TTL_MS` — one read an hour, never a
+  query per report.
+- **Marks are compared with punctuation stripped.** The journal writes
+  `H -0190-S`, the registry stores `F 0032BD` / `VL0024AV`. Same identifier,
+  different spacing — comparing them verbatim resolves none. Names use the
+  FE's normalisation (trim + lower-case) unchanged.
+- **A replica outage is never written down.** An unreadable registry is not
+  evidence that a vessel does not exist: those reports are skipped, not stored
+  as `no-vessel`.
+- **Coverage, measured on the last 50 days of real reports** (150 distinct
+  vessels): 86 resolve by name, 6 by name + mark, 4 by mark alone, 3 stay
+  ambiguous, 51 are absent from the registry entirely.
+- **Non-ok statuses are provisional.** `no-vessel` / `no-track` / `no-run` are
+  re-derived every `AIS_ANCHOR_RETRY_AFTER_HOURS` while the report is younger
+  than `AIS_ANCHOR_RETRY_WITHIN_DAYS`, because the registry gains vessels and
+  AIS ingest lags the catch-journal collector. Only `ok` settles.
+- **What counts as fishing is CODE, not config.** The band (0.3–5.5 kn, both
+  ends inclusive) and the 30-minute gap rule are constants in
+  `src/ais/fishing-runs.ts`, read by this derivation and by `/api/ais/effort`.
+  There is deliberately no env override: the two endpoints cannot be
+  configured into disagreeing, and changing the definition is a one-line edit
+  plus a deploy. Do not restate 0.3 / 5.5 anywhere else — fishfacts-fe mirrors
+  the same predicate and a drift is invisible until bubbles land in the wrong
+  place. Each row stores a fingerprint of the rules it was derived under, so a
+  deploy that moves them re-derives the affected rows by itself.
+- **Speed is the whole qualification.** Any contiguous in-band stretch is a
+  run, however short — Gilli asked for a bubble at every stretch of track at
+  fishing speed. The old `>= 3 fixes` / `>= 15 minutes` rules were ours, never
+  put to him, and are gone. The gap rule is not a qualification rule and stays:
+  a centroid computed across an AIS blackout claims a position nothing was
+  observed at, which is why the FE fades a track leg over a hole too.
+- `SILDELAGET_AIS_ANCHOR_*` stays env, and the retry knobs
+  (`AIS_ANCHOR_RETRY_AFTER_HOURS` / `AIS_ANCHOR_RETRY_WITHIN_DAYS`, in
+  `sildelaget/ais-anchor.ts`) are constants a single run can override through
+  its job args. Those are operational — how far back, how far is too far, how
+  much per run — not part of what counts as fishing.
+
 ## Drizzle (`drizzle.config.ts`)
 
 ```ts

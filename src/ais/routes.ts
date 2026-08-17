@@ -1,5 +1,10 @@
 import { type Context, Hono } from "hono";
 import type { AisClickhouseRepository } from "./clickhouse-repository";
+import {
+  AIS_FISHING_MAX_KNOTS,
+  AIS_FISHING_MIN_KNOTS,
+  AIS_RUN_MAX_GAP_MINUTES,
+} from "./fishing-runs";
 
 export type AisRouterDeps = {
   repository: AisClickhouseRepository;
@@ -14,10 +19,12 @@ const MAX_MAX_POINTS = 50_000;
 const MAX_EFFORT_POLYGONS = 10;
 const MAX_EFFORT_VERTICES = 1000;
 // "Fishing" for effort analytics: trawling/hauling speeds. Wider than the map
-// UI's visual Activity-layer band (1–5.5) by design — client-specified.
-const DEFAULT_EFFORT_MIN_KNOTS = 0.3;
-const DEFAULT_EFFORT_MAX_KNOTS = 5.5;
-const DEFAULT_MAX_GAP_MINUTES = 30;
+// UI's visual Activity-layer band (1–5.5) by design — client-specified. Read
+// from ais/fishing-runs.ts rather than restated here, so effort and the
+// Sildelaget derived catch positions can never answer different questions.
+const DEFAULT_EFFORT_MIN_KNOTS = AIS_FISHING_MIN_KNOTS;
+const DEFAULT_EFFORT_MAX_KNOTS = AIS_FISHING_MAX_KNOTS;
+const DEFAULT_MAX_GAP_MINUTES = AIS_RUN_MAX_GAP_MINUTES;
 const MAX_EFFORT_VESSEL_ROWS = 500;
 
 // Preset windows mirror the map UI (6h … 90d). Value = milliseconds back from now.
