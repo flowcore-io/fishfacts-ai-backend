@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.3.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.2.0...v2.3.0) (2026-08-17)
+
+
+### Features
+
+* **sildelaget:** derive AIS catch positions server-side for /api/catch ([d2dfd6e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d2dfd6e1f36ea229e9d81fd66f5197559f658ae7))
+* **sildelaget:** derive catch positions from AIS server-side ([4b3f2c8](https://github.com/flowcore-io/fishfacts-ai-backend/commit/4b3f2c8a348a5e47fab44333f9301e46e64efb3b))
+* **sildelaget:** resolve vessels from the AIS replica instead of the FishFacts API ([bdc8ff8](https://github.com/flowcore-io/fishfacts-ai-backend/commit/bdc8ff81bebb6f5b8a057cc96c018d5c583fb259))
+* **sildelaget:** speed is the whole rule, and the band is code not config ([5ad61c0](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5ad61c01c669aa0849bea8e82c4a5850f0710870))
+
+
+### Bug Fixes
+
+* **sildelaget:** read the real vessel registry, and stop persisting outages as answers ([7cd6c12](https://github.com/flowcore-io/fishfacts-ai-backend/commit/7cd6c12ddbb43a56a112deeccac46f24d8a26932))
+
 ## [2.2.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.1.0...v2.2.0) (2026-08-05)
 
 
