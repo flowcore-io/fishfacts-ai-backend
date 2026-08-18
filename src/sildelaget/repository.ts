@@ -16,6 +16,21 @@ export type CatchFilters = {
   registrationMark?: string;
 };
 
+/**
+ * `/api/catch/full` page size: what an unasked-for page holds, and the most
+ * one page may hold.
+ *
+ * The maximum is a payload guard, not a statement about what a client needs.
+ * It was 200, which is under what 50 days of catches comes to — the FishFacts
+ * map asks for a 50-day window of catch bubbles and got 33 days of it, with
+ * the rest silently absent (Gilli N. Lorenzen, 2026-08-18). The busiest 50
+ * days on record (Aug–Sep 2025) hold 1,287 reports, so a window still takes
+ * more than one page; clients page. This only makes it three requests rather
+ * than seven.
+ */
+export const CATCH_PAGE_LIMIT_DEFAULT = 50;
+export const CATCH_PAGE_LIMIT_MAX = 500;
+
 export type FullCatchFilters = CatchFilters & {
   innmeldingId?: string;
   q?: string;
@@ -780,8 +795,8 @@ function nullableNumberFromDb(value: number | string | null): number | null {
 }
 
 function clampLimit(limit: number): number {
-  if (!Number.isFinite(limit)) return 50;
-  return Math.min(Math.max(Math.floor(limit), 1), 200);
+  if (!Number.isFinite(limit)) return CATCH_PAGE_LIMIT_DEFAULT;
+  return Math.min(Math.max(Math.floor(limit), 1), CATCH_PAGE_LIMIT_MAX);
 }
 
 type DecodedCursor = {
