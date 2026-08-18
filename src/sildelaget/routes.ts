@@ -1,8 +1,10 @@
 import { Hono } from "hono";
-import type {
-  CatchFilters,
-  FullCatchFilters,
-  SildelagetCatchRepository,
+import {
+  CATCH_PAGE_LIMIT_DEFAULT,
+  CATCH_PAGE_LIMIT_MAX,
+  type CatchFilters,
+  type FullCatchFilters,
+  type SildelagetCatchRepository,
 } from "./repository";
 
 export type SildelagetCatchRouterDeps = {
@@ -65,10 +67,10 @@ function parseFullFilters(
 }
 
 function parseLimit(raw: string | null): number {
-  if (!raw) return 50;
+  if (!raw) return CATCH_PAGE_LIMIT_DEFAULT;
   const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return 50;
-  return Math.min(Math.max(parsed, 1), 200);
+  if (!Number.isFinite(parsed)) return CATCH_PAGE_LIMIT_DEFAULT;
+  return Math.min(Math.max(parsed, 1), CATCH_PAGE_LIMIT_MAX);
 }
 
 function clean(value: string | null): string | undefined {
