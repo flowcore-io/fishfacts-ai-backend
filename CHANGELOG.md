@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.0...v2.3.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **sildelaget:** serve a 500-row page of /api/catch/full ([4aa151f](https://github.com/flowcore-io/fishfacts-ai-backend/commit/4aa151fac597d0893f1cd775aeb62aa883683115))
+* **sildelaget:** serve a 500-row page of /api/catch/full ([5a8d083](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5a8d083d6615f18acdbd6a507115d0c1675caa7a))
+
 ## [2.3.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.2.0...v2.3.0) (2026-08-17)
 
 
