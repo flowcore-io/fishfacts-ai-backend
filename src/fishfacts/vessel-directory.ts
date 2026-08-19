@@ -41,8 +41,9 @@ export type VesselLookup =
  *
  * 2 — harbour numbers read, registry names folded, marks unpadded (2026-08-19).
  * 3 — the non-active fleet answered as a second pass (2026-08-19).
+ * 4 — a strong mark decides a name the active fleet cannot (2026-08-19).
  */
-export const VESSEL_MATCH_RULES_VERSION = 3;
+export const VESSEL_MATCH_RULES_VERSION = 4;
 
 export type VesselDirectory = {
   resolve(
@@ -89,18 +90,22 @@ type FleetIndex = {
   /** Folded name → rows, consulted only when `byName` has no answer. */
   byFoldedName: Map<string, VesselRow[]>;
   /**
-   * Compacted STRONG mark → id, or null where the mark is not unique. Only
-   * marks that may resolve a vessel on their own are indexed here — see
-   * `strongMarksOf`.
+   * Compacted STRONG mark → the row, or null where the mark is not unique.
+   * Only marks that may resolve a vessel on their own are indexed here — see
+   * `strongMarksOf`. The row rather than the id, because a hull found by its
+   * mark then has to be asked about its name.
    */
-  byMark: Map<string, number | null>;
+  byMark: Map<string, VesselRow | null>;
 };
 
 type VesselIndex = {
   active: FleetIndex;
   /**
-   * Everything else in the registry. Asked only after the active fleet has
-   * been asked and had no candidate at all — see `resolveFromIndex`.
+   * Everything else in the registry. Asked in full only after the active
+   * fleet had no candidate at all; where the active fleet was ambiguous by
+   * NAME, only this fleet's strong-mark index is consulted, and only to
+   * confirm a hull that also answers to the report's name — see
+   * `resolveFromIndex`.
    */
   inactive: FleetIndex;
   loadedAt: number;
@@ -264,7 +269,7 @@ export function indexVessels(rows: VesselRow[]): VesselIndex {
 function indexFleet(rows: VesselRow[]): FleetIndex {
   const byName = new Map<string, VesselRow[]>();
   const byFoldedName = new Map<string, VesselRow[]>();
-  const byMark = new Map<string, number | null>();
+  const byMark = new Map<string, VesselRow | null>();
   for (const row of rows) {
     addName(byName, normalizeVesselText(row.name), row);
     addName(byFoldedName, foldVesselName(row.name), row);
@@ -272,8 +277,8 @@ function indexFleet(rows: VesselRow[]): FleetIndex {
     // a vessel, and this index is exactly the path that would let it.
     for (const mark of strongMarksOf(row)) {
       const existing = byMark.get(mark);
-      if (existing === undefined) byMark.set(mark, row.id);
-      else if (existing !== row.id) byMark.set(mark, null);
+      if (existing === undefined) byMark.set(mark, row);
+      else if (existing?.id !== row.id) byMark.set(mark, null);
     }
   }
   return { byName, byFoldedName, byMark };
@@ -299,6 +304,7 @@ function addName(
  *
  *   v1 -> v2  (marks, folded names)   resolved 106 -> 110   lost 0   changed 0
  *   v2 -> v3  (the retired fleet)     resolved 110 -> 126   lost 0   changed 0
+ *   v3 -> v4  (strong-mark tiebreak)  resolved 126 -> 127   lost 0   changed 0
  *
  * v2's four are `Voyager (N -0905)`, `Astrid (S -0264)`, `Quantus (PD-0379)` —
  * registry names carrying their own mark — and `Astrid-Marie (GG-0064)`, which
@@ -309,7 +315,13 @@ function addName(
  * buys is 16 reports that stop being told their vessel is absent from a
  * registry it is sitting in, and get `no-track` instead — the true answer.
  *
- * The 35 that remain carry a Norwegian county fiskerimerke and were searched
+ * v4's one is `Harengus (H -0130-B)`, 2 reports: two active `Harengus` neither
+ * of which carries the mark, and the Norwegian one retired at status 3 holding
+ * it as `registration_number`. The same replay confirms `Måsen (R -0007-TV)`
+ * still does NOT resolve — its only claim on vessel 11240 `Anna v` is a
+ * harbour number, which this rule cannot read.
+ *
+ * The 34 that remain carry a Norwegian county fiskerimerke and were searched
  * five ways across every status: they are genuinely absent from FishFacts'
  * registry, which is a product conversation rather than a matching one
  * (`183e880c` in Usable).
@@ -323,12 +335,32 @@ export function resolveFromIndex(
   if (active.kind === "resolved") {
     return { outcome: "resolved", vesselId: active.id };
   }
-  // The active fleet held hulls this report might be about and could not
-  // choose between them. Reaching past them into the retired fleet would
-  // answer a question we have just said we cannot answer — and a retired hull
-  // can still carry AIS fixes inside the window, so the wrong one would draw
-  // a real track. Stop here, exactly as v2 did.
-  if (active.kind === "ambiguous") return { outcome: "not-found" };
+  // The report's mark names several active hulls, so it is not an identifier
+  // in this registry at all. Nothing may be answered on it.
+  if (active.kind === "ambiguous-mark") return { outcome: "not-found" };
+
+  // Several active hulls of this name. A retired NAMESAKE cannot settle that
+  // — reaching past live hulls into a retired one would answer a question we
+  // have just said we cannot answer, and a hull retired mid-window still
+  // carries fixes inside the lookback. But the report's own mark can settle
+  // it, if it is a strong one naming exactly one retired hull.
+  //
+  // `Harengus (H -0130-B)` is the case: two active `Harengus`, one Panamanian
+  // and one Latvian, neither carrying the mark, while `Harengus H-130-B` sits
+  // at status 3 with `registration_number H0130B`. Only the strong-mark index
+  // is consulted, never the names, and that is what keeps `Måsen (R -0007-TV)`
+  // out — vessel 11240 `Anna v` carries that mark in `harbour_number` alone,
+  // and harbour numbers are not in this index.
+  if (active.kind === "ambiguous-name") {
+    const hull = mark ? index.inactive.byMark.get(mark) : null;
+    // BOTH agreements are required. The mark alone would resolve a report
+    // named `Fiskebas` to a retired hull called something else entirely,
+    // which is the same over-reach one fleet over.
+    if (hull && answersToName(hull, name)) {
+      return { outcome: "resolved", vesselId: hull.id };
+    }
+    return { outcome: "not-found" };
+  }
 
   // The active fleet has no candidate at all. `Joton` is here: status 4, no
   // AIS since ever, and in the registry under its exact name and its exact
@@ -343,25 +375,34 @@ export function resolveFromIndex(
 }
 
 /**
- * Why one fleet answered as it did. `ambiguous` and `none` are both "no id",
- * and the difference is the whole point: `none` may be asked of the next
- * fleet, `ambiguous` may not.
+ * Why one fleet answered as it did. Three ways of saying "no id", and the
+ * differences decide what another fleet is allowed to answer.
  *
- * `ambiguous` means this fleet held MORE THAN ONE hull the evidence pointed
- * at and nothing separated them — by name, by folded name, or by a mark that
- * names several hulls. It never means a single candidate merely disagreed:
- * that one is evidence AGAINST this fleet, and the next may be asked.
+ * `none` — nothing here pointed at anything. Ask the next fleet anything.
+ *
+ * `ambiguous-name` — several hulls of this name, and nothing separated them.
+ * The next fleet may not answer by NAME, because a namesake cannot settle a
+ * doubt about namesakes — but a strong mark still can, since a registration
+ * number, call sign or MMSI belongs to one hull where a name belongs to many.
+ *
+ * `ambiguous-mark` — the report's mark names several hulls here, so the mark
+ * is not an identifier in this registry. Nothing may be answered on it.
+ *
+ * A single candidate that merely DISAGREES is none of these: that is evidence
+ * against this fleet, and the next may be asked freely.
  */
 type FleetMatch =
   | { kind: "resolved"; id: number }
-  | { kind: "ambiguous" }
+  | { kind: "ambiguous-name" }
+  | { kind: "ambiguous-mark" }
   | { kind: "none" };
 
 /**
- * The chain, run against one fleet. Resolution is unchanged in behaviour
- * since v2; what is new is that every way of failing reports WHICH kind of
- * failure it was, because that is what decides whether the next fleet is
- * allowed to answer.
+ * The chain, run against one fleet. Resolution WITHIN a fleet is unchanged in
+ * behaviour since v2 — every rule fires exactly where it did, and no rule can
+ * reach a hull it could not reach before. What v3 and v4 added is that each
+ * way of failing says WHICH failure it was, because that is what decides how
+ * far the next fleet may be trusted.
  */
 function matchWithin(
   fleet: FleetIndex,
@@ -374,10 +415,13 @@ function matchWithin(
     if (named.length === 1 && only) return { kind: "resolved", id: only.id };
     const agreed = markAgreement(named, mark);
     if (agreed) return { kind: "resolved", id: agreed.id };
-    // Several vessels of this name and nothing to separate them. An arbitrary
-    // pick here attaches a stranger's track to the report — the failure the
-    // 150 km sanity flag exists to catch. Say we do not know.
-    return { kind: "ambiguous" };
+    // Several vessels of this name and nothing to separate them. This stops
+    // HERE, without consulting this fleet's mark index: a mark that names
+    // some third hull of another name entirely is not what this report is
+    // about, and resolving to it would draw a stranger's track. What the
+    // caller may still do with this answer is narrower — see
+    // `resolveFromIndex`.
+    return { kind: "ambiguous-name" };
   }
 
   // The name as the REGISTRY might have written it instead. This match is
@@ -398,13 +442,37 @@ function matchWithin(
   // Name unknown (or absent): a STRONG mark unique across this fleet still
   // identifies the vessel.
   if (mark) {
-    const byMark = fleet.byMark.get(mark);
-    if (typeof byMark === "number") return { kind: "resolved", id: byMark };
+    const hull = fleet.byMark.get(mark);
+    if (hull) return { kind: "resolved", id: hull.id };
     // Indexed as null: this mark names more than one hull in this fleet. Same
-    // doubt, and a retired namesake is no way to settle it.
-    if (byMark === null) return { kind: "ambiguous" };
+    // doubt, and no other fleet is any way to settle it.
+    if (hull === null) return { kind: "ambiguous-mark" };
   }
-  return undecided ? { kind: "ambiguous" } : { kind: "none" };
+  return undecided ? { kind: "ambiguous-name" } : { kind: "none" };
+}
+
+/**
+ * Does this registry row answer to the report's name? Equal once folded — or
+ * the report's name followed by THIS HULL'S OWN MARK, which is the registry's
+ * habit of writing the mark into the name (`Harengus H-130-B`). The fold
+ * strips such a mark only when it ends in digits, so `Voyager N905` never
+ * reaches here and `Harengus H-130-B` needs to.
+ *
+ * The tail has to be the mark and not merely a further word. Without that,
+ * `Nordkapp` answers to `Nordkapp Junior` and the name agreement is spurious
+ * — leaving the resolution resting on the mark alone, which is precisely the
+ * over-reach this function exists to prevent. `X` / `X Junior` / `X II` pairs
+ * are ordinary, and this registry holds `Astrid` and `Astrid Marie` as two
+ * separate hulls.
+ */
+function answersToName(row: VesselRow, name: string): boolean {
+  const wanted = foldVesselName(name);
+  const found = foldVesselName(row.name);
+  if (!wanted || !found) return false;
+  if (found === wanted) return true;
+  if (!found.startsWith(`${wanted} `)) return false;
+  const tail = found.slice(wanted.length + 1);
+  return marksOf(row).includes(compactMark(tail));
 }
 
 /**
