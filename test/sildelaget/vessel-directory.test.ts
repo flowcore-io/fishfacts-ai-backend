@@ -187,6 +187,26 @@ const ROWS: VesselRow[] = [
     mmsi: "275312000",
     status: ACTIVE,
   },
+  // Two ACTIVE `Nordkapp`, so the name cannot decide — with a retired
+  // `Nordkapp Junior`, which is a DIFFERENT vessel, not a mark-suffixed one.
+  {
+    id: 7001,
+    name: "Nordkapp",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "AAA1",
+    mmsi: "257010001",
+    status: ACTIVE,
+  },
+  {
+    id: 7002,
+    name: "Nordkapp",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "AAA2",
+    mmsi: "257010002",
+    status: ACTIVE,
+  },
   // Retired rows. `Joton` is the live case: in the registry under its exact
   // name AND its exact mark, status 4, no AIS fixes ever — while landing 8 t
   // of mackerel on 2026-08-19.
@@ -229,6 +249,15 @@ const ROWS: VesselRow[] = [
     harbourNumber: "H-130-B",
     callSign: "LM8834",
     mmsi: "257102940",
+    status: 3,
+  },
+  {
+    id: 7003,
+    name: "Nordkapp Junior",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "ZZZ9",
+    mmsi: "257010003",
     status: 3,
   },
   // A retired hull carrying the call sign two ACTIVE hulls share.
@@ -458,6 +487,20 @@ describe("the retired fleet is asked second, and only second", () => {
     expect(lookup("Harengus", null)).toEqual({ outcome: "not-found" });
   });
 
+  test("a name whose tail is a WORD, not this hull's mark, answers to nothing", () => {
+    // Two active `Nordkapp` and a retired `Nordkapp Junior` — a different
+    // vessel, the way `Astrid` and `Astrid Marie` are different vessels in
+    // the live registry. A bare prefix test would accept it, and the whole
+    // resolution would then rest on the mark alone.
+    expect(lookup("Nordkapp", "ZZZ9")).toEqual({ outcome: "not-found" });
+    // The tail that IS the hull's own mark still answers, which is the only
+    // thing the prefix arm is for.
+    expect(lookup("Harengus", "H -0130-B")).toEqual({
+      outcome: "resolved",
+      vesselId: 10748,
+    });
+  });
+
   test("a WEAK mark settles nothing, however ambiguous the name", () => {
     // The same shape as above, but the retired hull carries the mark only in
     // `harbour_number` — the `Måsen (R -0007-TV)` -> `Anna v` trap. Harbour
@@ -496,6 +539,14 @@ describe("the retired fleet is asked second, and only second", () => {
     expect(lookup("Astrid", "S -0264")).toEqual({
       outcome: "resolved",
       vesselId: 3820,
+    });
+    // ...and so does a mark that singles out the RETIRED one: a call sign
+    // names one hull where the fold names two. This is the OTHER producer of
+    // `ambiguous-name` — the folded branch rather than the exact-name one —
+    // and it was `not-found` before v4.
+    expect(lookup("Astrid", "OZXX")).toEqual({
+      outcome: "resolved",
+      vesselId: 9004,
     });
   });
 

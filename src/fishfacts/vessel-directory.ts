@@ -90,13 +90,12 @@ type FleetIndex = {
   /** Folded name → rows, consulted only when `byName` has no answer. */
   byFoldedName: Map<string, VesselRow[]>;
   /**
-   * Compacted STRONG mark → id, or null where the mark is not unique. Only
-   * marks that may resolve a vessel on their own are indexed here — see
-   * `strongMarksOf`.
+   * Compacted STRONG mark → the row, or null where the mark is not unique.
+   * Only marks that may resolve a vessel on their own are indexed here — see
+   * `strongMarksOf`. The row rather than the id, because a hull found by its
+   * mark then has to be asked about its name.
    */
-  byMark: Map<string, number | null>;
-  /** So a hull found by mark can be asked about its name. */
-  byId: Map<number, VesselRow>;
+  byMark: Map<string, VesselRow | null>;
 };
 
 type VesselIndex = {
@@ -267,21 +266,19 @@ export function indexVessels(rows: VesselRow[]): VesselIndex {
 function indexFleet(rows: VesselRow[]): FleetIndex {
   const byName = new Map<string, VesselRow[]>();
   const byFoldedName = new Map<string, VesselRow[]>();
-  const byMark = new Map<string, number | null>();
-  const byId = new Map<number, VesselRow>();
+  const byMark = new Map<string, VesselRow | null>();
   for (const row of rows) {
-    byId.set(row.id, row);
     addName(byName, normalizeVesselText(row.name), row);
     addName(byFoldedName, foldVesselName(row.name), row);
     // Only strong marks: a bare `harbour_number` must never be enough to name
     // a vessel, and this index is exactly the path that would let it.
     for (const mark of strongMarksOf(row)) {
       const existing = byMark.get(mark);
-      if (existing === undefined) byMark.set(mark, row.id);
-      else if (existing !== row.id) byMark.set(mark, null);
+      if (existing === undefined) byMark.set(mark, row);
+      else if (existing?.id !== row.id) byMark.set(mark, null);
     }
   }
-  return { byName, byFoldedName, byMark, byId };
+  return { byName, byFoldedName, byMark };
 }
 
 function addName(
@@ -352,11 +349,7 @@ export function resolveFromIndex(
   // out — vessel 11240 `Anna v` carries that mark in `harbour_number` alone,
   // and harbour numbers are not in this index.
   if (active.kind === "ambiguous-name") {
-    const decisive = mark ? index.inactive.byMark.get(mark) : undefined;
-    const hull =
-      typeof decisive === "number"
-        ? index.inactive.byId.get(decisive)
-        : undefined;
+    const hull = mark ? index.inactive.byMark.get(mark) : null;
     // BOTH agreements are required. The mark alone would resolve a report
     // named `Fiskebas` to a retired hull called something else entirely,
     // which is the same over-reach one fleet over.
@@ -446,30 +439,37 @@ function matchWithin(
   // Name unknown (or absent): a STRONG mark unique across this fleet still
   // identifies the vessel.
   if (mark) {
-    const byMark = fleet.byMark.get(mark);
-    if (typeof byMark === "number") return { kind: "resolved", id: byMark };
+    const hull = fleet.byMark.get(mark);
+    if (hull) return { kind: "resolved", id: hull.id };
     // Indexed as null: this mark names more than one hull in this fleet. Same
     // doubt, and no other fleet is any way to settle it.
-    if (byMark === null) return { kind: "ambiguous-mark" };
+    if (hull === null) return { kind: "ambiguous-mark" };
   }
   return undecided ? { kind: "ambiguous-name" } : { kind: "none" };
 }
 
 /**
- * Does this registry row answer to the report's name? Equal once folded, or
- * the registry's name begins with the report's — the registry's habit of
- * writing the mark into the name, which `foldVesselName` strips only when the
- * mark ends in digits. `Harengus H-130-B` ends in a letter, so it survives the
- * fold and needs this; `Voyager N905` does not.
+ * Does this registry row answer to the report's name? Equal once folded — or
+ * the report's name followed by THIS HULL'S OWN MARK, which is the registry's
+ * habit of writing the mark into the name (`Harengus H-130-B`). The fold
+ * strips such a mark only when it ends in digits, so `Voyager N905` never
+ * reaches here and `Harengus H-130-B` needs to.
  *
- * The trailing space is what keeps it a name rather than a prefix: `Astrid`
- * answers to `Astrid S264` and not to `Astridson`.
+ * The tail has to be the mark and not merely a further word. Without that,
+ * `Nordkapp` answers to `Nordkapp Junior` and the name agreement is spurious
+ * — leaving the resolution resting on the mark alone, which is precisely the
+ * over-reach this function exists to prevent. `X` / `X Junior` / `X II` pairs
+ * are ordinary, and this registry holds `Astrid` and `Astrid Marie` as two
+ * separate hulls.
  */
 function answersToName(row: VesselRow, name: string): boolean {
   const wanted = foldVesselName(name);
   const found = foldVesselName(row.name);
   if (!wanted || !found) return false;
-  return found === wanted || found.startsWith(`${wanted} `);
+  if (found === wanted) return true;
+  if (!found.startsWith(`${wanted} `)) return false;
+  const tail = found.slice(wanted.length + 1);
+  return marksOf(row).includes(compactMark(tail));
 }
 
 /**
