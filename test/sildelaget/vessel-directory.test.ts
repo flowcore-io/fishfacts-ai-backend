@@ -17,6 +17,8 @@ import {
  * marks are punctuated differently from the journal's: the registry stores
  * `VL0024AV` / `F 0032BD`, the report writes `VL-0024-AV` / `F -0032-BD`.
  */
+const ACTIVE = ACTIVE_VESSEL_STATUS_ID;
+
 const ROWS: VesselRow[] = [
   {
     id: 932,
@@ -25,6 +27,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: null,
     callSign: "LKQR",
     mmsi: "257123000",
+    status: ACTIVE,
   },
   // Two active vessels of one name — 197 of 11 942 names look like this.
   {
@@ -34,6 +37,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: null,
     callSign: "LMAB",
     mmsi: "257000111",
+    status: ACTIVE,
   },
   {
     id: 78,
@@ -42,6 +46,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: null,
     callSign: "LMCD",
     mmsi: "257000222",
+    status: ACTIVE,
   },
   {
     id: 7,
@@ -50,6 +55,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: null,
     callSign: "OZAA",
     mmsi: null,
+    status: ACTIVE,
   },
   // Vessel 433 as the replica really holds it: the mark is concatenated into
   // the name, `registration_number` is null, and `harbour_number` carries the
@@ -61,6 +67,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: "N905",
     callSign: "MBMB8",
     mmsi: "232009818",
+    status: ACTIVE,
   },
   // A bare name and the same name carrying a mark, both in the registry at
   // once: the name as written must win. (Invented — the live registry holds
@@ -72,6 +79,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: null,
     callSign: "LAAA",
     mmsi: "257000555",
+    status: ACTIVE,
   },
   {
     id: 621,
@@ -80,6 +88,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: "T12",
     callSign: "LEEE",
     mmsi: "257000999",
+    status: ACTIVE,
   },
   {
     id: 3820,
@@ -88,6 +97,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: "S264",
     callSign: "LBBB",
     mmsi: "257000666",
+    status: ACTIVE,
   },
   // The journal writes `Astrid-Marie`, the registry `Astrid Marie`.
   {
@@ -97,6 +107,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: "GG64",
     callSign: "LCCC",
     mmsi: "257000777",
+    status: ACTIVE,
   },
   // Two hulls of one name that only their harbour numbers separate.
   {
@@ -106,6 +117,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: "M 0044 K",
     callSign: "LNAA",
     mmsi: "257000333",
+    status: ACTIVE,
   },
   {
     id: 4102,
@@ -114,6 +126,7 @@ const ROWS: VesselRow[] = [
     harbourNumber: "N 0088 V",
     callSign: "LNBB",
     mmsi: "257000444",
+    status: ACTIVE,
   },
   // The trap: this vessel's harbour number is the mark the report `Måsen
   // (R -0007-TV)` carries, and it is not Måsen.
@@ -124,6 +137,89 @@ const ROWS: VesselRow[] = [
     harbourNumber: "R 0007 TV",
     callSign: "LDDD",
     mmsi: "257000888",
+    status: ACTIVE,
+  },
+  // Two ACTIVE hulls sharing one call sign — so that mark names neither.
+  {
+    id: 8001,
+    name: "Alfa",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "LSAME",
+    mmsi: "257003333",
+    status: ACTIVE,
+  },
+  {
+    id: 8002,
+    name: "Beta",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "LSAME",
+    mmsi: "257004444",
+    status: ACTIVE,
+  },
+  // A second ACTIVE vessel folding to `astrid`, so the fold is undecided.
+  {
+    id: 8003,
+    name: "Astrid B100",
+    registrationNumber: null,
+    harbourNumber: "B100",
+    callSign: "LFFF",
+    mmsi: "257005555",
+    status: ACTIVE,
+  },
+  // Retired rows. `Joton` is the live case: in the registry under its exact
+  // name AND its exact mark, status 4, no AIS fixes ever — while landing 8 t
+  // of mackerel on 2026-08-19.
+  {
+    id: 13615,
+    name: "Joton",
+    registrationNumber: "H0010SO",
+    harbourNumber: "H-10-SO",
+    callSign: "LK2370",
+    mmsi: "000000000",
+    status: 4,
+  },
+  // A retired namesake of an ACTIVE vessel. Must never be reached.
+  {
+    id: 9001,
+    name: "Havbris",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "OZZZ",
+    mmsi: "257001111",
+    status: 3,
+  },
+  // A retired namesake of an AMBIGUOUS active pair. Also must never be
+  // reached — the active fleet has already said it cannot tell.
+  {
+    id: 9002,
+    name: "Fiskebas",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "OZYY",
+    mmsi: "257002222",
+    status: 4,
+  },
+  // A retired hull carrying the call sign two ACTIVE hulls share.
+  {
+    id: 9003,
+    name: "Gamma",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "LSAME",
+    mmsi: "257006666",
+    status: 3,
+  },
+  // A retired vessel named exactly `Astrid`, behind two active folds.
+  {
+    id: 9004,
+    name: "Astrid",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "OZXX",
+    mmsi: "257007777",
+    status: 3,
   },
 ];
 
@@ -198,7 +294,7 @@ describe("matching", () => {
     // Havbris has a null mmsi: an empty mark must not collide with them.
     expect(lookup("Havbris", "")).toEqual({ outcome: "resolved", vesselId: 7 });
     expect(lookup(null, "")).toEqual({ outcome: "not-found" });
-    expect(INDEX.byMark.has("")).toBe(false);
+    expect(INDEX.active.byMark.has("")).toBe(false);
   });
 });
 
@@ -273,7 +369,7 @@ describe("harbour numbers confirm a name, and never resolve one", () => {
     // vessel 11240 `Anna v` — a stranger's track on a customer's catch. The
     // mark index simply does not carry harbour numbers, so it cannot recur.
     expect(lookup("Måsen", "R -0007-TV")).toEqual({ outcome: "not-found" });
-    expect(INDEX.byMark.has(compactMark("R -0007-TV"))).toBe(false);
+    expect(INDEX.active.byMark.has(compactMark("R -0007-TV"))).toBe(false);
     // A call sign, which identifies one hull, still resolves on its own.
     expect(lookup("Feilstavet Navn", "LDDD")).toEqual({
       outcome: "resolved",
@@ -292,15 +388,79 @@ describe("marks the two sides pad differently", () => {
   });
 });
 
+describe("the retired fleet is asked second, and only second", () => {
+  test("a vessel absent from the active fleet resolves against the rest", () => {
+    // Before this, the panel told Joton's skipper his boat was not in
+    // FishFacts' registry. It is, under this exact name and this exact mark.
+    // Resolving it buys a true `no-track` rather than a track — there are no
+    // AIS fixes for this hull at all, and that is the point.
+    expect(lookup("Joton", "H -0010-SO")).toEqual({
+      outcome: "resolved",
+      vesselId: 13615,
+    });
+  });
+
+  test("an active vessel always beats a retired namesake", () => {
+    expect(lookup("Havbris", null)).toEqual({
+      outcome: "resolved",
+      vesselId: 7,
+    });
+  });
+
+  test("an ambiguous active name does not fall through to the retired fleet", () => {
+    // Two active `Fiskebas` and no mark: the active fleet cannot tell which.
+    // Answering with the retired one would answer a question we have just
+    // said we cannot answer.
+    expect(lookup("Fiskebas", null)).toEqual({ outcome: "not-found" });
+    // A mark that separates the active pair still resolves within it.
+    expect(lookup("Fiskebas", "VL-0097-B")).toEqual({
+      outcome: "resolved",
+      vesselId: 78,
+    });
+  });
+
+  test("a mark two active hulls share never reaches the retired fleet", () => {
+    // `LSAME` names neither active hull, and a retired one carries it. Taking
+    // that answer would draw a stranger's track — and a hull retired
+    // mid-window still has fixes inside the lookback.
+    expect(lookup("Ukjent Skip", "LSAME")).toEqual({ outcome: "not-found" });
+    expect(INDEX.active.byMark.get(compactMark("LSAME"))).toBe(null);
+  });
+
+  test("two active folded candidates are not talked over by a retired namesake", () => {
+    // `Astrid S264` and `Astrid B100` are both active and both fold to
+    // `astrid`; a retired vessel is called exactly that. With no mark to
+    // choose between the live pair, the answer is that we cannot tell.
+    expect(lookup("Astrid", null)).toEqual({ outcome: "not-found" });
+    // A mark that singles one of the live pair out still resolves.
+    expect(lookup("Astrid", "S -0264")).toEqual({
+      outcome: "resolved",
+      vesselId: 3820,
+    });
+  });
+
+  test("a retired hull's strong mark is reachable, but only on the second pass", () => {
+    expect(lookup("Feilstavet Navn", "OZZZ")).toEqual({
+      outcome: "resolved",
+      vesselId: 9001,
+    });
+    expect(INDEX.active.byMark.has(compactMark("OZZZ"))).toBe(false);
+  });
+});
+
 describe("the query sent to the production replica", () => {
-  test("reads only active vessels, and only the matching columns", () => {
+  test("reads every vessel, and only the matching columns", () => {
     // This statement never runs in tests (it needs the Cloud SQL pool), so it
     // is asserted directly — the same reason test/ais asserts the ClickHouse
-    // SQL text. The status filter is not cosmetic: every measurement behind
-    // the matching rules was taken over `vessel_status_id = 1`, and all 8 404
-    // AIS-active vessel ids sampled carry it.
+    // SQL text.
+    //
+    // The status predicate was REMOVED deliberately. It was doing two jobs:
+    // naming the fleet a TRACK can be found in (true, and still enforced by
+    // asking that fleet first) and naming the fleet a vessel can be
+    // RECOGNISED in (false — `Joton` is at status 4 and fishing). The status
+    // now comes back as a column and the split happens in `indexVessels`.
     expect(VESSEL_ROWS_QUERY).toContain("FROM vessel");
-    expect(VESSEL_ROWS_QUERY).toContain("WHERE vessel_status_id = ?");
+    expect(VESSEL_ROWS_QUERY).not.toContain("WHERE");
     expect(ACTIVE_VESSEL_STATUS_ID).toBe(1);
     for (const column of [
       "id",
@@ -312,6 +472,8 @@ describe("the query sent to the production replica", () => {
       "harbour_number",
       "call_sign",
       "mmsi",
+      // Ranked on, not filtered by.
+      "vessel_status_id",
     ]) {
       expect(VESSEL_ROWS_QUERY).toContain(column);
     }
