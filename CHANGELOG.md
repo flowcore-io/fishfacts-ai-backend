@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.1...v2.3.2) (2026-08-19)
+
+
+### Bug Fixes
+
+* match Sildelaget vessels the registry names with their own mark ([f1d0f8b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/f1d0f8b53455c6267f8a2418120d3101c2ffec5a))
+* match Sildelaget vessels the registry names with their own mark ([ec21907](https://github.com/flowcore-io/fishfacts-ai-backend/commit/ec21907f59d57d50605a9d32fd817dd11d78a522))
+
 ## [2.3.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.0...v2.3.1) (2026-08-18)
 
 
