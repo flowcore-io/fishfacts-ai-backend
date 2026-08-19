@@ -40,8 +40,9 @@ export type VesselLookup =
  * only reports already off the map are left alone.
  *
  * 2 — harbour numbers read, registry names folded, marks unpadded (2026-08-19).
+ * 3 — the non-active fleet answered as a second pass (2026-08-19).
  */
-export const VESSEL_MATCH_RULES_VERSION = 2;
+export const VESSEL_MATCH_RULES_VERSION = 3;
 
 export type VesselDirectory = {
   resolve(
@@ -71,9 +72,12 @@ export type VesselRow = {
    * Weak on its own, though; see `marksOf`.
    */
   harbourNumber: string | null;
+  /** `vessel_status_id`. See ACTIVE_VESSEL_STATUS_ID. */
+  status: number;
 };
 
-type VesselIndex = {
+/** One fleet's name and mark lookups. Built once per fleet, per registry read. */
+type FleetIndex = {
   /** Normalized name → rows, exactly as the report writes it. */
   byName: Map<string, VesselRow[]>;
   /** Folded name → rows, consulted only when `byName` has no answer. */
@@ -84,26 +88,42 @@ type VesselIndex = {
    * `strongMarksOf`.
    */
   byMark: Map<string, number | null>;
+};
+
+type VesselIndex = {
+  active: FleetIndex;
+  /**
+   * Everything else in the registry. Asked only after the active fleet has
+   * been asked and had no candidate at all — see `resolveFromIndex`.
+   */
+  inactive: FleetIndex;
   loadedAt: number;
 };
 
 /**
- * Only vessels FishFacts still considers active. Measured: every one of the
- * 8 404 distinct `location.vessel_id` values in the most recent 20 000 fixes
- * has `vessel_status_id = 1`, so this excludes nothing a track could be found
- * for — while cutting name ambiguity from 3.21% of names (whole table) to
- * 1.65% (197 of 11 942).
+ * The fleet FishFacts still lists as active, and in practice the fleet it
+ * receives AIS for: every one of the 8 404 distinct `location.vessel_id`
+ * values in the most recent 20 000 fixes has `vessel_status_id = 1`.
+ *
+ * So this is the fleet a TRACK can be found for, and it is asked first. It is
+ * no longer the fleet a vessel can be RECOGNISED in: `Joton` sits at status 4
+ * under its exact name and its exact mark while landing 8 t of mackerel, and
+ * telling its skipper he is absent from FishFacts' registry is simply false.
  */
 export const ACTIVE_VESSEL_STATUS_ID = 1;
 
 /**
  * Exported so a test can assert what this service sends to a PRODUCTION
  * replica, the way test/ais guards the ClickHouse SQL: the columns the
- * matching depends on, and the status filter the ambiguity measurements
- * assume. Neither can be checked from the outside without a live pool.
+ * matching depends on. Cannot be checked from the outside without a live pool.
+ *
+ * Every row, every status — the status is now a column we rank on rather than
+ * a predicate we filter by, so the split happens in `indexVessels` where it
+ * can be reasoned about. Costs 15 343 rows read instead of 12 153, once an
+ * hour.
  */
 export const VESSEL_ROWS_QUERY =
-  "SELECT id, name, registration_number, harbour_number, call_sign, mmsi FROM vessel WHERE vessel_status_id = ?";
+  "SELECT id, name, registration_number, harbour_number, call_sign, mmsi, vessel_status_id FROM vessel";
 
 type VesselDbRow = RowDataPacket & {
   id: number;
@@ -112,6 +132,7 @@ type VesselDbRow = RowDataPacket & {
   harbour_number: string | null;
   call_sign: string | null;
   mmsi: string | null;
+  vessel_status_id: number;
 };
 
 /**
@@ -188,8 +209,10 @@ export class ReplicaVesselDirectory implements VesselDirectory {
       // every ambiguous name is a report that only a mark can resolve.
       console.info("[Vessels] registry loaded", {
         vessels: rows.length,
-        names: index.byName.size,
-        ambiguousNames: countAmbiguousNames(index),
+        names: index.active.byName.size,
+        ambiguousNames: countAmbiguousNames(index.active),
+        retiredNames: index.inactive.byName.size,
+        retiredAmbiguousNames: countAmbiguousNames(index.inactive),
       });
       return index;
     } catch (error) {
@@ -201,19 +224,17 @@ export class ReplicaVesselDirectory implements VesselDirectory {
 }
 
 /**
- * The whole active registry in one statement. Deliberately NOT a query per
- * report: 12 000 rows is a few MB held for an hour, against ~150 distinct
- * vessels named in a 50-day window — the read amortises immediately, and the
- * replica sees one scan an hour instead of thousands of point lookups.
+ * The whole registry in one statement. Deliberately NOT a query per report:
+ * 15 000 rows is a few MB held for an hour, against ~150 distinct vessels
+ * named in a 50-day window — the read amortises immediately, and the replica
+ * sees one scan an hour instead of thousands of point lookups.
  *
  * `backfill` pool role, never `live`: this is a scheduled job and it must not
  * take connections from the AIS tail (see ais/mysql-pool.ts).
  */
 async function readVesselRows(env: Env): Promise<VesselRow[]> {
   const pool = await getAisPool(env, "backfill");
-  const [rows] = await pool.query<VesselDbRow[]>(VESSEL_ROWS_QUERY, [
-    ACTIVE_VESSEL_STATUS_ID,
-  ]);
+  const [rows] = await pool.query<VesselDbRow[]>(VESSEL_ROWS_QUERY);
   return rows.map((row) => ({
     id: Number(row.id),
     name: row.name,
@@ -221,10 +242,20 @@ async function readVesselRows(env: Env): Promise<VesselRow[]> {
     callSign: row.call_sign,
     mmsi: row.mmsi,
     harbourNumber: row.harbour_number,
+    status: Number(row.vessel_status_id),
   }));
 }
 
 export function indexVessels(rows: VesselRow[]): VesselIndex {
+  const isActive = (row: VesselRow) => row.status === ACTIVE_VESSEL_STATUS_ID;
+  return {
+    active: indexFleet(rows.filter(isActive)),
+    inactive: indexFleet(rows.filter((row) => !isActive(row))),
+    loadedAt: Date.now(),
+  };
+}
+
+function indexFleet(rows: VesselRow[]): FleetIndex {
   const byName = new Map<string, VesselRow[]>();
   const byFoldedName = new Map<string, VesselRow[]>();
   const byMark = new Map<string, number | null>();
@@ -239,7 +270,7 @@ export function indexVessels(rows: VesselRow[]): VesselIndex {
       else if (existing !== row.id) byMark.set(mark, null);
     }
   }
-  return { byName, byFoldedName, byMark, loadedAt: Date.now() };
+  return { byName, byFoldedName, byMark };
 }
 
 function addName(
@@ -258,35 +289,89 @@ function addName(
  * the FE has no need for because it never sees two vessels of one name.
  *
  * Replayed 2026-08-19 over the 161 distinct (name, mark) pairs reported since
- * 2026-06-25, against the 12 152 status-1 registry rows, deployed chain
- * against this one:
+ * 2026-06-25, each version against the version deployed before it:
  *
- *   resolved 106 -> 110    lost 0    resolved to a different vessel 0
+ *   v1 -> v2  (marks, folded names)   resolved 106 -> 110   lost 0   changed 0
+ *   v2 -> v3  (the retired fleet)     resolved 110 -> 126   lost 0   changed 0
  *
- * The four are `Voyager (N -0905)`, `Astrid (S -0264)` and `Quantus (PD-0379)`
- * — registry names carrying their own mark — and `Astrid-Marie (GG-0064)`,
- * which is `Astrid Marie` there. The 51 still unresolved all carry a Norwegian
- * county fiskerimerke (H, R, M, SF, TR, VL) and were searched five ways across
- * every status: they are absent from FishFacts' registry, which is a product
- * conversation rather than a matching one (`183e880c` in Usable).
+ * v2's four are `Voyager (N -0905)`, `Astrid (S -0264)`, `Quantus (PD-0379)` —
+ * registry names carrying their own mark — and `Astrid-Marie (GG-0064)`, which
+ * is `Astrid Marie` there.
+ *
+ * v3's sixteen are boats at status 3 or 4, and only ONE of them has an AIS fix
+ * inside the job's 50-day window. So this pass buys almost no tracks: what it
+ * buys is 16 reports that stop being told their vessel is absent from a
+ * registry it is sitting in, and get `no-track` instead — the true answer.
+ *
+ * The 35 that remain carry a Norwegian county fiskerimerke and were searched
+ * five ways across every status: they are genuinely absent from FishFacts'
+ * registry, which is a product conversation rather than a matching one
+ * (`183e880c` in Usable).
  */
 export function resolveFromIndex(
   index: VesselIndex,
   name: string,
   mark: string,
 ): VesselLookup {
-  const named = name ? index.byName.get(name) : undefined;
+  const active = matchWithin(index.active, name, mark);
+  if (active.kind === "resolved") {
+    return { outcome: "resolved", vesselId: active.id };
+  }
+  // The active fleet held hulls this report might be about and could not
+  // choose between them. Reaching past them into the retired fleet would
+  // answer a question we have just said we cannot answer — and a retired hull
+  // can still carry AIS fixes inside the window, so the wrong one would draw
+  // a real track. Stop here, exactly as v2 did.
+  if (active.kind === "ambiguous") return { outcome: "not-found" };
+
+  // The active fleet has no candidate at all. `Joton` is here: status 4, no
+  // AIS since ever, and in the registry under its exact name and its exact
+  // mark while landing 8 t of mackerel. Resolving it does not produce a track
+  // — it produces `no-track`, which is the true answer, in place of a
+  // `no-vessel` that told its skipper he was absent from the registry.
+  const retired = matchWithin(index.inactive, name, mark);
+  if (retired.kind === "resolved") {
+    return { outcome: "resolved", vesselId: retired.id };
+  }
+  return { outcome: "not-found" };
+}
+
+/**
+ * Why one fleet answered as it did. `ambiguous` and `none` are both "no id",
+ * and the difference is the whole point: `none` may be asked of the next
+ * fleet, `ambiguous` may not.
+ *
+ * `ambiguous` means this fleet held MORE THAN ONE hull the evidence pointed
+ * at and nothing separated them — by name, by folded name, or by a mark that
+ * names several hulls. It never means a single candidate merely disagreed:
+ * that one is evidence AGAINST this fleet, and the next may be asked.
+ */
+type FleetMatch =
+  | { kind: "resolved"; id: number }
+  | { kind: "ambiguous" }
+  | { kind: "none" };
+
+/**
+ * The chain, run against one fleet. Resolution is unchanged in behaviour
+ * since v2; what is new is that every way of failing reports WHICH kind of
+ * failure it was, because that is what decides whether the next fleet is
+ * allowed to answer.
+ */
+function matchWithin(
+  fleet: FleetIndex,
+  name: string,
+  mark: string,
+): FleetMatch {
+  const named = name ? fleet.byName.get(name) : undefined;
   if (named) {
     const only = named[0];
-    if (named.length === 1 && only) {
-      return { outcome: "resolved", vesselId: only.id };
-    }
+    if (named.length === 1 && only) return { kind: "resolved", id: only.id };
     const agreed = markAgreement(named, mark);
-    if (agreed) return { outcome: "resolved", vesselId: agreed.id };
+    if (agreed) return { kind: "resolved", id: agreed.id };
     // Several vessels of this name and nothing to separate them. An arbitrary
     // pick here attaches a stranger's track to the report — the failure the
     // 150 km sanity flag exists to catch. Say we do not know.
-    return { outcome: "not-found" };
+    return { kind: "ambiguous" };
   }
 
   // The name as the REGISTRY might have written it instead. This match is
@@ -294,20 +379,26 @@ export function resolveFromIndex(
   // has to be agreed with, and a folded candidate that cannot agree does not
   // consume the report — the mark gets its own turn below, where it used to
   // get it before folding existed.
-  const folded = foldedNameCandidates(index, name);
+  const folded = foldedNameCandidates(fleet, name);
   const onlyFolded = folded.length === 1 ? folded[0] : undefined;
   const agreedFolded = mark ? markAgreement(folded, mark) : onlyFolded;
-  if (agreedFolded) return { outcome: "resolved", vesselId: agreedFolded.id };
+  if (agreedFolded) return { kind: "resolved", id: agreedFolded.id };
+  // Several folded candidates, none of which the mark singles out. The mark
+  // still gets its turn below — but the doubt is remembered, because these
+  // are live hulls this report might be about, and the next fleet must not
+  // be allowed to talk over them.
+  const undecided = folded.length > 1;
 
-  // Name unknown (or absent): a STRONG mark unique across the registry still
-  // identifies the vessel. Ambiguous marks are indexed as null.
+  // Name unknown (or absent): a STRONG mark unique across this fleet still
+  // identifies the vessel.
   if (mark) {
-    const byMark = index.byMark.get(mark);
-    if (typeof byMark === "number") {
-      return { outcome: "resolved", vesselId: byMark };
-    }
+    const byMark = fleet.byMark.get(mark);
+    if (typeof byMark === "number") return { kind: "resolved", id: byMark };
+    // Indexed as null: this mark names more than one hull in this fleet. Same
+    // doubt, and a retired namesake is no way to settle it.
+    if (byMark === null) return { kind: "ambiguous" };
   }
-  return { outcome: "not-found" };
+  return undecided ? { kind: "ambiguous" } : { kind: "none" };
 }
 
 /**
@@ -328,10 +419,10 @@ function markAgreement(
  * away. Only reached when the name as written matched nothing, so a vessel
  * really called `Nordstjerna` is never outvoted by `Nordstjerna T12`.
  */
-function foldedNameCandidates(index: VesselIndex, name: string): VesselRow[] {
+function foldedNameCandidates(fleet: FleetIndex, name: string): VesselRow[] {
   if (!name) return [];
   const folded = foldVesselName(name);
-  return folded ? (index.byFoldedName.get(folded) ?? []) : [];
+  return folded ? (fleet.byFoldedName.get(folded) ?? []) : [];
 }
 
 /**
@@ -422,8 +513,8 @@ export function compactMark(value: string | null | undefined): string {
  */
 const LEADING_ZEROS_AFTER_LETTERS = /(?<=[a-z])0+(?=\d)/g;
 
-function countAmbiguousNames(index: VesselIndex): number {
+function countAmbiguousNames(fleet: FleetIndex): number {
   let count = 0;
-  for (const rows of index.byName.values()) if (rows.length > 1) count += 1;
+  for (const rows of fleet.byName.values()) if (rows.length > 1) count += 1;
   return count;
 }
