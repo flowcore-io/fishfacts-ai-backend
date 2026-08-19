@@ -72,7 +72,13 @@ export type VesselRow = {
    * Weak on its own, though; see `marksOf`.
    */
   harbourNumber: string | null;
-  /** `vessel_status_id`. See ACTIVE_VESSEL_STATUS_ID. */
+  /**
+   * `vessel_status_id`. NOT NULL on the replica — checked, 0 null across all
+   * 15 343 rows — so the `Number()` in `readVesselRows` always has an int to
+   * read. If that ever stopped being true, `Number(null)` is 0 and the row
+   * would land in the retired fleet: silent, but the safe direction, since
+   * nothing there can outrank an active hull. See ACTIVE_VESSEL_STATUS_ID.
+   */
   status: number;
 };
 
