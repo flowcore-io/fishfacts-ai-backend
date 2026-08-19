@@ -3,6 +3,7 @@ import type {
   AisFixWindowRequest,
   AisFixWindowRow,
 } from "../../src/ais/clickhouse-repository";
+import { VESSEL_MATCH_RULES_VERSION } from "../../src/fishfacts/vessel-directory";
 import {
   anchorParamsFromEnv,
   createSildelagetAisAnchorsJob,
@@ -318,5 +319,16 @@ describe("sildelaget-ais-anchors job", () => {
     expect(after).not.toBe(before);
     // ... and is stable for an unchanged parameter set.
     expect(hashAnchorParams(anchorParamsFromEnv(ENV))).toBe(before);
+  });
+
+  test("improving the vessel matching changes the fingerprint too", () => {
+    const params = anchorParamsFromEnv(ENV);
+    // Reports older than AIS_ANCHOR_RETRY_WITHIN_DAYS are re-derived by
+    // nothing but this hash. A matcher that learns to resolve a vessel it
+    // used to miss has to reach the rows that recorded the miss.
+    expect(params.vesselMatchRules).toBe(VESSEL_MATCH_RULES_VERSION);
+    expect(hashAnchorParams({ ...params, vesselMatchRules: 99 })).not.toBe(
+      hashAnchorParams(params),
+    );
   });
 });
