@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.3.4](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.3...v2.3.4) (2026-08-19)
+
+
+### Bug Fixes
+
+* let name and strong mark together settle what neither can alone ([ba13315](https://github.com/flowcore-io/fishfacts-ai-backend/commit/ba133157620093b6c0e802e32b5bcba63852c894))
+* let name and strong mark together settle what neither can alone ([651aada](https://github.com/flowcore-io/fishfacts-ai-backend/commit/651aada0f75bef08f8e24850ee8599f041b70701))
+* the name's tail must be the hull's own mark, not another word ([db4d103](https://github.com/flowcore-io/fishfacts-ai-backend/commit/db4d103cbf501e03516e1d93e2c803a124ea07ae))
+
 ## [2.3.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.2...v2.3.3) (2026-08-19)
 
 
