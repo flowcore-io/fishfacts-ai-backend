@@ -101,8 +101,11 @@ type FleetIndex = {
 type VesselIndex = {
   active: FleetIndex;
   /**
-   * Everything else in the registry. Asked only after the active fleet has
-   * been asked and had no candidate at all — see `resolveFromIndex`.
+   * Everything else in the registry. Asked in full only after the active
+   * fleet had no candidate at all; where the active fleet was ambiguous by
+   * NAME, only this fleet's strong-mark index is consulted, and only to
+   * confirm a hull that also answers to the report's name — see
+   * `resolveFromIndex`.
    */
   inactive: FleetIndex;
   loadedAt: number;

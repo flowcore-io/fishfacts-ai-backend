@@ -207,6 +207,36 @@ const ROWS: VesselRow[] = [
     mmsi: "257010002",
     status: ACTIVE,
   },
+  // A reassigned mark: two active `Sørvik` cannot decide, an ACTIVE hull of
+  // ANOTHER name now carries the call sign, and the retired `Sørvik` still
+  // carries it too. Call signs and MMSIs do get reused between hulls.
+  {
+    id: 7101,
+    name: "Sørvik",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "BBB1",
+    mmsi: "257020001",
+    status: ACTIVE,
+  },
+  {
+    id: 7102,
+    name: "Sørvik",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "BBB2",
+    mmsi: "257020002",
+    status: ACTIVE,
+  },
+  {
+    id: 7104,
+    name: "Fremskritt",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "REUSED",
+    mmsi: "257020004",
+    status: ACTIVE,
+  },
   // Retired rows. `Joton` is the live case: in the registry under its exact
   // name AND its exact mark, status 4, no AIS fixes ever — while landing 8 t
   // of mackerel on 2026-08-19.
@@ -258,6 +288,15 @@ const ROWS: VesselRow[] = [
     harbourNumber: null,
     callSign: "ZZZ9",
     mmsi: "257010003",
+    status: 3,
+  },
+  {
+    id: 7103,
+    name: "Sørvik",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "REUSED",
+    mmsi: "257020003",
     status: 3,
   },
   // A retired hull carrying the call sign two ACTIVE hulls share.
@@ -547,6 +586,28 @@ describe("the retired fleet is asked second, and only second", () => {
     expect(lookup("Astrid", "OZXX")).toEqual({
       outcome: "resolved",
       vesselId: 9004,
+    });
+  });
+
+  test("a mark since reassigned to a live hull of another name", () => {
+    // `REUSED` is carried by the retired `Sørvik` (#7103) AND by the active
+    // `Fremskritt` (#7104) — call signs are reused between hulls over time.
+    // The report says `Sørvik`, and the active `Sørvik` pair cannot decide.
+    //
+    // The retired namesake wins, deliberately: it agrees on BOTH the name and
+    // the mark, where `Fremskritt` agrees on the mark alone and contradicts
+    // the name. Recorded as a decision rather than left to be discovered,
+    // because this is the one path where the two agreements can be satisfied
+    // by a mark that also belongs to somebody live.
+    expect(lookup("Sørvik", "REUSED")).toEqual({
+      outcome: "resolved",
+      vesselId: 7103,
+    });
+    // The live holder of the mark is reachable the ordinary way, by a report
+    // that actually names it.
+    expect(lookup("Fremskritt", "REUSED")).toEqual({
+      outcome: "resolved",
+      vesselId: 7104,
     });
   });
 
