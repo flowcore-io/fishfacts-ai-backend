@@ -168,6 +168,25 @@ const ROWS: VesselRow[] = [
     mmsi: "257005555",
     status: ACTIVE,
   },
+  // Two ACTIVE `Harengus`, both foreign, neither carrying the report's mark.
+  {
+    id: 1770,
+    name: "Harengus",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "3E8484",
+    mmsi: "352005985",
+    status: ACTIVE,
+  },
+  {
+    id: 3975,
+    name: "Harengus",
+    registrationNumber: "LVV1551",
+    harbourNumber: null,
+    callSign: "YLBH",
+    mmsi: "275312000",
+    status: ACTIVE,
+  },
   // Retired rows. `Joton` is the live case: in the registry under its exact
   // name AND its exact mark, status 4, no AIS fixes ever — while landing 8 t
   // of mackerel on 2026-08-19.
@@ -196,10 +215,21 @@ const ROWS: VesselRow[] = [
     id: 9002,
     name: "Fiskebas",
     registrationNumber: null,
-    harbourNumber: null,
+    harbourNumber: "Q-0001-X",
     callSign: "OZYY",
     mmsi: "257002222",
     status: 4,
+  },
+  // ...and the Norwegian `Harengus`, retired, carrying the mark as its
+  // REGISTRATION NUMBER — a strong mark, which is what lets it be reached.
+  {
+    id: 10748,
+    name: "Harengus H-130-B",
+    registrationNumber: "H0130B",
+    harbourNumber: "H-130-B",
+    callSign: "LM8834",
+    mmsi: "257102940",
+    status: 3,
   },
   // A retired hull carrying the call sign two ACTIVE hulls share.
   {
@@ -266,6 +296,14 @@ describe("matching", () => {
 
   test("a mark that matches neither candidate leaves the name ambiguous", () => {
     expect(lookup("Fiskebas", "XX-9999-Z")).toEqual({ outcome: "not-found" });
+    // And a mark that names some OTHER hull entirely resolves to neither. Not
+    // the same assertion: `XX-9999-Z` is carried by nobody, so it would pass
+    // even if an ambiguous name fell through to the mark index. `T-0346-ND`
+    // is Brattskjær's, and this report is not about Brattskjær.
+    expect(lookup("Fiskebas", "T-0346-ND")).toEqual({ outcome: "not-found" });
+    expect(lookup("Fiskebas", "257123000")).toEqual({ outcome: "not-found" });
+    // Including where that hull is retired rather than active.
+    expect(lookup("Fiskebas", "OZZZ")).toEqual({ outcome: "not-found" });
   });
 
   test("an unknown name still resolves on a unique mark", () => {
@@ -407,7 +445,29 @@ describe("the retired fleet is asked second, and only second", () => {
     });
   });
 
-  test("an ambiguous active name does not fall through to the retired fleet", () => {
+  test("a strong mark settles a name the active fleet cannot", () => {
+    // Two active `Harengus`, Panamanian and Latvian, neither carrying the
+    // mark; the Norwegian one is retired and holds it as its registration
+    // number. The name cannot choose, so the mark does — that is the whole
+    // asymmetry: a name belongs to many hulls, a registration number to one.
+    expect(lookup("Harengus", "H -0130-B")).toEqual({
+      outcome: "resolved",
+      vesselId: 10748,
+    });
+    // Without the mark there is nothing to settle it with.
+    expect(lookup("Harengus", null)).toEqual({ outcome: "not-found" });
+  });
+
+  test("a WEAK mark settles nothing, however ambiguous the name", () => {
+    // The same shape as above, but the retired hull carries the mark only in
+    // `harbour_number` — the `Måsen (R -0007-TV)` -> `Anna v` trap. Harbour
+    // numbers are not in the mark index, so this cannot resolve however the
+    // name behaves.
+    expect(lookup("Fiskebas", "Q -0001-X")).toEqual({ outcome: "not-found" });
+    expect(INDEX.inactive.byMark.has(compactMark("Q -0001-X"))).toBe(false);
+  });
+
+  test("an ambiguous active name is not settled by a retired NAMESAKE", () => {
     // Two active `Fiskebas` and no mark: the active fleet cannot tell which.
     // Answering with the retired one would answer a question we have just
     // said we cannot answer.
