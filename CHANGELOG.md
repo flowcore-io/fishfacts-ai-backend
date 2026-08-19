@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.3](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.2...v2.3.3) (2026-08-19)
+
+
+### Bug Fixes
+
+* recognise a vessel FishFacts no longer lists as active ([a5b6899](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a5b68994a82e5e6d24a9186892472d2a4c7efb1b))
+* recognise a vessel FishFacts no longer lists as active ([9702ede](https://github.com/flowcore-io/fishfacts-ai-backend/commit/9702ede0bc30febc6aff412730a31939abcf5d06))
+
 ## [2.3.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.1...v2.3.2) (2026-08-19)
 
 
