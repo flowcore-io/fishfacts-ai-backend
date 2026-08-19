@@ -5,6 +5,7 @@ import {
   VESSEL_ROWS_QUERY,
   type VesselRow,
   compactMark,
+  foldVesselName,
   indexVessels,
   normalizeVesselText,
   resolveFromIndex,
@@ -21,6 +22,7 @@ const ROWS: VesselRow[] = [
     id: 932,
     name: "Brattskjær",
     registrationNumber: "T 0346ND",
+    harbourNumber: null,
     callSign: "LKQR",
     mmsi: "257123000",
   },
@@ -29,6 +31,7 @@ const ROWS: VesselRow[] = [
     id: 77,
     name: "Fiskebas",
     registrationNumber: null,
+    harbourNumber: null,
     callSign: "LMAB",
     mmsi: "257000111",
   },
@@ -36,6 +39,7 @@ const ROWS: VesselRow[] = [
     id: 78,
     name: "Fiskebas",
     registrationNumber: "VL0097B",
+    harbourNumber: null,
     callSign: "LMCD",
     mmsi: "257000222",
   },
@@ -43,8 +47,83 @@ const ROWS: VesselRow[] = [
     id: 7,
     name: "Havbris",
     registrationNumber: null,
+    harbourNumber: null,
     callSign: "OZAA",
     mmsi: null,
+  },
+  // Vessel 433 as the replica really holds it: the mark is concatenated into
+  // the name, `registration_number` is null, and `harbour_number` carries the
+  // only copy of the mark — unpadded, where the journal writes `N -0905`.
+  {
+    id: 433,
+    name: "Voyager N905",
+    registrationNumber: null,
+    harbourNumber: "N905",
+    callSign: "MBMB8",
+    mmsi: "232009818",
+  },
+  // A bare name and the same name carrying a mark, both in the registry at
+  // once: the name as written must win. (Invented — the live registry holds
+  // `Astrid S264` with no bare `Astrid` beside it.)
+  {
+    id: 620,
+    name: "Nordstjerna",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "LAAA",
+    mmsi: "257000555",
+  },
+  {
+    id: 621,
+    name: "Nordstjerna T12",
+    registrationNumber: null,
+    harbourNumber: "T12",
+    callSign: "LEEE",
+    mmsi: "257000999",
+  },
+  {
+    id: 3820,
+    name: "Astrid S264",
+    registrationNumber: null,
+    harbourNumber: "S264",
+    callSign: "LBBB",
+    mmsi: "257000666",
+  },
+  // The journal writes `Astrid-Marie`, the registry `Astrid Marie`.
+  {
+    id: 3826,
+    name: "Astrid Marie",
+    registrationNumber: null,
+    harbourNumber: "GG64",
+    callSign: "LCCC",
+    mmsi: "257000777",
+  },
+  // Two hulls of one name that only their harbour numbers separate.
+  {
+    id: 4101,
+    name: "Nordlys",
+    registrationNumber: null,
+    harbourNumber: "M 0044 K",
+    callSign: "LNAA",
+    mmsi: "257000333",
+  },
+  {
+    id: 4102,
+    name: "Nordlys",
+    registrationNumber: null,
+    harbourNumber: "N 0088 V",
+    callSign: "LNBB",
+    mmsi: "257000444",
+  },
+  // The trap: this vessel's harbour number is the mark the report `Måsen
+  // (R -0007-TV)` carries, and it is not Måsen.
+  {
+    id: 11240,
+    name: "Anna v",
+    registrationNumber: null,
+    harbourNumber: "R 0007 TV",
+    callSign: "LDDD",
+    mmsi: "257000888",
   },
 ];
 
@@ -123,6 +202,96 @@ describe("matching", () => {
   });
 });
 
+describe("names the registry writes differently from the journal", () => {
+  test("a name carrying the registration mark still matches the bare name", () => {
+    // Vessel 433 — the case Gilli sent in: the report says `Voyager`, the
+    // registry says `Voyager N905`, and exact matching bridges neither.
+    expect(lookup("Voyager", "N -0905")).toEqual({
+      outcome: "resolved",
+      vesselId: 433,
+    });
+    // With no mark at all it is still the one row folding to `voyager`.
+    expect(lookup("Voyager", null)).toEqual({
+      outcome: "resolved",
+      vesselId: 433,
+    });
+  });
+
+  test("an exact name is never outvoted by a folded one", () => {
+    // Both `Nordstjerna` and `Nordstjerna T12` are in the registry. The report
+    // that says `Nordstjerna` means the vessel actually called that.
+    expect(lookup("Nordstjerna", null)).toEqual({
+      outcome: "resolved",
+      vesselId: 620,
+    });
+    // And where only the mark-carrying form exists, the fold reaches it.
+    expect(lookup("Astrid", "S -0264")).toEqual({
+      outcome: "resolved",
+      vesselId: 3820,
+    });
+  });
+
+  test("a folded name never outranks the report's own mark", () => {
+    // `LMAB` is vessel 77's call sign, which identifies one hull. A name that
+    // only matches once it is folded is weaker evidence than that, so the
+    // mark still gets its turn rather than being consumed by the fold.
+    expect(lookup("Voyager", "LMAB")).toEqual({
+      outcome: "resolved",
+      vesselId: 77,
+    });
+    // Same for a folded name that reaches a candidate the mark disagrees with:
+    // before folding existed this resolved on the mark, and it still does.
+    expect(lookup("Astrid.", "T-0346-ND")).toEqual({
+      outcome: "resolved",
+      vesselId: 932,
+    });
+  });
+
+  test("punctuation in a name is folded, but only as a fallback", () => {
+    expect(lookup("Astrid-Marie", "GG-0064")).toEqual({
+      outcome: "resolved",
+      vesselId: 3826,
+    });
+    expect(foldVesselName("Astrid-Marie")).toBe("astrid marie");
+    // The fold strips a trailing MARK, not a trailing number: these are names.
+    expect(foldVesselName("Venarøy 2")).toBe("venarøy 2");
+    expect(foldVesselName("Vastfjord II")).toBe("vastfjord ii");
+  });
+});
+
+describe("harbour numbers confirm a name, and never resolve one", () => {
+  test("a harbour number breaks a tie between two hulls of one name", () => {
+    expect(lookup("Nordlys", null)).toEqual({ outcome: "not-found" });
+    expect(lookup("Nordlys", "M -0044-K")).toEqual({
+      outcome: "resolved",
+      vesselId: 4101,
+    });
+  });
+
+  test("a harbour number alone resolves nothing", () => {
+    // Replayed on production this exact pair matched `Måsen (R -0007-TV)` to
+    // vessel 11240 `Anna v` — a stranger's track on a customer's catch. The
+    // mark index simply does not carry harbour numbers, so it cannot recur.
+    expect(lookup("Måsen", "R -0007-TV")).toEqual({ outcome: "not-found" });
+    expect(INDEX.byMark.has(compactMark("R -0007-TV"))).toBe(false);
+    // A call sign, which identifies one hull, still resolves on its own.
+    expect(lookup("Feilstavet Navn", "LDDD")).toEqual({
+      outcome: "resolved",
+      vesselId: 11240,
+    });
+  });
+});
+
+describe("marks the two sides pad differently", () => {
+  test("zero padding is dropped from both sides before comparing", () => {
+    // The journal pads (`N -0905`), the registry does not (`N905`).
+    expect(compactMark("N -0905")).toBe(compactMark("N905"));
+    expect(compactMark("VL-0024-AV")).toBe(compactMark("VL24AV"));
+    // An MMSI is all digits with no letter in front, so it is left alone.
+    expect(compactMark("232009818")).toBe("232009818");
+  });
+});
+
 describe("the query sent to the production replica", () => {
   test("reads only active vessels, and only the matching columns", () => {
     // This statement never runs in tests (it needs the Cloud SQL pool), so it
@@ -137,6 +306,10 @@ describe("the query sent to the production replica", () => {
       "id",
       "name",
       "registration_number",
+      // Added deliberately, and the reason is a customer report: vessel 433
+      // carries its only identifier here (`harbour_number = "N905"`) and a
+      // null registration number, so without this column it is unmatchable.
+      "harbour_number",
       "call_sign",
       "mmsi",
     ]) {

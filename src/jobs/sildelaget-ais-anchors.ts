@@ -5,9 +5,10 @@ import type {
 } from "@/ais/clickhouse-repository";
 import { FISHING_RUN_RULES } from "@/ais/fishing-runs";
 import type { Env } from "@/env";
-import type {
-  VesselDirectory,
-  VesselLookup,
+import {
+  VESSEL_MATCH_RULES_VERSION,
+  type VesselDirectory,
+  type VesselLookup,
 } from "@/fishfacts/vessel-directory";
 import type { JobExecutionResult, JobState } from "@/jobs/types";
 import {
@@ -31,8 +32,13 @@ import type {
  * "fishing" means, and they are shared with /api/ais/effort. Including them
  * here is what makes a row derived under an older definition recompute itself
  * once a new one deploys.
+ *
+ * Which vessel a report resolves to is part of that derivation, so the
+ * matcher's rule version belongs here too — a `no-vessel` written before the
+ * rules improved is exactly the row that has to be asked again.
  */
 export type SildelagetAnchorParams = {
+  vesselMatchRules: number;
   minKnots: number;
   maxKnots: number;
   maxGapMinutes: number;
@@ -44,6 +50,7 @@ export type SildelagetAnchorParams = {
 export function anchorParamsFromEnv(env: Env): SildelagetAnchorParams {
   return {
     ...FISHING_RUN_RULES,
+    vesselMatchRules: VESSEL_MATCH_RULES_VERSION,
     lookbackHours: env.SILDELAGET_AIS_ANCHOR_LOOKBACK_HOURS,
     sanityKm: env.SILDELAGET_AIS_ANCHOR_SANITY_KM,
     timeZone: env.SILDELAGET_JOURNAL_TIME_ZONE,
