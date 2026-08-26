@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.4.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.4...v2.4.0) (2026-08-26)
+
+
+### Features
+
+* **ais:** serve tracks for many independent windows in one query ([02c05fe](https://github.com/flowcore-io/fishfacts-ai-backend/commit/02c05fe3295903d2fbe7c09856cfc72fb71d565d))
+* **ais:** serve tracks for many independent windows in one query ([5c5c209](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5c5c20984cefc291e31da67defdc0e3921a4bf7a))
+
+
+### Bug Fixes
+
+* **ais:** make the per-window downsample's cap actually hold ([f1f6fa5](https://github.com/flowcore-io/fishfacts-ai-backend/commit/f1f6fa578243348ea722d21c92d07f6468c90302))
+
 ## [2.3.4](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.3...v2.3.4) (2026-08-19)
 
 
