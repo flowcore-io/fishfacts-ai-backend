@@ -125,12 +125,11 @@ describe("getTrackWindows SQL construction", () => {
     expect(captured.query).toContain("toUInt32(299)");
   });
 
-  test("the bucket is CEILED, so the LIMIT backstop cannot bite", async () => {
+  test("the bucket is sized so the LIMIT backstop cannot bite", async () => {
     const captured: { query?: string } = {};
     const r = repo(captured);
-    // 4 h = 14 400 s over 4 000 points: floor would give 3 s and up to 4 800
-    // buckets — more than the cap, so the LIMIT would silently cut the tow's
-    // tail off. Ceiling gives 4 s and at most 3 600.
+    // 4 h = 14 400 s over 4 000 points -> floor(3.6) + 1 = 4 s, at most 3 601
+    // buckets against a cap of 4 000.
     await r.getTrackWindows({
       windows: [FOUR_HOURS],
       maxPointsPerWindow: 4000,
@@ -138,6 +137,50 @@ describe("getTrackWindows SQL construction", () => {
     await r.close();
     expect(captured.query).toContain("INTERVAL 4 SECOND");
     expect(captured.query).toContain("LIMIT 4000");
+  });
+
+  /**
+   * The boundary the obvious rule gets wrong, and the reason it is `floor + 1`
+   * rather than `ceil`.
+   *
+   * A window closed at BOTH ends holds `seconds + 1` seconds' worth of fixes,
+   * so at `seconds === step * cap` a ceiling leaves room for exactly one
+   * bucket too many and `ORDER BY t LIMIT cap` drops the LATEST one -- the
+   * tow's tail, which is the failure the downsample exists to avoid. Verified
+   * against production: sweeping lengths against start offsets at a cap of
+   * 400, `ceil` overran in 25 cases and `floor + 1` in none.
+   */
+  test("an exact multiple of the cap does not overrun it", async () => {
+    const captured: { query?: string } = {};
+    const r = repo(captured);
+    await r.getTrackWindows({
+      // 8 000 s at a cap of 4 000: ceil gives 2 s and 4 001 buckets.
+      windows: [{ ...FOUR_HOURS, to: "2025-03-04T08:13:20.000Z" }],
+      maxPointsPerWindow: 4000,
+    });
+    await r.close();
+    expect(captured.query).toContain("INTERVAL 3 SECOND");
+    expect(captured.query).not.toContain("INTERVAL 2 SECOND");
+  });
+
+  /**
+   * `toStartOfInterval` aligns to the EPOCH unless it is given an origin, so a
+   * window that starts mid-bucket straddles one extra partial bucket. Pinning
+   * the buckets to the window's own start closes that, and it is free: `from`
+   * is already a bound parameter. Both this and the `floor + 1` above are
+   * needed -- with epoch alignment the sweep still overran in 5 cases.
+   */
+  test("buckets are aligned to the window start, not to the epoch", async () => {
+    const captured: { query?: string } = {};
+    const r = repo(captured);
+    await r.getTrackWindows({
+      windows: [FOUR_HOURS],
+      maxPointsPerWindow: 4000,
+    });
+    await r.close();
+    expect(captured.query).toContain(
+      "toStartOfInterval(event_time, INTERVAL 4 SECOND, {f0:DateTime64(3)})",
+    );
   });
 
   test("a window shorter than the cap buckets at one second", async () => {

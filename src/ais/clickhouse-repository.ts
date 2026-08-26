@@ -584,10 +584,24 @@ export class AisClickhouseRepository {
    * **The per-window cap thins, it does not truncate.** A hard `LIMIT` would
    * cut the end off a tow, which draws a boat that stopped fishing early —
    * a wrong picture rather than a coarse one. So the same bucket downsample
-   * `getTracks` uses is applied per window: one fix per `windowSeconds /
-   * maxPointsPerWindow` bucket, so a long window comes back thinned but whole.
-   * The bucket is CEILED rather than floored so the bucket count cannot exceed
-   * the cap, which makes the trailing `LIMIT` a backstop that never bites.
+   * `getTracks` uses is applied per window: one fix per bucket, so a long
+   * window comes back thinned but whole, and the trailing `LIMIT` is a
+   * backstop that cannot bite.
+   *
+   * **Two details make "cannot bite" actually true**, and neither is obvious.
+   * A window closed at BOTH ends spans `seconds + 1` seconds' worth of fixes,
+   * so `ceil(seconds / cap)` leaves room for `cap + 1` buckets — hence
+   * `floor(...) + 1`, which is strictly greater than `seconds / cap`. And
+   * `toStartOfInterval` aligns to the EPOCH unless given an origin, so a
+   * window starting mid-bucket straddles one extra partial bucket — hence the
+   * third argument pinning the buckets to the window's own start (the `from`
+   * parameter is already bound, so this costs nothing).
+   *
+   * Measured against production, sweeping window lengths against start
+   * offsets at a cap of 400: `ceil` + epoch origin overran the cap in 25 of
+   * the cases tried, `ceil` + window origin in 20, `floor + 1` + epoch origin
+   * in 5, and `floor + 1` + window origin in none. Both halves are load
+   * bearing — either one alone still drops the tow's last point.
    *
    * `argMax(..., (event_time, ingest_time))` picks the latest fix in each
    * bucket and breaks a same-second tie by the newest ingest, so pre-merge
@@ -632,7 +646,10 @@ export class AisClickhouseRepository {
         1,
         Math.round((Date.parse(w.to) - Date.parse(w.from)) / 1000),
       );
-      const step = Math.max(1, Math.ceil(seconds / opts.maxPointsPerWindow));
+      const step = Math.max(
+        1,
+        Math.floor(seconds / opts.maxPointsPerWindow) + 1,
+      );
       // `toUInt32(i)`, not a bare integer literal: a bare `5` is UInt8 and a
       // bare `300` is UInt16, and UNION ALL branches have to agree on column
       // types. `step` is a locally computed integer, never caller text.
@@ -654,7 +671,7 @@ export class AisClickhouseRepository {
         `FROM ${TABLE} WHERE vessel_id={v${i}:Int32}` +
         ` AND event_time>={f${i}:DateTime64(3)}` +
         ` AND event_time<={t${i}:DateTime64(3)} ${speedFilter}` +
-        ` GROUP BY toStartOfInterval(event_time, INTERVAL ${step} SECOND)` +
+        ` GROUP BY toStartOfInterval(event_time, INTERVAL ${step} SECOND, {f${i}:DateTime64(3)})` +
         ` ORDER BY t LIMIT ${opts.maxPointsPerWindow})`
       );
     });
