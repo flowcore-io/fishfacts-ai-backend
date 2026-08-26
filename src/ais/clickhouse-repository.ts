@@ -552,6 +552,175 @@ export class AisClickhouseRepository {
     return byKey;
   }
 
+  /**
+   * Tracks for many INDEPENDENT `(vesselId, from, to)` windows in one query.
+   *
+   * `getTracks` takes one `from`/`to` for every vessel it is asked about, which
+   * is the wrong shape for tow tracks: a tow is a vessel AND its own couple of
+   * hours, and a viewport holds hundreds of them scattered across years. Asked
+   * one at a time that is one request per tow.
+   *
+   * **The contract is FishFacts' `/vessels/batchTracks`, on purpose** — one
+   * entry per requested WINDOW, in request order, a vessel free to appear many
+   * times, and an empty window still answered — so the map's adapter is a URL
+   * swap rather than a rewrite, and the two arms can be A/B'd against the same
+   * caller.
+   *
+   * **Why UNION ALL and not an OR-chain.** Measured against production on
+   * 2026-08-26, 50 windows scattered over 50 months, identical results from
+   * both: a UNION of per-window selects ran 134 ms server-side reading 729 k
+   * rows, and the OR-chain `getFixesForWindows` uses ran **2,518 ms reading
+   * 24.8 M rows** — 19x, and 24x at 200 windows. Each branch here is a
+   * contiguous range of the `(vessel_id, event_time, source_id)` sort key, so
+   * it prunes to its own granules; a 50-term boolean makes the planner reason
+   * about the union of those ranges and it gives up. The difference is
+   * *scatter*: on windows that all sit in one month the two shapes are within
+   * noise, and tow windows are never in one month.
+   *
+   * (The obvious third idiom — joining against a `values()` table of windows —
+   * full-scans all 3.6 billion rows. It is not a slower alternative, it is a
+   * trap.)
+   *
+   * **The per-window cap thins, it does not truncate.** A hard `LIMIT` would
+   * cut the end off a tow, which draws a boat that stopped fishing early —
+   * a wrong picture rather than a coarse one. So the same bucket downsample
+   * `getTracks` uses is applied per window: one fix per `windowSeconds /
+   * maxPointsPerWindow` bucket, so a long window comes back thinned but whole.
+   * The bucket is CEILED rather than floored so the bucket count cannot exceed
+   * the cap, which makes the trailing `LIMIT` a backstop that never bites.
+   *
+   * `argMax(..., (event_time, ingest_time))` picks the latest fix in each
+   * bucket and breaks a same-second tie by the newest ingest, so pre-merge
+   * ReplacingMergeTree duplicates collapse deterministically rather than
+   * arbitrarily — the same rule `getFixesForWindows` applies.
+   *
+   * Windows are inclusive at both ends, matching `getFixesForWindows` and
+   * FishFacts (probed: every fix they answer falls inside its own window).
+   * Note `getTracks` is `>= from AND < to` — deliberately not changed here.
+   */
+  async getTrackWindows(opts: {
+    windows: AisTrackWindowRequest[];
+    maxPointsPerWindow: number;
+    minKnots?: number;
+    maxKnots?: number;
+  }): Promise<AisTrackWindowsResult> {
+    const empty = (w: AisTrackWindowRequest): AisTrackWindow => ({
+      vesselId: w.vesselId,
+      from: w.from,
+      to: w.to,
+      pointCount: 0,
+      points: [],
+    });
+    if (opts.windows.length === 0) return { windows: [] };
+
+    const speedFilter =
+      opts.minKnots !== undefined || opts.maxKnots !== undefined
+        ? `AND ${TABLE}.speed IS NOT NULL AND ${TABLE}.speed >= {minKn:Float64} AND ${TABLE}.speed <= {maxKn:Float64}`
+        : "";
+
+    const params: Record<string, unknown> = {};
+    if (speedFilter) {
+      params.minKn = opts.minKnots ?? 0;
+      params.maxKn = opts.maxKnots ?? 1_000_000;
+    }
+
+    const branches = opts.windows.map((w, i) => {
+      params[`v${i}`] = w.vesselId;
+      params[`f${i}`] = isoToCh(w.from);
+      params[`t${i}`] = isoToCh(w.to);
+      const seconds = Math.max(
+        1,
+        Math.round((Date.parse(w.to) - Date.parse(w.from)) / 1000),
+      );
+      const step = Math.max(1, Math.ceil(seconds / opts.maxPointsPerWindow));
+      // `toUInt32(i)`, not a bare integer literal: a bare `5` is UInt8 and a
+      // bare `300` is UInt16, and UNION ALL branches have to agree on column
+      // types. `step` is a locally computed integer, never caller text.
+      // Written on one line on purpose. This text is repeated once per window
+      // and ClickHouse parses it against `max_query_size`; the readable,
+      // indented form cost ~525 bytes a window and blew the default 256 KB at
+      // 500 windows with a bare SYNTAX_ERROR. The projection is identical for
+      // every branch, so the shape is legible from any one of them.
+      const pick = "(event_time, ingest_time)";
+      return (
+        `(SELECT toUInt32(${i}) AS w,` +
+        `argMax(event_time,${pick}) AS t,` +
+        `argMax(latitude,${pick}) AS lat,` +
+        `argMax(longitude,${pick}) AS lon,` +
+        `argMax(speed,${pick}) AS speed,` +
+        `argMax(heading,${pick}) AS heading,` +
+        `argMax(course,${pick}) AS course,` +
+        `argMax(status,${pick}) AS last_status ` +
+        `FROM ${TABLE} WHERE vessel_id={v${i}:Int32}` +
+        ` AND event_time>={f${i}:DateTime64(3)}` +
+        ` AND event_time<={t${i}:DateTime64(3)} ${speedFilter}` +
+        ` GROUP BY toStartOfInterval(event_time, INTERVAL ${step} SECOND)` +
+        ` ORDER BY t LIMIT ${opts.maxPointsPerWindow})`
+      );
+    });
+
+    const rs = await this.client.query({
+      query: branches.join("\nUNION ALL\n"),
+      query_params: params,
+      format: "JSONEachRow",
+      clickhouse_settings: {
+        // Crisp failure over a slow hang, as on getTracks. Every branch is
+        // bounded to one vessel's key range, so a query that runs this long is
+        // wrong rather than merely large.
+        max_execution_time: 55,
+        // Raised from the 256 KB default so that AIS_TRACK_WINDOWS_MAX is the
+        // only limit a caller can hit, and hits it as a 400 that says so. At
+        // ~330 bytes a window the cap needs ~165 KB; 1 MB leaves the ceiling
+        // (~3,000 windows) far above it, and this only sizes a parse buffer.
+        max_query_size: "1048576",
+      },
+    });
+    const rows = (await rs.json()) as Array<{
+      w: number;
+      t: string;
+      lat: number;
+      lon: number;
+      speed: number | null;
+      heading: number | null;
+      course: number | null;
+      last_status: string | null;
+    }>;
+
+    const byWindow = new Map<number, AisTrackPoint[]>();
+    for (const r of rows) {
+      const points = byWindow.get(Number(r.w)) ?? [];
+      points.push({
+        t: chToIso(r.t),
+        lat: r.lat,
+        lon: r.lon,
+        speed: r.speed,
+        heading: r.heading,
+        course: r.course,
+        status: r.last_status,
+      });
+      byWindow.set(Number(r.w), points);
+    }
+
+    return {
+      // Mapped over what was ASKED, not over what came back: a window with no
+      // fixes still gets its entry, so the caller can keep matching answers to
+      // tows by index the way it does against FishFacts. Sorted here because
+      // UNION ALL orders within a branch but not across them.
+      windows: opts.windows.map((w, i) => {
+        const points = byWindow.get(i);
+        if (!points) return empty(w);
+        points.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : 0));
+        return {
+          vesselId: w.vesselId,
+          from: w.from,
+          to: w.to,
+          pointCount: points.length,
+          points,
+        };
+      }),
+    };
+  }
+
   async close(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
@@ -655,6 +824,38 @@ export type AisVesselTrack = {
   pointCount: number;
   last: AisTrackPoint | null;
   points: AisTrackPoint[];
+};
+
+/**
+ * The most windows one request may carry. Sized to the map's own
+ * MAX_VISIBLE_TRACKS, so a whole zoom-10 viewport of tows is ONE request;
+ * measured at 860 ms server-side for 500 real tow windows / 32 k points.
+ *
+ * There is a second ceiling behind this one: the UNION text runs ~330 bytes a
+ * window and ClickHouse parses it against `max_query_size`. The default 256 KB
+ * is not enough for 500 windows -- measured, it failed with a bare
+ * SYNTAX_ERROR -- so the query raises that setting to 1 MB and this cap stays
+ * the only limit a caller can reach, reported as a 400 that says what is
+ * wrong.
+ */
+export const AIS_TRACK_WINDOWS_MAX = 500;
+
+export type AisTrackWindowRequest = {
+  vesselId: number;
+  /** ISO-8601, inclusive. */
+  from: string;
+  /** ISO-8601, inclusive. */
+  to: string;
+};
+
+export type AisTrackWindow = AisTrackWindowRequest & {
+  pointCount: number;
+  points: AisTrackPoint[];
+};
+
+/** One entry per requested window, in request order. */
+export type AisTrackWindowsResult = {
+  windows: AisTrackWindow[];
 };
 
 export type AisTracksResult = {

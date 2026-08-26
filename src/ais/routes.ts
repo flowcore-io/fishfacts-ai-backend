@@ -1,5 +1,9 @@
 import { type Context, Hono } from "hono";
-import type { AisClickhouseRepository } from "./clickhouse-repository";
+import {
+  AIS_TRACK_WINDOWS_MAX,
+  type AisClickhouseRepository,
+  type AisTrackWindowRequest,
+} from "./clickhouse-repository";
 import {
   AIS_FISHING_MAX_KNOTS,
   AIS_FISHING_MIN_KNOTS,
@@ -15,6 +19,10 @@ const MAX_VESSELS = 50;
 // fleet (e.g. all longliners), so the cap is far higher than /tracks' 50.
 const MAX_DENSITY_VESSELS = 5000;
 const DEFAULT_MAX_POINTS = 2000;
+// Tow tracks are a couple of hours each, so the cap only binds on a caller
+// asking for a whole season in one window. Higher than /tracks' 2000 because
+// it is per WINDOW here, and thinning a tow is a visible loss of shape.
+const DEFAULT_MAX_POINTS_PER_WINDOW = 4000;
 const MAX_MAX_POINTS = 50_000;
 const MAX_EFFORT_POLYGONS = 10;
 const MAX_EFFORT_VERTICES = 1000;
@@ -108,6 +116,41 @@ export function createAisRouter(deps: AisRouterDeps): Hono {
   // type (resolved by the FE). Defaults to the last 7d when no window/from/to is
   // given. Available as GET (query params) or POST (JSON body) — a gear-filtered
   // vesselIds list can be large enough to overflow a GET URL.
+  /**
+   * Tracks for many independent `(vesselId, from, to)` windows — the shape a
+   * list of ERS tows has, where `/tracks` takes one range for every vessel.
+   *
+   * Deliberately the same contract as FishFacts' `POST /vessels/batchTracks`:
+   * **one entry per requested window, in request order**, a vessel free to
+   * appear in several windows, and an empty window still answered. That is
+   * what lets the map match answers to tows by index against either backend,
+   * so the two can be A/B'd by swapping a URL rather than a code path.
+   *
+   * POST-only: 500 windows do not fit in a query string, and the body is where
+   * the FE already has them.
+   */
+  app.post("/tracks/windows", async (c) => {
+    const body = await readJsonBody(c);
+    if (body instanceof Response) return body;
+
+    const windows = parseTrackWindows(body.windows);
+    if ("error" in windows) return c.json(windows, 400);
+
+    const params = bodyToParams(body);
+    const speed = parseSpeed(params);
+    if ("error" in speed) return c.json(speed, 400);
+
+    const result = await deps.repository.getTrackWindows({
+      windows: windows.windows,
+      maxPointsPerWindow: parseMaxPointsPerWindow(
+        params.get("maxPointsPerWindow"),
+      ),
+      minKnots: speed.minKnots,
+      maxKnots: speed.maxKnots,
+    });
+    return c.json(result);
+  });
+
   app.get("/density", async (c) => {
     const params = new URL(c.req.url).searchParams;
     return runDensity(c, deps, params, params.get("vesselIds"));
@@ -368,6 +411,7 @@ function bodyToParams(body: Record<string, unknown>): URLSearchParams {
   set("maxKnots", body.maxKnots);
   set("limit", body.limit);
   set("maxPointsPerVessel", body.maxPointsPerVessel);
+  set("maxPointsPerWindow", body.maxPointsPerWindow);
   set("status", body.status);
   return params;
 }
@@ -569,6 +613,71 @@ function parseMaxPoints(raw: string | null): number {
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) return DEFAULT_MAX_POINTS;
   return Math.min(Math.max(n, 1), MAX_MAX_POINTS);
+}
+
+function parseMaxPointsPerWindow(raw: string | null): number {
+  if (!raw) return DEFAULT_MAX_POINTS_PER_WINDOW;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return DEFAULT_MAX_POINTS_PER_WINDOW;
+  return Math.min(Math.max(n, 1), MAX_MAX_POINTS);
+}
+
+/**
+ * Validates the window list, and says which entry is wrong when one is.
+ *
+ * Every window is checked before any query runs, because a bad entry here is
+ * the failure FishFacts handles worst — one unknown vessel id 500s their whole
+ * batch — and answering "windows[137].to is not a date" costs nothing and is
+ * the difference between a fixable client and a mystery.
+ *
+ * `from === to` is allowed: the map really does carry zero-length tows, and an
+ * empty answer is the honest one rather than a 400.
+ */
+function parseTrackWindows(
+  raw: unknown,
+): { windows: AisTrackWindowRequest[] } | QueryError {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return {
+      error: "invalid_query",
+      message: "windows is required: a non-empty array of {vesselId, from, to}",
+    };
+  }
+  if (raw.length > AIS_TRACK_WINDOWS_MAX) {
+    return {
+      error: "invalid_query",
+      message: `too many windows: max ${AIS_TRACK_WINDOWS_MAX}`,
+    };
+  }
+
+  const windows: AisTrackWindowRequest[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i] as Record<string, unknown> | null;
+    const bad = (message: string): QueryError => ({
+      error: "invalid_query",
+      message: `windows[${i}]: ${message}`,
+    });
+    if (!entry || typeof entry !== "object") {
+      return bad("must be an object with vesselId, from and to");
+    }
+    const vesselId = Number(entry.vesselId);
+    if (!Number.isInteger(vesselId) || vesselId < 0) {
+      return bad("vesselId must be a non-negative integer");
+    }
+    const from = typeof entry.from === "string" ? entry.from.trim() : "";
+    const to = typeof entry.to === "string" ? entry.to.trim() : "";
+    const fromMs = Date.parse(from);
+    const toMs = Date.parse(to);
+    if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+      return bad("from and to must both be ISO-8601 timestamps");
+    }
+    if (fromMs > toMs) return bad("from must not be after to");
+    windows.push({
+      vesselId,
+      from: new Date(fromMs).toISOString(),
+      to: new Date(toMs).toISOString(),
+    });
+  }
+  return { windows };
 }
 
 function parseStatuses(raw: string | null): string[] | undefined {
