@@ -778,6 +778,117 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/ais/tracks/windows": {
+      post: {
+        tags: ["AIS"],
+        summary: "Vessel position tracks for many (vessel, time-window) pairs",
+        description:
+          "Batch form of the track read, for the map's tow overlay: a viewport holds hundreds of short windows scattered across years, and asking one at a time is one request per tow. Answers **one entry per requested window, in request order** — the same contract as FishFacts' `/vessels/batchTracks`. The same vessel may appear in many windows and gets a separate answer for each; a window with no fixes still gets its entry with `pointCount: 0`, and an unknown vessel id yields that empty entry rather than failing the whole request. Windows are inclusive at both ends (note GET /api/ais/tracks is `>= from AND < to`), and every returned fix falls inside its own window. Points come back ascending by time, thinned to `maxPointsPerWindow` per window.",
+        security: [{ FishfactsAuthToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/AisTrackWindowsRequest",
+              },
+              examples: {
+                sample: {
+                  value: {
+                    windows: [
+                      {
+                        vesselId: 932,
+                        from: "2026-06-16T08:00:00.000Z",
+                        to: "2026-06-16T10:00:00.000Z",
+                      },
+                      {
+                        vesselId: 932,
+                        from: "2026-06-17T04:30:00.000Z",
+                        to: "2026-06-17T06:00:00.000Z",
+                      },
+                    ],
+                    maxPointsPerWindow: 4000,
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "One downsampled track per requested window",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/AisTrackWindowsResponse",
+                },
+                examples: {
+                  sample: {
+                    value: {
+                      windows: [
+                        {
+                          vesselId: 932,
+                          from: "2026-06-16T08:00:00.000Z",
+                          to: "2026-06-16T10:00:00.000Z",
+                          pointCount: 2,
+                          points: [
+                            {
+                              t: "2026-06-16T08:00:00.000Z",
+                              lat: 62.1,
+                              lon: -6.8,
+                              speed: 0,
+                              heading: 90,
+                              course: null,
+                              status: "At anchor",
+                            },
+                            {
+                              t: "2026-06-16T09:58:18.000Z",
+                              lat: 62.16043,
+                              lon: -6.78112,
+                              speed: 2.6,
+                              heading: 126,
+                              course: null,
+                              status: "Engaged in Fishing",
+                            },
+                          ],
+                        },
+                        {
+                          vesselId: 932,
+                          from: "2026-06-17T04:30:00.000Z",
+                          to: "2026-06-17T06:00:00.000Z",
+                          pointCount: 0,
+                          points: [],
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description:
+              "Invalid body: `{ error: 'invalid_query', message }`. Per-window messages name the offending index, e.g. `windows[2]: from and to must both be ISO-8601 timestamps`, so a client can fix the one bad entry.",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+                examples: {
+                  sample: {
+                    value: {
+                      error: "invalid_query",
+                      message:
+                        "windows[2]: from and to must both be ISO-8601 timestamps",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "502": { description: "Auth upstream unavailable" },
+        },
+      },
+    },
     "/api/ais/enable": {
       post: {
         tags: ["AIS control"],
@@ -2645,6 +2756,102 @@ export const openApiDocument = {
             type: "array",
             description: "One entry per requested vessel (order preserved).",
             items: { $ref: "#/components/schemas/AisVesselTrack" },
+          },
+        },
+      },
+      AisTrackWindowRequest: {
+        type: "object",
+        required: ["vesselId", "from", "to"],
+        properties: {
+          vesselId: {
+            type: "integer",
+            minimum: 0,
+            description:
+              "Vessel id (location.vessel_id). An id with no fixes — including an unknown one — is answered with an empty window rather than an error.",
+          },
+          from: {
+            type: "string",
+            format: "date-time",
+            description: "Inclusive lower bound (ISO-8601).",
+          },
+          to: {
+            type: "string",
+            format: "date-time",
+            description:
+              "Inclusive upper bound (ISO-8601). Must not be before `from`; `from === to` is allowed, because the map really does carry zero-length tows.",
+          },
+        },
+      },
+      AisTrackWindowsRequest: {
+        type: "object",
+        required: ["windows"],
+        properties: {
+          windows: {
+            type: "array",
+            minItems: 1,
+            maxItems: 500,
+            description:
+              "The (vessel, time-range) pairs to answer, 1…500 (AIS_TRACK_WINDOWS_MAX, both bounds inclusive). Order is the response order, and the same vessel may appear more than once.",
+            items: { $ref: "#/components/schemas/AisTrackWindowRequest" },
+          },
+          maxPointsPerWindow: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50000,
+            default: 4000,
+            description:
+              "Points returned per window. This is a DOWNSAMPLE, not a truncation: the window is cut into `ceil(windowSeconds / maxPointsPerWindow)`-second buckets and the latest fix in each is kept, so a long window comes back thinned but whole — the tail of a tow is never cut off. Out-of-range values are clamped to [1, 50000].",
+          },
+          minKnots: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Optional speed-band lower bound (knots). Must be finite with 0 <= minKnots <= maxKnots. Fixes with no speed are dropped when either bound is given.",
+          },
+          maxKnots: {
+            type: "number",
+            minimum: 0,
+            description:
+              "Optional speed-band upper bound (knots). Must be finite with 0 <= minKnots <= maxKnots.",
+          },
+        },
+      },
+      AisTrackWindow: {
+        type: "object",
+        required: ["vesselId", "from", "to", "pointCount", "points"],
+        properties: {
+          vesselId: { type: "integer" },
+          from: {
+            type: "string",
+            format: "date-time",
+            description: "Echo of the requested inclusive lower bound.",
+          },
+          to: {
+            type: "string",
+            format: "date-time",
+            description: "Echo of the requested inclusive upper bound.",
+          },
+          pointCount: {
+            type: "integer",
+            description: "Number of fixes in `points`; 0 for an empty window.",
+          },
+          points: {
+            type: "array",
+            description:
+              "Downsampled fixes, ascending by time. Every fix falls inside this window (inclusive at both ends).",
+            items: { $ref: "#/components/schemas/AisTrackPoint" },
+          },
+        },
+      },
+      AisTrackWindowsResponse: {
+        type: "object",
+        required: ["windows"],
+        properties: {
+          windows: {
+            type: "array",
+            description:
+              "One entry per requested window, in request order — including windows with no fixes, which come back with `pointCount: 0`.",
+            items: { $ref: "#/components/schemas/AisTrackWindow" },
           },
         },
       },
