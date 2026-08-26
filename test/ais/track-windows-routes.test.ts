@@ -96,9 +96,9 @@ describe("POST /tracks/windows — validation", () => {
 
   test("400 on a negative or non-integer vesselId", async () => {
     const app = createAisRouter({ repository: mockRepo({}) });
-    expect((await post(app, { windows: [{ ...TOW, vesselId: -1 }] })).status).toBe(
-      400,
-    );
+    expect(
+      (await post(app, { windows: [{ ...TOW, vesselId: -1 }] })).status,
+    ).toBe(400);
     expect(
       (await post(app, { windows: [{ ...TOW, vesselId: "MS Fram" }] })).status,
     ).toBe(400);
@@ -112,7 +112,11 @@ describe("POST /tracks/windows — what reaches the repository", () => {
     const res = await post(app, {
       windows: [
         TOW,
-        { vesselId: 14, from: "2024-01-08T00:00:00Z", to: "2024-01-08T04:00:00Z" },
+        {
+          vesselId: 14,
+          from: "2024-01-08T00:00:00Z",
+          to: "2024-01-08T04:00:00Z",
+        },
         TOW,
       ],
     });
@@ -175,7 +179,11 @@ describe("POST /tracks/windows — the response contract", () => {
     const asked = [
       TOW,
       { vesselId: 14, from: TOW.from, to: TOW.to },
-      { ...TOW, from: "2025-03-04T09:00:00.000Z", to: "2025-03-04T10:00:00.000Z" },
+      {
+        ...TOW,
+        from: "2025-03-04T09:00:00.000Z",
+        to: "2025-03-04T10:00:00.000Z",
+      },
     ];
     const res = await post(app, { windows: asked });
     const body = (await res.json()) as {

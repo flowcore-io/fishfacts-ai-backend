@@ -87,7 +87,10 @@ describe("getTrackWindows SQL construction", () => {
   test("windows are inclusive at both ends, like FishFacts and getFixesForWindows", async () => {
     const captured: { query?: string } = {};
     const r = repo(captured);
-    await r.getTrackWindows({ windows: [FOUR_HOURS], maxPointsPerWindow: 4000 });
+    await r.getTrackWindows({
+      windows: [FOUR_HOURS],
+      maxPointsPerWindow: 4000,
+    });
     await r.close();
     // Whitespace-free because the branch text is repeated once per window and
     // is parsed against max_query_size — see the repository comment.
@@ -128,7 +131,10 @@ describe("getTrackWindows SQL construction", () => {
     // 4 h = 14 400 s over 4 000 points: floor would give 3 s and up to 4 800
     // buckets — more than the cap, so the LIMIT would silently cut the tow's
     // tail off. Ceiling gives 4 s and at most 3 600.
-    await r.getTrackWindows({ windows: [FOUR_HOURS], maxPointsPerWindow: 4000 });
+    await r.getTrackWindows({
+      windows: [FOUR_HOURS],
+      maxPointsPerWindow: 4000,
+    });
     await r.close();
     expect(captured.query).toContain("INTERVAL 4 SECOND");
     expect(captured.query).toContain("LIMIT 4000");
@@ -166,7 +172,10 @@ describe("getTrackWindows SQL construction", () => {
   test("no speed parameters are bound when no band was asked for", async () => {
     const captured: { params?: Record<string, unknown> } = {};
     const r = repo(captured);
-    await r.getTrackWindows({ windows: [FOUR_HOURS], maxPointsPerWindow: 4000 });
+    await r.getTrackWindows({
+      windows: [FOUR_HOURS],
+      maxPointsPerWindow: 4000,
+    });
     await r.close();
     expect(captured.params).not.toHaveProperty("minKn");
   });
@@ -188,9 +197,36 @@ describe("getTrackWindows result mapping", () => {
   const rows = [
     // Deliberately out of order, and branch 2 answers nothing: UNION ALL
     // orders within a branch but makes no promise across them.
-    { w: 1, t: "2025-03-04 07:00:00.000", lat: 2, lon: 2, speed: 4.1, heading: null, course: null, last_status: null },
-    { w: 0, t: "2025-03-04 07:30:00.000", lat: 3, lon: 3, speed: 0.2, heading: null, course: null, last_status: "MOORED" },
-    { w: 0, t: "2025-03-04 06:30:00.000", lat: 1, lon: 1, speed: 3.3, heading: 90, course: 91, last_status: "UNDERWAY" },
+    {
+      w: 1,
+      t: "2025-03-04 07:00:00.000",
+      lat: 2,
+      lon: 2,
+      speed: 4.1,
+      heading: null,
+      course: null,
+      last_status: null,
+    },
+    {
+      w: 0,
+      t: "2025-03-04 07:30:00.000",
+      lat: 3,
+      lon: 3,
+      speed: 0.2,
+      heading: null,
+      course: null,
+      last_status: "MOORED",
+    },
+    {
+      w: 0,
+      t: "2025-03-04 06:30:00.000",
+      lat: 1,
+      lon: 1,
+      speed: 3.3,
+      heading: 90,
+      course: 91,
+      last_status: "UNDERWAY",
+    },
   ];
 
   test("answers one entry per requested window, in request order", async () => {
@@ -243,15 +279,37 @@ describe("getTrackWindows result mapping", () => {
   test("the same vessel in two windows gets two answers, not one merged", async () => {
     const captured = {
       rows: [
-        { w: 0, t: "2025-03-04 06:30:00.000", lat: 1, lon: 1, speed: null, heading: null, course: null, last_status: null },
-        { w: 1, t: "2025-03-04 11:30:00.000", lat: 2, lon: 2, speed: null, heading: null, course: null, last_status: null },
+        {
+          w: 0,
+          t: "2025-03-04 06:30:00.000",
+          lat: 1,
+          lon: 1,
+          speed: null,
+          heading: null,
+          course: null,
+          last_status: null,
+        },
+        {
+          w: 1,
+          t: "2025-03-04 11:30:00.000",
+          lat: 2,
+          lon: 2,
+          speed: null,
+          heading: null,
+          course: null,
+          last_status: null,
+        },
       ],
     } as Parameters<typeof fakeClient>[0];
     const r = repo(captured);
     const out = await r.getTrackWindows({
       windows: [
         FOUR_HOURS,
-        { ...FOUR_HOURS, from: "2025-03-04T11:00:00.000Z", to: "2025-03-04T12:00:00.000Z" },
+        {
+          ...FOUR_HOURS,
+          from: "2025-03-04T11:00:00.000Z",
+          to: "2025-03-04T12:00:00.000Z",
+        },
       ],
       maxPointsPerWindow: 4000,
     });
