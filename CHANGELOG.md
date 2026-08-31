@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.5.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.4.0...v2.5.0) (2026-08-31)
+
+
+### Features
+
+* **tiles:** serve historic chart raster tiles from PMTiles archives ([5475107](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5475107dd64b1c83a2763fd3c29e76b1b960cb81))
+* **tiles:** serve historic chart raster tiles from PMTiles archives ([16e0655](https://github.com/flowcore-io/fishfacts-ai-backend/commit/16e065597c093bd29e9762cbaa0634546f27bd6f))
+
+
+### Bug Fixes
+
+* **tiles:** validate tile coordinates and stop echoing upstream errors ([a66052f](https://github.com/flowcore-io/fishfacts-ai-backend/commit/a66052f21650c46f4543d05f88edd52800c6294b))
+
 ## [2.4.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.3.4...v2.4.0) (2026-08-26)
 
 
