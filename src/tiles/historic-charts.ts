@@ -15,7 +15,6 @@
  */
 
 export type HistoricChartLayer = {
-  id: string;
   sheet: string;
   year: number;
   /** Usable Assets file id of the PMTiles archive (public, range-readable). */
@@ -28,9 +27,8 @@ export type HistoricChartLayer = {
   placementErrorKm: number;
 };
 
-export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
-  "historic-charts-551": {
-    id: "historic-charts-551",
+export const HISTORIC_CHART_SHEETS: Record<string, HistoricChartLayer> = {
+  "551": {
     sheet: "551",
     year: 2007,
     assetId: "6f197ad0-fa5c-425d-9657-8b10cd43cadd",
@@ -40,8 +38,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [25, 68, 40, 74.5],
     placementErrorKm: 0.9,
   },
-  "historic-charts-552": {
-    id: "historic-charts-552",
+  "552": {
     sheet: "552",
     year: 2001,
     assetId: "9013e8c4-0a4f-464e-bc1b-43e7eaf3e9a0",
@@ -51,8 +48,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [11, 68.1667, 26, 74.6667],
     placementErrorKm: 27.8,
   },
-  "historic-charts-553": {
-    id: "historic-charts-553",
+  "553": {
     sheet: "553",
     year: 1965,
     assetId: "8f5fbea2-b5a4-4d64-82ca-e405b3f1f239",
@@ -62,8 +58,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [39, 68, 54, 74.5],
     placementErrorKm: 10.8,
   },
-  "historic-charts-554": {
-    id: "historic-charts-554",
+  "554": {
     sheet: "554",
     year: 1965,
     assetId: "7a2e43ef-cd29-49d8-814a-ac48620e4346",
@@ -73,8 +68,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [11, 74.1667, 26, 78.8333],
     placementErrorKm: 78,
   },
-  "historic-charts-555": {
-    id: "historic-charts-555",
+  "555": {
     sheet: "555",
     year: 1965,
     assetId: "a67817dc-5be4-45df-8037-99c67a1b1e5c",
@@ -84,8 +78,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [25, 74.3333, 40, 79],
     placementErrorKm: 25.6,
   },
-  "historic-charts-557": {
-    id: "historic-charts-557",
+  "557": {
     sheet: "557",
     year: 1968,
     assetId: "4cb8490d-6d8c-4557-940f-bc8d45b3034e",
@@ -95,8 +88,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [5.83333, 64.5, 16.3333, 70],
     placementErrorKm: 1.1,
   },
-  "historic-charts-558": {
-    id: "historic-charts-558",
+  "558": {
     sheet: "558",
     year: 2001,
     assetId: "eb6470bc-9895-4cf8-952f-7453fa62940f",
@@ -106,8 +98,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [-1.25, 60.5, 11, 65],
     placementErrorKm: 1,
   },
-  "historic-charts-559": {
-    id: "historic-charts-559",
+  "559": {
     sheet: "559",
     year: 2005,
     assetId: "f9e29935-26c5-4457-bfbf-bda77b2b997f",
@@ -117,8 +108,7 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
     bounds: [-4.015, 56, 9.02, 60.8833],
     placementErrorKm: 1.4,
   },
-  "historic-charts-560": {
-    id: "historic-charts-560",
+  "560": {
     sheet: "560",
     year: 1970,
     assetId: "e840fa10-0ffa-4a4a-81b5-6ea008391d22",
@@ -130,10 +120,15 @@ export const HISTORIC_CHART_LAYERS: Record<string, HistoricChartLayer> = {
   },
 };
 
-export function listHistoricChartLayers(): HistoricChartLayer[] {
-  return Object.values(HISTORIC_CHART_LAYERS);
+/** Path segment the tile route serves each sheet under. */
+export const HISTORIC_CHARTS_LAYER = "historic-charts";
+
+export function listHistoricChartSheets(): HistoricChartLayer[] {
+  return Object.values(HISTORIC_CHART_SHEETS);
 }
 
-export function getHistoricChartLayer(id: string): HistoricChartLayer | null {
-  return HISTORIC_CHART_LAYERS[id] ?? null;
+export function getHistoricChartSheet(
+  sheet: string,
+): HistoricChartLayer | null {
+  return HISTORIC_CHART_SHEETS[sheet] ?? null;
 }

@@ -1,9 +1,14 @@
 import { FetchSource, PMTiles } from "pmtiles";
 import {
   type HistoricChartLayer,
-  getHistoricChartLayer,
+  getHistoricChartSheet,
 } from "./historic-charts";
-import { UnknownTileLayerError } from "./repository";
+
+export class UnknownChartSheetError extends Error {
+  constructor(public readonly sheet: string) {
+    super(`unknown historic chart sheet: ${sheet}`);
+  }
+}
 
 /**
  * Serves pre-cut WebP raster tiles out of per-sheet PMTiles archives held in
@@ -19,27 +24,27 @@ export class RasterTilesRepository {
 
   constructor(private readonly assetsPublicBaseUrl: string) {}
 
-  private archiveFor(layer: HistoricChartLayer): PMTiles {
-    const cached = this.archives.get(layer.id);
+  private archiveFor(chart: HistoricChartLayer): PMTiles {
+    const cached = this.archives.get(chart.sheet);
     if (cached) return cached;
 
-    const url = `${this.assetsPublicBaseUrl}/api/v1/public/files/${layer.assetId}?download=false`;
+    const url = `${this.assetsPublicBaseUrl}/api/v1/public/files/${chart.assetId}?download=false`;
     const archive = new PMTiles(new FetchSource(url));
-    this.archives.set(layer.id, archive);
+    this.archives.set(chart.sheet, archive);
     return archive;
   }
 
   /** Returns null for a tile the archive does not cover, so the route can 204. */
   async getTile(
-    layerId: string,
+    sheet: string,
     z: number,
     x: number,
     y: number,
   ): Promise<Uint8Array | null> {
-    const layer = getHistoricChartLayer(layerId);
-    if (!layer) throw new UnknownTileLayerError(layerId);
+    const chart = getHistoricChartSheet(sheet);
+    if (!chart) throw new UnknownChartSheetError(sheet);
 
-    const tile = await this.archiveFor(layer).getZxy(z, x, y);
+    const tile = await this.archiveFor(chart).getZxy(z, x, y);
     if (!tile) return null;
     return new Uint8Array(tile.data);
   }

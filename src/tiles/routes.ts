@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { listTileLayers } from "./catalog";
-import { listHistoricChartLayers } from "./historic-charts";
-import type { RasterTilesRepository } from "./raster-repository";
+import {
+  HISTORIC_CHARTS_LAYER,
+  listHistoricChartSheets,
+} from "./historic-charts";
+import {
+  type RasterTilesRepository,
+  UnknownChartSheetError,
+} from "./raster-repository";
 import { type TilesRepository, UnknownTileLayerError } from "./repository";
 
 export type TilesRouterDeps = {
@@ -43,8 +49,50 @@ export function createTilesRouter({
   router.get("/catalog", (c) =>
     c.json({
       layers: listTileLayers(),
-      rasterLayers: listHistoricChartLayers(),
+      // Path shape deliberately mirrors the static map host FishFacts already
+      // serves bathymetry from (…/layers/bathymetry/{z}/{x}/{y}.pbf), so moving
+      // these off the API later is a change of host, not of URL shape.
+      rasterLayers: listHistoricChartSheets().map((chart) => ({
+        ...chart,
+        tiles: `${HISTORIC_CHARTS_LAYER}/${chart.sheet}/{z}/{x}/{y}.webp`,
+      })),
     }),
+  );
+
+  // Registered before the generic vector route so the fixed first segment wins.
+  router.get(
+    `/${HISTORIC_CHARTS_LAYER}/:sheet/:z/:x/:y{.+\\.webp}`,
+    async (c) => {
+      const sheet = c.req.param("sheet");
+      const coords = parseCoords(c);
+      if (!coords) {
+        return c.json({ error: "invalid_tile_coords" }, 400);
+      }
+
+      try {
+        const bytes = await rasterTilesRepository.getTile(
+          sheet,
+          coords.z,
+          coords.x,
+          coords.y,
+        );
+        // Sheets are rectangles on a globe: most of a covering tile range falls
+        // outside the scan, and 204 is what a raster source expects there.
+        if (!bytes) {
+          return c.body(null, 204, { "Cache-Control": RASTER_CACHE_CONTROL });
+        }
+        return c.body(bytes as unknown as ArrayBuffer, 200, {
+          "Content-Type": "image/webp",
+          "Cache-Control": RASTER_CACHE_CONTROL,
+        });
+      } catch (err) {
+        if (err instanceof UnknownChartSheetError) {
+          return c.json({ error: "unknown_sheet", sheet: err.sheet }, 404);
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: "tile_read_failed", message }, 500);
+      }
+    },
   );
 
   router.get("/:layer/:z/:x/:y{.+\\.pbf}", async (c) => {
@@ -74,38 +122,6 @@ export function createTilesRouter({
       }
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: "tile_generation_failed", message }, 500);
-    }
-  });
-
-  router.get("/:layer/:z/:x/:y{.+\\.webp}", async (c) => {
-    const layer = c.req.param("layer");
-    const coords = parseCoords(c);
-    if (!coords) {
-      return c.json({ error: "invalid_tile_coords" }, 400);
-    }
-
-    try {
-      const bytes = await rasterTilesRepository.getTile(
-        layer,
-        coords.z,
-        coords.x,
-        coords.y,
-      );
-      // Sheets are rectangles on a globe: most of a covering tile range falls
-      // outside the scan, and 204 is what a raster source expects there.
-      if (!bytes) {
-        return c.body(null, 204, { "Cache-Control": RASTER_CACHE_CONTROL });
-      }
-      return c.body(bytes as unknown as ArrayBuffer, 200, {
-        "Content-Type": "image/webp",
-        "Cache-Control": RASTER_CACHE_CONTROL,
-      });
-    } catch (err) {
-      if (err instanceof UnknownTileLayerError) {
-        return c.json({ error: "unknown_layer", layer: err.layerId }, 404);
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: "tile_read_failed", message }, 500);
     }
   });
 

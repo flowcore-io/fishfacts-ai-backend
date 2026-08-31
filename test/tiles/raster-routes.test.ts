@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
-  HISTORIC_CHART_LAYERS,
-  listHistoricChartLayers,
+  HISTORIC_CHART_SHEETS,
+  listHistoricChartSheets,
 } from "../../src/tiles/historic-charts";
-import type { RasterTilesRepository } from "../../src/tiles/raster-repository";
+import {
+  type RasterTilesRepository,
+  UnknownChartSheetError,
+} from "../../src/tiles/raster-repository";
 import type { TilesRepository } from "../../src/tiles/repository";
-import { UnknownTileLayerError } from "../../src/tiles/repository";
 import { createTilesRouter } from "../../src/tiles/routes";
 
 const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x01, 0x02, 0x03, 0x04]);
@@ -17,7 +19,7 @@ const vectorRepository = {
 
 function makeApp(
   getTile: (
-    layer: string,
+    sheet: string,
     z: number,
     x: number,
     y: number,
@@ -33,7 +35,7 @@ function makeApp(
 describe("raster chart tiles", () => {
   test("serves a webp tile with immutable caching", async () => {
     const app = makeApp(async () => WEBP);
-    const res = await app.request("/historic-charts-559/10/525/301.webp");
+    const res = await app.request("/historic-charts/559/10/525/301.webp");
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("image/webp");
@@ -49,14 +51,14 @@ describe("raster chart tiles", () => {
       seen.push([layer, z, x, y]);
       return WEBP;
     });
-    await app.request("/historic-charts-560/8/132/58.webp");
+    await app.request("/historic-charts/560/8/132/58.webp");
 
-    expect(seen).toEqual([["historic-charts-560", 8, 132, 58]]);
+    expect(seen).toEqual([["560", 8, 132, 58]]);
   });
 
   test("204s where the sheet does not cover the tile", async () => {
     const app = makeApp(async () => null);
-    const res = await app.request("/historic-charts-559/10/1/1.webp");
+    const res = await app.request("/historic-charts/559/10/1/1.webp");
 
     expect(res.status).toBe(204);
     // Absence is as durable as presence — a re-cut publishes a new archive.
@@ -65,17 +67,14 @@ describe("raster chart tiles", () => {
     );
   });
 
-  test("404s an unknown layer", async () => {
-    const app = makeApp(async (layer) => {
-      throw new UnknownTileLayerError(layer);
+  test("404s an unknown sheet", async () => {
+    const app = makeApp(async (sheet) => {
+      throw new UnknownChartSheetError(sheet);
     });
-    const res = await app.request("/historic-charts-999/5/1/1.webp");
+    const res = await app.request("/historic-charts/999/5/1/1.webp");
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({
-      error: "unknown_layer",
-      layer: "historic-charts-999",
-    });
+    expect(await res.json()).toEqual({ error: "unknown_sheet", sheet: "999" });
   });
 
   test("400s out-of-range zoom before touching the archive", async () => {
@@ -84,7 +83,7 @@ describe("raster chart tiles", () => {
       called = true;
       return WEBP;
     });
-    const res = await app.request("/historic-charts-559/23/1/1.webp");
+    const res = await app.request("/historic-charts/559/23/1/1.webp");
 
     expect(res.status).toBe(400);
     expect(called).toBe(false);
@@ -94,7 +93,7 @@ describe("raster chart tiles", () => {
     const app = makeApp(async () => {
       throw new Error("range request failed");
     });
-    const res = await app.request("/historic-charts-559/10/525/301.webp");
+    const res = await app.request("/historic-charts/559/10/525/301.webp");
 
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ error: "tile_read_failed" });
@@ -104,11 +103,13 @@ describe("raster chart tiles", () => {
     const app = makeApp(async () => WEBP);
     const body = (await (await app.request("/catalog")).json()) as {
       layers: unknown[];
-      rasterLayers: { id: string }[];
+      rasterLayers: { sheet: string; tiles: string }[];
     };
 
     expect(Array.isArray(body.layers)).toBe(true);
-    expect(body.rasterLayers.map((l) => l.id)).toContain("historic-charts-559");
+    const sheet559 = body.rasterLayers.find((l) => l.sheet === "559");
+    // The template is the contract the FE builds its raster source from.
+    expect(sheet559?.tiles).toBe("historic-charts/559/{z}/{x}/{y}.webp");
   });
 });
 
@@ -116,25 +117,24 @@ describe("historic chart catalog", () => {
   test("every sheet carries its CC BY attribution", () => {
     // Attribution is a licence condition, not decoration: a layer that reaches
     // the map without one puts us in breach.
-    for (const layer of listHistoricChartLayers()) {
-      expect(layer.attribution).toContain("Kartverket");
-      expect(layer.attribution).toContain("CC BY 4.0");
+    for (const chart of listHistoricChartSheets()) {
+      expect(chart.attribution).toContain("Kartverket");
+      expect(chart.attribution).toContain("CC BY 4.0");
     }
   });
 
-  test("keys match their layer id, and asset ids are distinct", () => {
+  test("keys match their sheet, and asset ids are distinct", () => {
     const assetIds = new Set<string>();
-    for (const [key, layer] of Object.entries(HISTORIC_CHART_LAYERS)) {
-      expect(key).toBe(layer.id);
-      expect(layer.id).toBe(`historic-charts-${layer.sheet}`);
-      assetIds.add(layer.assetId);
+    for (const [key, chart] of Object.entries(HISTORIC_CHART_SHEETS)) {
+      expect(key).toBe(chart.sheet);
+      assetIds.add(chart.assetId);
     }
-    expect(assetIds.size).toBe(Object.keys(HISTORIC_CHART_LAYERS).length);
+    expect(assetIds.size).toBe(Object.keys(HISTORIC_CHART_SHEETS).length);
   });
 
   test("bounds are ordered west,south,east,north", () => {
-    for (const layer of listHistoricChartLayers()) {
-      const [west, south, east, north] = layer.bounds;
+    for (const chart of listHistoricChartSheets()) {
+      const [west, south, east, north] = chart.bounds;
       expect(west).toBeLessThan(east);
       expect(south).toBeLessThan(north);
     }

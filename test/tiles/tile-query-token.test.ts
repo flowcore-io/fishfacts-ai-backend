@@ -40,7 +40,7 @@ function makeApp() {
 describe("tile query-string auth", () => {
   test("accepts a query token on a webp tile", async () => {
     const res = await makeApp().request(
-      `/api/tiles/historic-charts-559/10/525/301.webp?token=${VALID}`,
+      `/api/tiles/historic-charts/559/10/525/301.webp?token=${VALID}`,
     );
     expect(res.status).toBe(200);
   });
@@ -54,7 +54,7 @@ describe("tile query-string auth", () => {
 
   test("rejects a bad query token on a webp tile", async () => {
     const res = await makeApp().request(
-      "/api/tiles/historic-charts-559/10/525/301.webp?token=nope",
+      "/api/tiles/historic-charts/559/10/525/301.webp?token=nope",
     );
     expect(res.status).toBe(401);
   });
@@ -66,7 +66,7 @@ describe("tile query-string auth", () => {
 
   test("header auth still works for webp tiles", async () => {
     const res = await makeApp().request(
-      "/api/tiles/historic-charts-559/10/525/301.webp",
+      "/api/tiles/historic-charts/559/10/525/301.webp",
       { headers: { "x-auth-token": VALID } },
     );
     expect(res.status).toBe(200);
