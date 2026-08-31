@@ -28,13 +28,17 @@ function parseCoords(c: {
   const x = Number.parseInt(c.req.param("x"), 10);
   const y = Number.parseInt(c.req.param("y").replace(/\.\w+$/, ""), 10);
 
-  if (
-    !Number.isFinite(z) ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    z < 0 ||
-    z > 22
-  ) {
+  if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  if (z < 0 || z > 22) {
+    return null;
+  }
+  // A zoom level holds 2^z tiles per axis. Rejecting anything outside that here
+  // keeps garbage from reaching a tile store, which would otherwise answer 204
+  // and let the caller cache the nonsense.
+  const perAxis = 2 ** z;
+  if (x < 0 || y < 0 || x >= perAxis || y >= perAxis) {
     return null;
   }
   return { z, x, y };
@@ -89,8 +93,16 @@ export function createTilesRouter({
         if (err instanceof UnknownChartSheetError) {
           return c.json({ error: "unknown_sheet", sheet: err.sheet }, 404);
         }
-        const message = err instanceof Error ? err.message : String(err);
-        return c.json({ error: "tile_read_failed", message }, 500);
+        // Keep the upstream detail in the logs: a failure here names the Assets
+        // host and archive URL, which the caller has no business seeing.
+        console.error("[Tiles] historic chart read failed", {
+          sheet,
+          z: coords.z,
+          x: coords.x,
+          y: coords.y,
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return c.json({ error: "tile_read_failed" }, 500);
       }
     },
   );

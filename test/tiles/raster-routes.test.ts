@@ -89,14 +89,42 @@ describe("raster chart tiles", () => {
     expect(called).toBe(false);
   });
 
-  test("500s a read failure without leaking a partial body", async () => {
+  test("500s a read failure without echoing the upstream detail", async () => {
     const app = makeApp(async () => {
-      throw new Error("range request failed");
+      throw new Error("fetch https://assets-api.usable.dev/... failed");
     });
     const res = await app.request("/historic-charts/559/10/525/301.webp");
+    const body = await res.text();
 
     expect(res.status).toBe(500);
-    expect(await res.json()).toMatchObject({ error: "tile_read_failed" });
+    expect(JSON.parse(body)).toEqual({ error: "tile_read_failed" });
+    // The Assets host is ours to know and the caller's to not.
+    expect(body).not.toContain("assets-api");
+  });
+
+  test.each([
+    ["negative x", "/historic-charts/559/3/-1/2.webp"],
+    ["negative y", "/historic-charts/559/3/2/-1.webp"],
+    ["x beyond 2^z", "/historic-charts/559/3/8/2.webp"],
+    ["y beyond 2^z", "/historic-charts/559/3/2/8.webp"],
+  ])("400s %s before touching the archive", async (_label, path) => {
+    let called = false;
+    const app = makeApp(async () => {
+      called = true;
+      return WEBP;
+    });
+    const res = await app.request(path);
+
+    expect(res.status).toBe(400);
+    expect(called).toBe(false);
+  });
+
+  test("accepts the last valid tile at a zoom", async () => {
+    const app = makeApp(async () => WEBP);
+    // z3 holds 8 tiles per axis, so 7/7 is the corner and must not be rejected.
+    const res = await app.request("/historic-charts/559/3/7/7.webp");
+
+    expect(res.status).toBe(200);
   });
 
   test("catalog lists raster layers alongside the vector ones", async () => {
