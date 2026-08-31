@@ -36,6 +36,7 @@ import type { ReportsClient } from "./reports/client";
 import { createReportsRouter } from "./reports/routes";
 import type { SildelagetCatchRepository } from "./sildelaget/repository";
 import { createSildelagetCatchRouter } from "./sildelaget/routes";
+import type { RasterTilesRepository } from "./tiles/raster-repository";
 import type { TilesRepository } from "./tiles/repository";
 import { createTilesRouter } from "./tiles/routes";
 
@@ -51,6 +52,7 @@ export type AppDependencies = {
   gebcoRepository: GebcoRepository;
   poiRepository: PoiRepository;
   tilesRepository: TilesRepository;
+  rasterTilesRepository: RasterTilesRepository;
   areasRepository: AreasRepository;
   sildelagetCatchRepository: SildelagetCatchRepository;
   financialsRepository: FinancialsRepository;
@@ -74,6 +76,7 @@ export function createApp({
   gebcoRepository,
   poiRepository,
   tilesRepository,
+  rasterTilesRepository,
   areasRepository,
   sildelagetCatchRepository,
   financialsRepository,
@@ -114,7 +117,10 @@ export function createApp({
   app.use("/api/reports", authMiddleware);
   app.use("/api/reports/*", authMiddleware);
 
-  app.route("/api/tiles", createTilesRouter({ tilesRepository }));
+  app.route(
+    "/api/tiles",
+    createTilesRouter({ tilesRepository, rasterTilesRepository }),
+  );
   app.route(
     "/api/areas",
     createAreasRouter({

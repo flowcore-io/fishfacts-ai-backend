@@ -16,6 +16,12 @@ const envSchema = z.object({
   SERVICE_URL: z.string().url().optional(),
   USABLE_WORKSPACE_ID: z.string().uuid(),
   USABLE_API_BASE_URL: z.string().url().default("https://usable.dev/api"),
+  // Historic-chart raster tiles live as public PMTiles archives in Usable
+  // Assets and are read from here with range requests.
+  ASSETS_PUBLIC_BASE_URL: z
+    .string()
+    .url()
+    .default("https://assets-api.usable.dev"),
   USABLE_API_TOKEN: z.string().min(1),
   JMELDING_FRAGMENT_TYPE_ID: z
     .string()

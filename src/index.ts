@@ -38,6 +38,7 @@ import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
 import { SildelagetAisAnchorRepository } from "./sildelaget/ais-anchor-repository";
 import { SildelagetCatchProjector } from "./sildelaget/projector";
 import { SildelagetCatchRepository } from "./sildelaget/repository";
+import { RasterTilesRepository } from "./tiles/raster-repository";
 import { TilesRepository } from "./tiles/repository";
 import { UsableApiClient } from "./usable/client";
 
@@ -60,6 +61,9 @@ const poiFragmentProjector = new PoiFragmentProjector(env, usable, () =>
   poiRepository.invalidate(),
 );
 const tilesRepository = new TilesRepository(db);
+const rasterTilesRepository = new RasterTilesRepository(
+  env.ASSETS_PUBLIC_BASE_URL,
+);
 const areasRepository = new AreasRepository(db);
 const areasProjector = new AreasProjector(areasRepository);
 const sildelagetAisAnchorRepository = new SildelagetAisAnchorRepository(db);
@@ -154,6 +158,7 @@ const app = createApp({
   gebcoRepository,
   poiRepository,
   tilesRepository,
+  rasterTilesRepository,
   areasRepository,
   sildelagetCatchRepository,
   financialsRepository,

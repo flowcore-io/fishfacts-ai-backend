@@ -2,7 +2,9 @@ import type { TokenCache } from "@/auth/cache";
 import type { FishfactsApiClient } from "@/fishfacts/client";
 import type { MiddlewareHandler } from "hono";
 
-const TILE_PATH_RE = /^\/api\/tiles\/.+\.pbf$/;
+// Map raster/vector sources fetch tiles without our auth header, so the token
+// rides the query string for tile URLs only.
+const TILE_PATH_RE = /^\/api\/tiles\/.+\.(pbf|webp)$/;
 
 export function createAuthMiddleware(
   client: FishfactsApiClient,
