@@ -14,6 +14,22 @@
  * to show without that pass.
  */
 
+// TODO: this catalog should live in the database, not be compiled in. It is a
+// static snapshot of nine Kartverket sheets, which holds only while the set is
+// fixed and we are the only ones who can change it. Once admins can upload
+// their own scans and place them, every field below becomes data an operator
+// edits — the assetId of the archive they uploaded, the bounds and transform
+// they placed it with, their own attribution — and none of that should need a
+// release to change.
+//
+// placementErrorKm is the clearest sign of it: sheets 552-555 are 11-78 km out
+// and can only be corrected by a human placing them, which produces a new
+// archive and new bounds. Today that is an edit to this file.
+//
+// The frontend's manifest is a compiled-in constant for the same reason and
+// moves with this one; it already reads the same shape from /api/tiles/catalog.
+// Gated on Gilli approving admin upload and placement.
+
 export type HistoricChartLayer = {
   sheet: string;
   year: number;

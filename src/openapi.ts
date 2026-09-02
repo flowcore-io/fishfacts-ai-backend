@@ -22,7 +22,7 @@ export const openApiDocument = {
     {
       name: "Tiles",
       description:
-        "Mapbox Vector Tile (MVT) endpoints. Tiles are produced server-side from PostGIS; layers are listed via /api/tiles/catalog.",
+        "Tile endpoints. Vector layers are Mapbox Vector Tiles produced server-side from PostGIS; raster layers are pre-cut WebP served from per-sheet PMTiles archives. Both are listed via /api/tiles/catalog.",
     },
     {
       name: "Areas",
@@ -1067,6 +1067,86 @@ export const openApiDocument = {
             },
           },
           "401": { description: "Missing or invalid x-auth-token" },
+        },
+      },
+    },
+    "/api/tiles/historic-charts/{sheet}/{z}/{x}/{y}.webp": {
+      get: {
+        tags: ["Tiles"],
+        summary: "Fetch a historic chart raster tile",
+        description:
+          "Returns a pre-cut WebP tile from a Kartverket Fiskerikartserien sheet. Tiles are read out of one PMTiles archive per sheet with HTTP range requests, and are immutable: a re-cut publishes a new archive. Returns `204 No Content` where the sheet does not cover the tile, which is most of any covering tile range.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "sheet",
+            in: "path",
+            required: true,
+            description: "Sheet number from /api/tiles/catalog.",
+            schema: { type: "string", example: "559" },
+          },
+          {
+            name: "z",
+            in: "path",
+            required: true,
+            schema: { type: "integer", minimum: 0, maximum: 22 },
+          },
+          {
+            name: "x",
+            in: "path",
+            required: true,
+            schema: { type: "integer", minimum: 0 },
+          },
+          {
+            name: "y",
+            in: "path",
+            required: true,
+            description:
+              "Tile Y coordinate. The `.webp` extension is part of the URL.",
+            schema: { type: "integer", minimum: 0 },
+          },
+          {
+            name: "token",
+            in: "query",
+            required: false,
+            description:
+              "FishFacts auth token. Accepted on tile paths only, because a map raster source fetches tiles itself and cannot send the x-auth-token header.",
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "WebP raster tile",
+            content: {
+              "image/webp": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          "204": { description: "Tile outside the sheet's coverage" },
+          "400": {
+            description: "Invalid tile coordinates",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "404": {
+            description: "Unknown sheet",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UnknownSheetError" },
+              },
+            },
+          },
+          "500": {
+            description: "Tile read failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
         },
       },
     },
@@ -2297,6 +2377,14 @@ export const openApiDocument = {
           layer: { type: "string" },
         },
       },
+      UnknownSheetError: {
+        type: "object",
+        required: ["error", "sheet"],
+        properties: {
+          error: { type: "string", enum: ["unknown_sheet"] },
+          sheet: { type: "string" },
+        },
+      },
       EventAcceptedResponse: {
         type: "object",
         required: ["eventId"],
@@ -2348,13 +2436,65 @@ export const openApiDocument = {
           },
         },
       },
+      HistoricChartLayer: {
+        type: "object",
+        required: [
+          "sheet",
+          "year",
+          "description",
+          "attribution",
+          "bounds",
+          "placementErrorKm",
+          "tiles",
+        ],
+        properties: {
+          sheet: { type: "string", example: "559" },
+          year: { type: "integer", example: 2005 },
+          assetId: {
+            type: "string",
+            description:
+              "Usable Assets file id of the sheet's PMTiles archive.",
+          },
+          description: { type: "string" },
+          attribution: {
+            type: "string",
+            description:
+              "Required by CC BY 4.0 — render this wherever the sheet is drawn.",
+            example:
+              "Kartverket: Fiskerikart 559 — Nordsjøen – nordre blad, 2005 — CC BY 4.0",
+          },
+          bounds: {
+            type: "array",
+            description:
+              "[west, south, east, north] from the fitted graticule.",
+            items: { type: "number" },
+            minItems: 4,
+            maxItems: 4,
+          },
+          placementErrorKm: {
+            type: "number",
+            description:
+              "How far the fitted georeference lands from the sheet's own printed corners. Sheets above a few km are not fit to show without a human placement pass.",
+            example: 1.4,
+          },
+          tiles: {
+            type: "string",
+            description: "Tile URL template, relative to /api/tiles.",
+            example: "historic-charts/559/{z}/{x}/{y}.webp",
+          },
+        },
+      },
       TileCatalogResponse: {
         type: "object",
-        required: ["layers"],
+        required: ["layers", "rasterLayers"],
         properties: {
           layers: {
             type: "array",
             items: { $ref: "#/components/schemas/TileLayer" },
+          },
+          rasterLayers: {
+            type: "array",
+            items: { $ref: "#/components/schemas/HistoricChartLayer" },
           },
         },
       },
