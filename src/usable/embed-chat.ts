@@ -41,7 +41,15 @@ type StreamEvent = {
   data?: {
     textDelta?: string;
     status?: string;
+    model?: string;
   };
+};
+
+export type EmbedChatAnswer = {
+  text: string;
+  /** Which model the embed config served, off the stream's `token-usage`
+   * events — recorded on verdicts so a drifting config stays visible. */
+  model: string | null;
 };
 
 /**
@@ -52,8 +60,9 @@ type StreamEvent = {
  * non-`completed` status — a truncated answer looks exactly like a short one,
  * and this text becomes polygons downstream.
  */
-export function assembleEmbedChatText(sse: string): string {
+export function assembleEmbedChatText(sse: string): EmbedChatAnswer {
   let text = "";
+  let model: string | null = null;
   let endStatus: string | null = null;
 
   for (const line of sse.split("\n")) {
@@ -69,6 +78,8 @@ export function assembleEmbedChatText(sse: string): string {
     }
     if (event.type === "text-delta") {
       text += event.data?.textDelta ?? "";
+    } else if (event.type === "token-usage") {
+      model = event.data?.model ?? model;
     } else if (event.type === "stream-end") {
       endStatus = event.data?.status ?? null;
     }
@@ -79,7 +90,7 @@ export function assembleEmbedChatText(sse: string): string {
       `Embed chat stream ended with status ${JSON.stringify(endStatus)} — refusing a possibly truncated answer`,
     );
   }
-  return text;
+  return { text, model };
 }
 
 /**
@@ -89,7 +100,7 @@ export function assembleEmbedChatText(sse: string): string {
 export async function postEmbedChat(
   env: Env,
   messages: EmbedChatMessage[],
-): Promise<string> {
+): Promise<EmbedChatAnswer> {
   const key = env.INGESTION_EMBED_KEY;
   if (!key) {
     throw new Error(

@@ -9,9 +9,11 @@ import type { Env } from "@/env";
 import type { VesselDirectory } from "@/fishfacts/vessel-directory";
 import { createEmbedChatReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
+import type { RegulationQueueRepository } from "@/regulations/queue-repository";
 import type { SildelagetAisAnchorRepository } from "@/sildelaget/ais-anchor-repository";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
+import { postEmbedChat } from "@/usable/embed-chat";
 import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
@@ -19,6 +21,7 @@ import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
 import { createLogasavnClosuresJob } from "./logasavn-closures";
 import { createLogasavnSweepJob } from "./logasavn-sweep";
+import { createRegulationVerdictJob } from "./regulation-verdict";
 import { createSildelagetAisAnchorsJob } from "./sildelaget-ais-anchors";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
 import type { JobDefinition } from "./types";
@@ -36,6 +39,7 @@ export function createJobDefinitions(
   aisBucketReader: FlowcoreBucketReader,
   sildelagetAisAnchorRepository: SildelagetAisAnchorRepository,
   vesselDirectory: VesselDirectory,
+  regulationQueueRepository: RegulationQueueRepository,
 ): JobDefinition[] {
   return [
     {
@@ -138,6 +142,29 @@ export function createJobDefinitions(
         writer,
         usable,
         createEmbedChatReader(env),
+      ),
+    },
+    {
+      id: "regulation-verdict",
+      name: "Regulation case verdicts (approval queue)",
+      // Manual only, same impossible-date idiom as `logasavn-closures` and for
+      // the same reason: it costs an LLM call per case, the first-run backlog
+      // is every case ever ingested, and the output earns a schedule after
+      // someone has looked at what it says. Run via POST /api/jobs/run.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        // Cases per run, oldest pending first. Bounds the spend.
+        limit: z.coerce.number().int().min(1).default(25),
+        // Specific cases (case keys) — the re-judge path: an explicit list
+        // bypasses the pending filter and spends on whatever it names.
+        caseKeys: z.array(z.string()).optional(),
+      }),
+      execute: createRegulationVerdictJob(
+        env,
+        writer,
+        usable,
+        regulationQueueRepository,
+        (messages) => postEmbedChat(env, messages),
       ),
     },
     {

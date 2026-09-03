@@ -16,7 +16,7 @@ describe("assembleEmbedChatText", () => {
       frame("text-delta", { textDelta: "true}" }),
       COMPLETED,
     ].join("\n");
-    expect(assembleEmbedChatText(sse)).toBe('{"ok":true}');
+    expect(assembleEmbedChatText(sse).text).toBe('{"ok":true}');
   });
 
   test("ignores event types it does not consume", () => {
@@ -27,7 +27,7 @@ describe("assembleEmbedChatText", () => {
       frame("summary", { text: "Completed" }),
       COMPLETED,
     ].join("\n");
-    expect(assembleEmbedChatText(sse)).toBe("answer");
+    expect(assembleEmbedChatText(sse).text).toBe("answer");
   });
 
   test("survives a non-JSON data line without dropping the answer", () => {
@@ -36,7 +36,7 @@ describe("assembleEmbedChatText", () => {
       frame("text-delta", { textDelta: "answer" }),
       COMPLETED,
     ].join("\n");
-    expect(assembleEmbedChatText(sse)).toBe("answer");
+    expect(assembleEmbedChatText(sse).text).toBe("answer");
   });
 
   test("refuses a stream with no stream-end", () => {
