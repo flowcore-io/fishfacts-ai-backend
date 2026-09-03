@@ -17,6 +17,8 @@ type MatchedPoint = {
   start: number;
   end: number;
   format: "dms" | "dmm-long" | "dmm-symbol";
+  /** The `1.` / `2.` the notice numbers this position with, when it has one. */
+  ordinal: number | null;
 };
 
 const NORWAY_BOX = { minLat: 54, maxLat: 82, minLon: -10, maxLon: 35 };
@@ -30,6 +32,32 @@ const DMM_LONG_RE =
 
 const DMM_SYMBOL_RE =
   /(\d{1,3})\s*°\s*([\d.,]+)\s*['°]\s*([NS])\s+(\d{1,3})\s*°\s*([\d.,]+)\s*['°]\s*([EØW])/gi;
+
+// A notice numbers each closure's corner positions `1. … 2. … N.` and starts
+// over at `1.` for the next one, so the ordinal immediately in front of a
+// coordinate tells us where one ring ends and the next begins.
+const POSITION_ORDINAL_RE = /(\d{1,2})\s*[.)]\s*$/;
+const ORDINAL_LOOKBEHIND_CHARS = 8;
+
+// Evidence, in the prose BETWEEN two consecutive positions, that the notice has
+// moved on to a different closure. Any one of them ends the current ring.
+const SECTION_MARKER_RE = /§+\s*\d+/;
+const SECTION_MARKER_RE_G = /§+\s*\d+/g;
+const RING_TERMINATOR_RE =
+  /her(?:fra|ifra)\b[\s\S]{0,80}?\b(?:posisjon|pkt\.?|punkt)\s*1\b/i;
+const CLOSURE_LEAD_IN_RE =
+  /følgende posisjoner|avgrenset av rette linjer|det er forbudt/i;
+
+// "… på Gåsværfjorden og Mesøyfjorden i Nordland avgrenset av …" — the place a
+// lead-in names, taken from the source's own capitalisation rather than a
+// gazetteer. Used only to label an area; nothing renders off it.
+const PLACE_IN_COUNTY_RE_G =
+  /\b(?:på|ved|i)\s+(\p{Lu}[\p{L}-]*(?:\s+og\s+\p{Lu}[\p{L}-]*)*)\s+i\s+(\p{Lu}[\p{L}-]*(?:\s+og\s+\p{Lu}[\p{L}-]*)*)/gu;
+/** "Område A" / "Område B" — the label some notices give a ring instead of a §. */
+const AREA_LABEL_RE_G = /^\s*Område\s+[^\n]{1,20}$/gm;
+const LEAD_IN_TAIL_CHARS = 400;
+/** How far back a heading may sit and still be taken as an area's label. */
+const HEADING_NAME_LOOKBACK_CHARS = 1500;
 
 const HEADING_PATTERNS: { re: RegExp; group: number }[] = [
   { re: /^\s*-\s+([A-ZÆØÅa-zæøå][^\n]{0,79})$/gm, group: 1 },
@@ -106,6 +134,15 @@ function dedupByProximity(matches: MatchedPoint[]): MatchedPoint[] {
   return kept;
 }
 
+function readPositionOrdinal(text: string, matchStart: number): number | null {
+  const before = text.slice(
+    Math.max(0, matchStart - ORDINAL_LOOKBEHIND_CHARS),
+    matchStart,
+  );
+  const matched = before.match(POSITION_ORDINAL_RE);
+  return matched ? Number(matched[1]) : null;
+}
+
 function findDmsMatches(text: string, sink: MatchedPoint[]): void {
   DMS_RE.lastIndex = 0;
   for (const match of text.matchAll(DMS_RE)) {
@@ -129,6 +166,7 @@ function findDmsMatches(text: string, sink: MatchedPoint[]): void {
       start: match.index,
       end: match.index + match[0].length,
       format: "dms",
+      ordinal: readPositionOrdinal(text, match.index),
     });
   }
 }
@@ -154,6 +192,7 @@ function findDmmLongMatches(text: string, sink: MatchedPoint[]): void {
       start: match.index,
       end: match.index + match[0].length,
       format: "dmm-long",
+      ordinal: readPositionOrdinal(text, match.index),
     });
   }
 }
@@ -179,6 +218,7 @@ function findDmmSymbolMatches(text: string, sink: MatchedPoint[]): void {
       start: match.index,
       end: match.index + match[0].length,
       format: "dmm-symbol",
+      ordinal: readPositionOrdinal(text, match.index),
     });
   }
 }
@@ -240,26 +280,86 @@ function nearestHeading(
   return candidate?.name ?? null;
 }
 
-function groupByName(matches: MatchedPoint[], text: string): NamedArea[] {
+/**
+ * True when the notice itself says the previous ring has ended: its position
+ * numbering starts over, it closes the ring back to position 1, it opens a new
+ * `§`, it introduces another closure, or it moves under a different heading.
+ *
+ * Grouping used to key on the heading alone, which merged every closure a
+ * notice listed under one heading into a single ring — J-95-2026's eight fjord
+ * closures came out as two areas and drew as edges from Finnmark to Trøndelag
+ * (report d981acd8).
+ */
+function startsNewArea(
+  previous: MatchedPoint,
+  current: MatchedPoint,
+  gap: string,
+  previousHeading: string | null,
+  currentHeading: string | null,
+): boolean {
+  // Only a return to 1 counts as a restart, because that is what every notice
+  // does. Any other backwards step is a numbering typo inside one ring — the
+  // kind J-125-2026 § 12 makes when it numbers its last two corners "5." and
+  // "5." — and splitting on it would cut a real closure in half.
+  if (previous.ordinal !== null && current.ordinal === 1) return true;
+  if (RING_TERMINATOR_RE.test(gap)) return true;
+  if (SECTION_MARKER_RE.test(gap)) return true;
+  if (CLOSURE_LEAD_IN_RE.test(gap)) return true;
+  return currentHeading !== previousHeading;
+}
+
+/**
+ * A label for the closure, taken only from what the source states — the heading
+ * it sits under, else the "Område X" it is called, the place its lead-in names,
+ * or the `§` it opens. Never invented: nothing renders off this, but the
+ * assistant reads it back.
+ */
+function areaNameFor(gap: string, heading: string | null): string | null {
+  if (heading) return heading;
+  const tail = gap.slice(-LEAD_IN_TAIL_CHARS);
+  const labels = tail.match(AREA_LABEL_RE_G);
+  if (labels) return labels.at(-1)?.trim() ?? null;
+  // The LAST lead-in in the gap, not the first: the tail can still carry prose
+  // trailing the previous closure, whose place would otherwise win.
+  const place = [...tail.matchAll(PLACE_IN_COUNTY_RE_G)].at(-1);
+  if (place) return `${place[1]} i ${place[2]}`;
+  const sections = tail.match(SECTION_MARKER_RE_G);
+  return sections?.at(-1) ?? null;
+}
+
+function groupIntoAreas(matches: MatchedPoint[], text: string): NamedArea[] {
   const headings = findHeadings(text);
-  const buckets = new Map<string, NamedArea>();
-  const order: string[] = [];
+  const areas: NamedArea[] = [];
+  let current: NamedArea | null = null;
+  let previous: MatchedPoint | null = null;
+  let previousHeading: string | null = null;
   for (const m of matches) {
-    const name = nearestHeading(headings, m.start, 1500);
-    const key = name ?? "__unnamed__";
-    let area = buckets.get(key);
-    if (!area) {
-      area = { name, points: [] };
-      buckets.set(key, area);
-      order.push(key);
+    // Which heading we sit under is unbounded — a section does not end because
+    // its ring runs past the naming window. Bounding both is what used to cut
+    // J-117-2026's Varanger closure in half after its second corner.
+    const heading = nearestHeading(headings, m.start, Number.POSITIVE_INFINITY);
+    const label = nearestHeading(
+      headings,
+      m.start,
+      HEADING_NAME_LOOKBACK_CHARS,
+    );
+    const gap =
+      previous === null
+        ? text.slice(0, m.start)
+        : text.slice(previous.end, m.start);
+    if (
+      current === null ||
+      previous === null ||
+      startsNewArea(previous, m, gap, previousHeading, heading)
+    ) {
+      current = { name: areaNameFor(gap, label), points: [] };
+      areas.push(current);
     }
-    area.points.push(m.point);
+    current.points.push(m.point);
+    previous = m;
+    previousHeading = heading;
   }
-  return order.map((key) => {
-    const area = buckets.get(key);
-    if (!area) throw new Error(`missing bucket ${key}`);
-    return area;
-  });
+  return areas;
 }
 
 function computeBbox(areas: NamedArea[]): Bbox | null {
@@ -310,7 +410,7 @@ export function parseJmeldingGeo(
   if (matches.length === 0) {
     return { areas: [], bbox: null, hasGeo: false };
   }
-  const areas = groupByName(matches, text);
+  const areas = groupIntoAreas(matches, text);
   const bbox = computeBbox(areas);
   return {
     areas,
