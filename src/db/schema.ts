@@ -10,6 +10,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 const geometryMultiPoint = customType<{ data: string; driverData: string }>({
@@ -478,5 +479,274 @@ export const fxRate = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.year, table.quote] }),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Regulations approval queue (1st Mate) — the case / revision / geometry model.
+//
+// Projections of the announcement pathway, not a second ingest: the Flowcore
+// events are the durable record and every row here can be rebuilt by replaying
+// them. One CASE per law/notice; N GEOMETRY records per case (a legal amendment
+// may change dates without touching a polygon, a later notice may replace the
+// polygon without duplicating the legal record); one REVISION per observed
+// version of the source text, addressable so an approval can name exactly what
+// it approved.
+//
+// The three status axes are deliberately separate columns and must not be
+// collapsed: what the REGULATION is (draft → published → replaced), where the
+// ADMIN CASE sits in the inbox workflow, and how this record COMPARES to other
+// sources of the same regulation are independent facts. The two validation
+// flags (regulatory / geometry) sit beside them and are only ever written
+// false by ingestion — flipping them is stage ②'s approval, a human act.
+// ---------------------------------------------------------------------------
+
+export const regulationCases = pgTable(
+  "regulation_cases",
+  {
+    // Deterministic (derived from `case_key`), so a replay rebuilds the same
+    // ids and references from other systems survive the rebuild.
+    id: text("id").primaryKey(),
+    // `${sourceType}:${sourceRef}` — the source's own identity for the
+    // regulation, e.g. `fiskeridir-jmelding:J-39-2026`. The idempotency anchor.
+    caseKey: text("case_key").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    jurisdiction: text("jurisdiction").notNull(),
+    // Identity block (§4). Authority and regulation number are nullable —
+    // a metadata-only case is a valid case.
+    title: text("title").notNull(),
+    authority: text("authority"),
+    regulationNumber: text("regulation_number"),
+    sourceUrl: text("source_url").notNull(),
+    category: text("category"),
+    summary: text("summary"),
+    // Applicability block (§4) — queryable structure, never free text, so
+    // "Applicability differs" can be computed between two records. Shape is
+    // `regulationApplicabilitySchema`; null until an extraction fills it.
+    applicability: jsonb("applicability"),
+    // Time block (§4). What the source called its own validity is kept in
+    // `source_status` verbatim; the instants are normalised for reads.
+    sourceStatus: text("source_status").notNull().default("unknown"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    seasonalRecurrence: text("seasonal_recurrence"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    // Change taxonomy, not CRUD verbs: new | amendment | replacement |
+    // reopening | expiry.
+    changeType: text("change_type").notNull().default("new"),
+    // Stage ⑤ headroom: ingested | mismatch | customer_report | expiry.
+    caseType: text("case_type").notNull().default("ingested"),
+    evidence: jsonb("evidence"),
+    // Status axis 1 — the regulation:
+    // draft | validated | published | replaced | expired.
+    regulationStatus: text("regulation_status").notNull().default("draft"),
+    // Status axis 2 — the admin case (§12 inbox):
+    // unread | under_review | awaiting_information |
+    // awaiting_regulatory_validation | awaiting_geometry_validation |
+    // approved | published | rejected | duplicate | expired.
+    adminStatus: text("admin_status").notNull().default("unread"),
+    // Status axis 3 — source comparison (§9): matched | newer_than_operational
+    // | geometry_differs | applicability_differs | missing_legal_reference |
+    // replaced_expired. Null until a second source exists to compare against.
+    sourceComparison: text("source_comparison"),
+    // The two validation flags. Ingestion only ever writes false.
+    regulatoryValidated: boolean("regulatory_validated")
+      .notNull()
+      .default(false),
+    geometryValidated: boolean("geometry_validated").notNull().default(false),
+    // Verdict state of the CURRENT revision, mirrored here for queue queries:
+    // pending | ok | failed. The verdict itself lives on the revision.
+    verdictStatus: text("verdict_status").notNull().default("pending"),
+    // Provenance block (§4).
+    detectedBy: text("detected_by").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
+    lastCheckedAt: timestamp("last_checked_at", {
+      withTimezone: true,
+    }).notNull(),
+    lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    interpretationNotes: text("interpretation_notes"),
+    // §12 inbox fields — stage ② UI, stage ① columns.
+    assignee: text("assignee"),
+    isRead: boolean("is_read").notNull().default(false),
+    urgency: text("urgency"),
+    snoozeUntil: timestamp("snooze_until", { withTimezone: true }),
+    duplicateOfCaseId: text("duplicate_of_case_id"),
+    currentRevisionId: text("current_revision_id").notNull(),
+    contentHash: text("content_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    caseKeyIdx: uniqueIndex("regulation_cases_case_key_idx").on(table.caseKey),
+    adminStatusIdx: index("regulation_cases_admin_status_idx").on(
+      table.adminStatus,
+    ),
+    jurisdictionIdx: index("regulation_cases_jurisdiction_idx").on(
+      table.jurisdiction,
+    ),
+    verdictStatusIdx: index("regulation_cases_verdict_status_idx").on(
+      table.verdictStatus,
+    ),
+  }),
+);
+
+export const regulationCaseRevisions = pgTable(
+  "regulation_case_revisions",
+  {
+    // Deterministic (derived from the announcement signature), so approvals
+    // that name a revision id survive a projection rebuild.
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    // 0-based, in observation order. The current revision is the case's
+    // `current_revision_id`, not max(position) — a rollback stays addressable.
+    position: integer("position").notNull(),
+    contentHash: text("content_hash"),
+    changeType: text("change_type").notNull(),
+    // Who produced this revision: `collector:<job id>` now, `agent` and
+    // `admin:<user>` in stage ②.
+    author: text("author").notNull(),
+    // The raw source snapshot (§4 Provenance, decision 6): what was actually
+    // parsed, kept so geometry can be re-parsed after a parser or POI fix
+    // without re-fetching a source that may have changed or vanished.
+    // PostgreSQL is canonical for this. For Lógasavn statutes the body rides
+    // in the corpus fragment `snapshot_fragment_id` points at; the text lands
+    // here too the first time a reader fetches it.
+    snapshotText: text("snapshot_text"),
+    snapshotUrl: text("snapshot_url").notNull(),
+    snapshotFetchedAt: timestamp("snapshot_fetched_at", { withTimezone: true }),
+    snapshotFragmentId: text("snapshot_fragment_id"),
+    parserVersion: text("parser_version"),
+    // Parse failure is a case state, not an exception: a document that failed
+    // to parse is a case a human needs to see, never a dropped record.
+    parseStatus: text("parse_status").notNull().default("ok"),
+    parseError: text("parse_error"),
+    // The structured verdict for THIS text: pending | ok | failed. `failed`
+    // means the model's answer did not validate against the issue schema —
+    // the verdict fails closed as a state, never as a crash.
+    verdictStatus: text("verdict_status").notNull().default("pending"),
+    verdict: jsonb("verdict"),
+    // Why a failed verdict failed. Its own column: `parse_error` belongs to
+    // the parse stage, and a revision can fail both — each diagnostic must
+    // survive the other.
+    verdictError: text("verdict_error"),
+    verdictModel: text("verdict_model"),
+    verdictConfidence: doublePrecision("verdict_confidence"),
+    verdictRecordedAt: timestamp("verdict_recorded_at", { withTimezone: true }),
+    sourceEventSignature: text("source_event_signature").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    casePositionIdx: uniqueIndex(
+      "regulation_case_revisions_case_position_idx",
+    ).on(table.caseId, table.position),
+    caseIdx: index("regulation_case_revisions_case_idx").on(table.caseId),
+  }),
+);
+
+export const regulationCaseGeometries = pgTable(
+  "regulation_case_geometries",
+  {
+    // Deterministic (revision id + position) — geometry validation in stage ②
+    // is per-area, so each area must stay addressable across rebuilds.
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    position: integer("position").notNull(),
+    name: text("name"),
+    section: text("section"),
+    // closure | exemption | other — only closures are ever drawn.
+    kind: text("kind").notNull().default("closure"),
+    season: text("season"),
+    // The coordinates as the source printed them, verbatim, when the pipeline
+    // that produced this geometry carried them (the statute reader quotes
+    // vertices character-for-character). Null for collectors that emit parsed
+    // points only.
+    verticesQuoted: jsonb("vertices_quoted"),
+    // Parsed vertices, `[{lat, lon}]`, in source order — the vertex SET, not an
+    // interpretation of it. Closing an open run into a polygon would be derived
+    // geometry, which this pipeline never does; hence `geom` is a MultiPoint,
+    // the same deliberate choice `jmelding_geo` made.
+    points: jsonb("points").notNull(),
+    geom: geometryMultiPoint("geom"),
+    // enumerated (vertex list in the source) | preparsed (collector-supplied
+    // points) | described (boundary defined by bearings / bands / references —
+    // flagged, never computed).
+    geometrySource: text("geometry_source").notNull().default("preparsed"),
+    coordinateSystem: text("coordinate_system").notNull().default("WGS84"),
+    precision: text("precision"),
+    geometryValidated: boolean("geometry_validated").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    revisionIdx: index("regulation_case_geometries_revision_idx").on(
+      table.revisionId,
+    ),
+    caseIdx: index("regulation_case_geometries_case_idx").on(table.caseId),
+    geomGistIdx: index("regulation_case_geometries_geom_gist_idx").using(
+      "gist",
+      table.geom,
+    ),
+  }),
+);
+
+// One row per source that vouches for a case. The primary source creates the
+// case; §9 requires that a second source arriving later (e.g. BarentsWatch
+// after a J-melding) is ATTACHED and compared, never turned into a rival case.
+// The attach itself will be an event when the matcher exists — this table is
+// the shape it lands in.
+export const regulationCaseSources = pgTable(
+  "regulation_case_sources",
+  {
+    caseId: text("case_id").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    url: text("url"),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    // Source-comparison state for THIS attachment (§9) — null on the primary.
+    comparison: text("comparison"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull(),
+    lastCheckedAt: timestamp("last_checked_at", {
+      withTimezone: true,
+    }).notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.caseId, table.sourceType, table.sourceRef],
+    }),
+  }),
+);
+
+// Replacement and repeal links, explicit and bidirectional by construction:
+// a row `A replaces B` answers both "what did A replace" and "what replaced
+// B". `target_case_id` stays null until the target is itself a case.
+export const regulationCaseLinks = pgTable(
+  "regulation_case_links",
+  {
+    caseId: text("case_id").notNull(),
+    // replaces | repeals
+    kind: text("kind").notNull(),
+    targetCaseKey: text("target_case_key").notNull(),
+    targetCaseId: text("target_case_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [table.caseId, table.kind, table.targetCaseKey],
+    }),
+    targetIdx: index("regulation_case_links_target_idx").on(
+      table.targetCaseKey,
+    ),
   }),
 );

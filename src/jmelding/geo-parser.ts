@@ -357,14 +357,19 @@ export function areasToFeatureCollection(
   return { type: "FeatureCollection", features };
 }
 
-export function areasToWkt(areas: NamedArea[]): string | null {
-  const allPoints: GeoPoint[] = [];
-  for (const area of areas) {
-    for (const point of area.points) allPoints.push(point);
-  }
-  if (allPoints.length === 0) return null;
-  const inner = allPoints
+/**
+ * One MULTIPOINT for a vertex set, null on empty. Shared with the regulation
+ * case projector so the queue's per-area `geom` and `jmelding_geo.geom` can
+ * never drift in precision or format for the same announcement.
+ */
+export function pointsToMultipointWkt(points: GeoPoint[]): string | null {
+  if (points.length === 0) return null;
+  const inner = points
     .map((p) => `${p.lon.toFixed(6)} ${p.lat.toFixed(6)}`)
     .join(",");
   return `MULTIPOINT(${inner})`;
+}
+
+export function areasToWkt(areas: NamedArea[]): string | null {
+  return pointsToMultipointWkt(areas.flatMap((area) => area.points));
 }

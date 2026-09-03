@@ -5,6 +5,7 @@ import {
 } from "@/events/contracts";
 import { isChunked, reassembleAnnouncement } from "@/events/jmelding-chunking";
 import type { JMeldingGeoProjector } from "@/jmelding/geo-projector";
+import type { RegulationCaseProjector } from "@/regulations/case-projector";
 import { eq, lt } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/postgres-js";
 import type { JMeldingFragmentProjector } from "./jmelding-fragments";
@@ -18,6 +19,7 @@ export class JMeldingChunkAssembler {
     private readonly db: Database,
     private readonly projector: JMeldingFragmentProjector,
     private readonly geoProjector?: JMeldingGeoProjector,
+    private readonly caseProjector?: RegulationCaseProjector,
   ) {}
 
   async handle(item: JMeldingAnnouncementDiscovered) {
@@ -83,15 +85,27 @@ export class JMeldingChunkAssembler {
         });
       }
     }
-    if (!this.geoProjector) return;
-    try {
-      await this.geoProjector.project(item, fragmentId);
-    } catch (error) {
-      console.error("[JMeldingGeo] projection failed", {
-        jmNumber: item.jmNumber,
-        url: item.url,
-        message: error instanceof Error ? error.message : String(error),
-      });
+    if (this.geoProjector) {
+      try {
+        await this.geoProjector.project(item, fragmentId);
+      } catch (error) {
+        console.error("[JMeldingGeo] projection failed", {
+          jmNumber: item.jmNumber,
+          url: item.url,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (this.caseProjector) {
+      try {
+        await this.caseProjector.project(item);
+      } catch (error) {
+        console.error("[RegulationCase] projection failed", {
+          jmNumber: item.jmNumber,
+          url: item.url,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

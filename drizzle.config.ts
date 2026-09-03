@@ -16,6 +16,7 @@ export default defineConfig({
     "sildelaget_*",
     "ais_*",
     "job_*",
+    "regulation_*",
     "!pathway_*",
   ],
 });

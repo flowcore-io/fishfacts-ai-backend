@@ -1,0 +1,1 @@
+ALTER TABLE "regulation_case_revisions" ADD COLUMN "verdict_error" text;
