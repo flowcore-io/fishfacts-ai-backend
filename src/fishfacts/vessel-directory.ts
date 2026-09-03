@@ -42,8 +42,9 @@ export type VesselLookup =
  * 2 — harbour numbers read, registry names folded, marks unpadded (2026-08-19).
  * 3 — the non-active fleet answered as a second pass (2026-08-19).
  * 4 — a strong mark decides a name the active fleet cannot (2026-08-19).
+ * 5 — accented letters folded away in the fallback name (2026-09-03).
  */
-export const VESSEL_MATCH_RULES_VERSION = 4;
+export const VESSEL_MATCH_RULES_VERSION = 5;
 
 export type VesselDirectory = {
   resolve(
@@ -306,6 +307,10 @@ function addName(
  *   v2 -> v3  (the retired fleet)     resolved 110 -> 126   lost 0   changed 0
  *   v3 -> v4  (strong-mark tiebreak)  resolved 126 -> 127   lost 0   changed 0
  *
+ * And again 2026-09-03, over the 246 pairs anchored by then:
+ *
+ *   v4 -> v5  (accents folded away)   resolved 195 -> 198   lost 0   changed 0
+ *
  * v2's four are `Voyager (N -0905)`, `Astrid (S -0264)`, `Quantus (PD-0379)` —
  * registry names carrying their own mark — and `Astrid-Marie (GG-0064)`, which
  * is `Astrid Marie` there.
@@ -321,9 +326,20 @@ function addName(
  * still does NOT resolve — its only claim on vessel 11240 `Anna v` is a
  * harbour number, which this rule cannot read.
  *
- * The 34 that remain carry a Norwegian county fiskerimerke and were searched
- * five ways across every status: they are genuinely absent from FishFacts'
- * registry, which is a product conversation rather than a matching one
+ * v5's three are Faroese: `Christian I Grótinum (KG-0690)` against the
+ * registry's `Christian Í Grótinum`, `Finnur Fridi (FD-0086)` against `Finnur
+ * Fríði`, and `Trøndur I Gøtu (FD-0175)` against `Trondur i Gotu` — the seam
+ * strips accents in BOTH directions, so neither side is the ASCII one. All
+ * three are active hulls with dense AIS, and all three carry their mark only
+ * as a `harbour_number`, so nothing but the name could ever have reached them.
+ * Folding accents collides 17 more active names (456 ambiguous -> 473); none
+ * of them costs a report its answer, because the fold is consulted only where
+ * the exact name found nothing and the report's mark still decides.
+ *
+ * The 48 that remain all carry a Norwegian county fiskerimerke bar one
+ * Murmansk hull, and the 34 of them searched five ways across every status in
+ * 2026-08 were genuinely absent from FishFacts' registry — a product
+ * conversation rather than a matching one
  * (`183e880c` in Usable).
  */
 export function resolveFromIndex(
@@ -548,10 +564,51 @@ export function normalizeVesselText(value: string | null | undefined): string {
 const TRAILING_REGISTRATION_MARK = /\s+[a-z]{1,3}\s?\d{2,6}$/;
 
 /**
- * The fallback form of a name, for the two ways the registry and the journal
+ * The Nordic letters that are letters in their own right rather than a base
+ * letter plus an accent, so NFD leaves them whole. These four are every such
+ * letter in the registry: `ø` (559 names), `æ` (123), `ð` (71), `þ` (11) —
+ * the rest of its non-ASCII letters are Cyrillic, a different alphabet whose
+ * names the journal never writes in Latin.
+ */
+const UNDECOMPOSABLE_LETTERS: Record<string, string> = {
+  ø: "o",
+  æ: "ae",
+  ð: "d",
+  þ: "th",
+};
+
+/** Built from the map's own keys, so the two cannot drift apart. */
+const UNDECOMPOSABLE_LETTER = new RegExp(
+  `[${Object.keys(UNDECOMPOSABLE_LETTERS).join("")}]`,
+  "gu",
+);
+
+/**
+ * The same name with its accents removed — `christian í grótinum` and
+ * `christian i grotinum`, `finnur fríði` and `finnur fridi`.
+ *
+ * Both sides of the seam strip accents, inconsistently and in opposite
+ * directions: the journal writes `Christian I Grótinum` where the registry has
+ * `Christian Í Grótinum`, and `Trøndur í Gøtu` where it has `Trondur i Gotu`.
+ * Neither side is the ASCII one, so BOTH are stripped before comparing.
+ */
+function stripAccents(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .replace(UNDECOMPOSABLE_LETTER, (letter) => UNDECOMPOSABLE_LETTERS[letter]);
+}
+
+/**
+ * The fallback form of a name, for the three ways the registry and the journal
  * write the same vessel differently: the registry concatenates the mark into
- * the name, and the two punctuate differently (`Astrid-Marie` against
- * `Astrid Marie`).
+ * the name, the two punctuate differently (`Astrid-Marie` against `Astrid
+ * Marie`), and they disagree about accents (`Finnur Fridi` against `Finnur
+ * Fríði`).
+ *
+ * Accents are stripped FIRST, because NFD leaves a combining mark behind and
+ * the punctuation squash below would turn it into a space — `grótinum` has to
+ * become `grotinum`, not `gro tinum`.
  *
  * NOT a change to `normalizeVesselText`, deliberately — that one has to stay
  * byte-identical to fishfacts-fe's copy. This is a backend-only widening of
@@ -559,7 +616,7 @@ const TRAILING_REGISTRATION_MARK = /\s+[a-z]{1,3}\s?\d{2,6}$/;
  * comparison, and it is only consulted when the exact name found nothing.
  */
 export function foldVesselName(value: string | null | undefined): string {
-  const spaced = normalizeVesselText(value)
+  const spaced = stripAccents(normalizeVesselText(value))
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
   return spaced.replace(TRAILING_REGISTRATION_MARK, "").trim();

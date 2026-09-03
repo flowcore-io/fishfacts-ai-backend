@@ -237,6 +237,38 @@ const ROWS: VesselRow[] = [
     mmsi: "257020004",
     status: ACTIVE,
   },
+  // The three Faroese hulls as the replica really holds them, and the reason
+  // accents are folded at all. The journal and the registry each strip
+  // accents the other keeps: `Christian I Grótinum` here is `Christian Í
+  // Grótinum`, `Trøndur í Gøtu` is `Trondur i Gotu`. Every one of them carries
+  // its mark ONLY as a harbour number, so the name is the sole way in.
+  {
+    id: 4544,
+    name: "Christian Í Grótinum",
+    registrationNumber: "FO-021755",
+    harbourNumber: "KG 690",
+    callSign: "XPRE",
+    mmsi: "231771000",
+    status: ACTIVE,
+  },
+  {
+    id: 9,
+    name: "Trondur i Gotu",
+    registrationNumber: "FO-000045",
+    harbourNumber: "FD 175",
+    callSign: "XPXP",
+    mmsi: "231307000",
+    status: ACTIVE,
+  },
+  {
+    id: 4712,
+    name: "Finnur Fríði",
+    registrationNumber: "FO-021959",
+    harbourNumber: "FD 86",
+    callSign: "OW2416",
+    mmsi: "231892000",
+    status: ACTIVE,
+  },
   // Retired rows. `Joton` is the live case: in the registry under its exact
   // name AND its exact mark, status 4, no AIS fixes ever — while landing 8 t
   // of mackerel on 2026-08-19.
@@ -279,6 +311,17 @@ const ROWS: VesselRow[] = [
     harbourNumber: "H-130-B",
     callSign: "LM8834",
     mmsi: "257102940",
+    status: 3,
+  },
+  // The predecessor hull, still in the registry under the accented name and
+  // the same call sign. Resolving must reach the ACTIVE one.
+  {
+    id: 3821,
+    name: "Christian í Grótinum (deleted)",
+    registrationNumber: null,
+    harbourNumber: null,
+    callSign: "XPRE",
+    mmsi: "219015442",
     status: 3,
   },
   {
@@ -456,8 +499,58 @@ describe("names the registry writes differently from the journal", () => {
     });
     expect(foldVesselName("Astrid-Marie")).toBe("astrid marie");
     // The fold strips a trailing MARK, not a trailing number: these are names.
-    expect(foldVesselName("Venarøy 2")).toBe("venarøy 2");
+    expect(foldVesselName("Venarøy 2")).toBe("venaroy 2");
     expect(foldVesselName("Vastfjord II")).toBe("vastfjord ii");
+  });
+
+  test("accents are folded away, in whichever direction the seam strips them", () => {
+    // The registry keeps the accent the journal dropped...
+    expect(lookup("Christian I Grótinum", "KG-0690")).toEqual({
+      outcome: "resolved",
+      vesselId: 4544,
+    });
+    expect(lookup("Finnur Fridi", "FD-0086")).toEqual({
+      outcome: "resolved",
+      vesselId: 4712,
+    });
+    // ...and drops the ones the journal kept. Neither side is the ASCII one,
+    // so both are stripped before comparing.
+    expect(lookup("Trøndur I Gøtu", "FD-0175")).toEqual({
+      outcome: "resolved",
+      vesselId: 9,
+    });
+    // `ø`, `æ`, `ð` and `þ` are letters rather than accented ones, so NFD
+    // leaves them whole and they are mapped by hand.
+    expect(foldVesselName("Trøndur í Gøtu")).toBe("trondur i gotu");
+    expect(foldVesselName("Finnur Fríði")).toBe("finnur fridi");
+    expect(foldVesselName("Sæbjørn")).toBe("saebjorn");
+    // A combining mark must not leave a space where the letter was: the
+    // punctuation squash runs AFTER the strip, never before.
+    expect(foldVesselName("Grótinum")).toBe("grotinum");
+  });
+
+  test("stripping accents never reaches past the active hull it names", () => {
+    // A retired `Christian í Grótinum (deleted)` carries the same call sign.
+    // The active hull answers to the name, so the report never reaches it.
+    expect(lookup("Christian Í Grótinum", null)).toEqual({
+      outcome: "resolved",
+      vesselId: 4544,
+    });
+    // And the fold is still weaker than the report's own mark: `LMAB` is
+    // vessel 77's call sign and identifies one hull.
+    expect(lookup("Christian I Grótinum", "LMAB")).toEqual({
+      outcome: "resolved",
+      vesselId: 77,
+    });
+  });
+
+  test("normalizeVesselText keeps its accents, because fishfacts-fe's copy does", () => {
+    // Byte-identical to the FE's helper (sildelagetCatchActions.ts). Folding
+    // belongs to the fallback alone; moving it here would silently make the
+    // two repos disagree about which vessel a report is about.
+    expect(normalizeVesselText(" Christian Í Grótinum ")).toBe(
+      "christian í grótinum",
+    );
   });
 });
 
