@@ -1,6 +1,6 @@
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 /** A case whose current revision still awaits its verdict, with everything
  * the verdict job needs to ask the question. */
@@ -59,5 +59,88 @@ export class RegulationQueueRepository {
       .orderBy(asc(schema.regulationCases.firstSeenAt))
       .limit(options.limit);
     return rows;
+  }
+}
+
+/** What the raw-corpus sync reads per case: the case row joined with its
+ * current revision's verdict, plus that revision's geometries. */
+export type RawSyncCaseRow = {
+  caseKey: string;
+  title: string;
+  jurisdiction: string;
+  sourceType: string;
+  sourceRef: string;
+  sourceUrl: string;
+  category: string | null;
+  summary: string | null;
+  sourceStatus: string;
+  changeType: string;
+  regulationStatus: string;
+  adminStatus: string;
+  verdictStatus: string;
+  effectiveFrom: Date | null;
+  effectiveTo: Date | null;
+  currentRevisionId: string;
+  verdict: unknown;
+  verdictRecordedAt: Date | null;
+};
+
+export class RegulationRawSyncRepository {
+  constructor(private readonly db: Database) {}
+
+  /** Most recently touched first — a bounded run refreshes what moved. */
+  async listCases(limit: number): Promise<RawSyncCaseRow[]> {
+    return await this.db
+      .select({
+        caseKey: schema.regulationCases.caseKey,
+        title: schema.regulationCases.title,
+        jurisdiction: schema.regulationCases.jurisdiction,
+        sourceType: schema.regulationCases.sourceType,
+        sourceRef: schema.regulationCases.sourceRef,
+        sourceUrl: schema.regulationCases.sourceUrl,
+        category: schema.regulationCases.category,
+        summary: schema.regulationCases.summary,
+        sourceStatus: schema.regulationCases.sourceStatus,
+        changeType: schema.regulationCases.changeType,
+        regulationStatus: schema.regulationCases.regulationStatus,
+        adminStatus: schema.regulationCases.adminStatus,
+        verdictStatus: schema.regulationCases.verdictStatus,
+        effectiveFrom: schema.regulationCases.effectiveFrom,
+        effectiveTo: schema.regulationCases.effectiveTo,
+        currentRevisionId: schema.regulationCases.currentRevisionId,
+        verdict: schema.regulationCaseRevisions.verdict,
+        verdictRecordedAt: schema.regulationCaseRevisions.verdictRecordedAt,
+      })
+      .from(schema.regulationCases)
+      .innerJoin(
+        schema.regulationCaseRevisions,
+        eq(
+          schema.regulationCaseRevisions.id,
+          schema.regulationCases.currentRevisionId,
+        ),
+      )
+      .orderBy(desc(schema.regulationCases.updatedAt))
+      .limit(limit);
+  }
+
+  async listGeometries(revisionId: string) {
+    const rows = await this.db
+      .select({
+        position: schema.regulationCaseGeometries.position,
+        name: schema.regulationCaseGeometries.name,
+        kind: schema.regulationCaseGeometries.kind,
+        season: schema.regulationCaseGeometries.season,
+        points: schema.regulationCaseGeometries.points,
+        geometrySource: schema.regulationCaseGeometries.geometrySource,
+      })
+      .from(schema.regulationCaseGeometries)
+      .where(eq(schema.regulationCaseGeometries.revisionId, revisionId))
+      .orderBy(asc(schema.regulationCaseGeometries.position));
+    return rows.map((row) => ({
+      ...row,
+      // Written by the case projector as `[{lat, lon}]`; jsonb reads back
+      // untyped.
+      points: row.points as Array<{ lat: number; lon: number }>,
+    }));
   }
 }

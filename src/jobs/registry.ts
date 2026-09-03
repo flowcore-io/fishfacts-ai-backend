@@ -9,7 +9,10 @@ import type { Env } from "@/env";
 import type { VesselDirectory } from "@/fishfacts/vessel-directory";
 import { createEmbedChatReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
-import type { RegulationQueueRepository } from "@/regulations/queue-repository";
+import type {
+  RegulationQueueRepository,
+  RegulationRawSyncRepository,
+} from "@/regulations/queue-repository";
 import type { SildelagetAisAnchorRepository } from "@/sildelaget/ais-anchor-repository";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
 import type { UsableApiClient } from "@/usable/client";
@@ -21,6 +24,7 @@ import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
 import { createLogasavnClosuresJob } from "./logasavn-closures";
 import { createLogasavnSweepJob } from "./logasavn-sweep";
+import { createRegulationRawSyncJob } from "./regulation-raw-sync";
 import { createRegulationVerdictJob } from "./regulation-verdict";
 import { createSildelagetAisAnchorsJob } from "./sildelaget-ais-anchors";
 import { createSildelagetCatchJournalJob } from "./sildelaget-catchjournal";
@@ -40,6 +44,7 @@ export function createJobDefinitions(
   sildelagetAisAnchorRepository: SildelagetAisAnchorRepository,
   vesselDirectory: VesselDirectory,
   regulationQueueRepository: RegulationQueueRepository,
+  regulationRawSyncRepository: RegulationRawSyncRepository,
 ): JobDefinition[] {
   return [
     {
@@ -165,6 +170,23 @@ export function createJobDefinitions(
         usable,
         regulationQueueRepository,
         (messages) => postEmbedChat(env, messages),
+      ),
+    },
+    {
+      id: "regulation-raw-sync",
+      name: "Regulation raw-corpus sync (parser output into the RAW collection)",
+      // Manual only for the first passes — same idiom as its siblings. No LLM
+      // cost, but it writes into the customer's workspace, and what it writes
+      // earns a schedule after someone has looked at it there.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        // Cases per run, most recently touched first.
+        limit: z.coerce.number().int().min(1).default(100),
+      }),
+      execute: createRegulationRawSyncJob(
+        env,
+        usable,
+        regulationRawSyncRepository,
       ),
     },
     {

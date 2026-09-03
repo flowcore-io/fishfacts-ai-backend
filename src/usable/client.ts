@@ -21,6 +21,9 @@ type CreateFragmentInput = {
   summary: string;
   content: string;
   tags: string[];
+  /** Collection membership at creation — how the raw/processed boundary is
+   * drawn without re-ingesting (it is metadata, not content). */
+  collectionIds?: string[];
   createdAt?: string;
 };
 
@@ -30,6 +33,7 @@ type UpdateFragmentInput = {
   summary: string;
   content: string;
   tags: string[];
+  collectionIds?: string[];
 };
 
 function asRecord(value: unknown): JsonObject | null {

@@ -35,7 +35,10 @@ import { createPathwayRuntime } from "./pathways";
 import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { RegulationCaseProjector } from "./regulations/case-projector";
-import { RegulationQueueRepository } from "./regulations/queue-repository";
+import {
+  RegulationQueueRepository,
+  RegulationRawSyncRepository,
+} from "./regulations/queue-repository";
 import { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
 import { SildelagetAisAnchorRepository } from "./sildelaget/ais-anchor-repository";
@@ -86,6 +89,7 @@ const sildelagetCatchProjector = new SildelagetCatchProjector(
 const regulationCaseProjector = new RegulationCaseProjector(db);
 const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
+const regulationRawSyncRepository = new RegulationRawSyncRepository(db);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
@@ -139,6 +143,7 @@ const jobs = createJobDefinitions(
   sildelagetAisAnchorRepository,
   vesselDirectory,
   regulationQueueRepository,
+  regulationRawSyncRepository,
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
