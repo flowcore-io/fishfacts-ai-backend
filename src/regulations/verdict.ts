@@ -56,7 +56,11 @@ export function buildVerdictMessages(input: {
 }
 
 const verdictAnswerSchema = z.object({
-  issues: z.array(regulationVerdictIssueSchema),
+  // Never empty: a clean document gets an explicit {"field":"overall",
+  // "kind":"ok"} entry. An empty list is a model that did not follow the
+  // instructions, and reading it as a clean bill would be exactly the
+  // silence the `ok` kind exists to forbid.
+  issues: z.array(regulationVerdictIssueSchema).min(1),
 });
 
 export type ParsedVerdict =

@@ -32,9 +32,17 @@ describe("parseVerdictAnswer", () => {
   });
 
   test("peels a fence but otherwise refuses prose", () => {
-    const fenced = `\`\`\`json\n${JSON.stringify({ issues: [] })}\n\`\`\``;
+    const fenced = `\`\`\`json\n${JSON.stringify({ issues: [VALID_ISSUE] })}\n\`\`\``;
     expect(parseVerdictAnswer(fenced).status).toBe("ok");
     expect(parseVerdictAnswer("The statute looks fine to me.").status).toBe(
+      "failed",
+    );
+  });
+
+  test("an empty issue list fails closed — silence is not a clean bill", () => {
+    // A clean document gets an explicit overall/ok entry; a model answering
+    // {"issues": []} did not follow the instructions and vouched for nothing.
+    expect(parseVerdictAnswer(JSON.stringify({ issues: [] })).status).toBe(
       "failed",
     );
   });

@@ -155,7 +155,8 @@ export function createJobDefinitions(
       inputSchema: z.object({
         // Cases per run, oldest pending first. Bounds the spend.
         limit: z.coerce.number().int().min(1).default(25),
-        // Specific cases (case keys) — for re-judging by hand.
+        // Specific cases (case keys) — the re-judge path: an explicit list
+        // bypasses the pending filter and spends on whatever it names.
         caseKeys: z.array(z.string()).optional(),
       }),
       execute: createRegulationVerdictJob(

@@ -80,7 +80,15 @@ export function createRegulationVerdictJob(
       pending.snapshotFragmentId,
       env.LOGASAVN_WORKSPACE_ID,
     );
-    if (!fragment?.content) {
+    if (fragment === null) {
+      // 404 — the fragment is GONE, and that is durable: it earns a recorded
+      // failed verdict a human will see, exactly like a case that never had
+      // text. Throwing here would pin the case to the head of the oldest-first
+      // queue as "transient" forever, burning a limit slot every run.
+      return null;
+    }
+    if (!fragment.content) {
+      // The fragment exists but came back malformed — that IS transient.
       throw new Error(
         `fragment ${pending.snapshotFragmentId} is unreadable — retrying next run`,
       );
@@ -122,11 +130,14 @@ export function createRegulationVerdictJob(
         let verdict: ReturnType<typeof parseVerdictAnswer>;
         let model: string | null = null;
         if (text === null) {
-          // Structurally no text — a metadata-only announcement. Durable, so
-          // it earns a recorded failure a human will see, not a retry loop.
+          // Structurally no text — a metadata-only announcement, or a corpus
+          // fragment that no longer exists. Durable either way, so it earns a
+          // recorded failure a human will see, not a retry loop.
           verdict = {
             status: "failed",
-            error: "case carries no source text to judge",
+            error: pending.snapshotFragmentId
+              ? `source fragment ${pending.snapshotFragmentId} is gone`
+              : "case carries no source text to judge",
           };
         } else {
           const answer = await chat(

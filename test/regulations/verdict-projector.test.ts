@@ -170,7 +170,11 @@ describe("RegulationVerdictProjector", () => {
       .where(eq(schema.regulationCaseRevisions.id, created.revisionId));
     expect(revision?.verdictStatus).toBe("failed");
     expect(revision?.verdict).toBeNull();
-    expect(revision?.parseError).toBe("answer is not JSON");
+    expect(revision?.verdictError).toBe("answer is not JSON");
+    // The parse stage's diagnostic pair is untouched — a revision can fail
+    // both stages, and each error must survive the other.
+    expect(revision?.parseStatus).toBe("ok");
+    expect(revision?.parseError).toBeNull();
 
     const [row] = await runCtx.db
       .select()

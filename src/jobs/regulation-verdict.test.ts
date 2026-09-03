@@ -29,9 +29,13 @@ function pendingCase(
 function harness(options: {
   cases: PendingVerdictCase[];
   answer?: string | Error;
-  fragmentBody?: string | null;
+  /** undefined = fragment gone (404/null); "" = unreadable (transient). */
+  fragmentBody?: string;
 }) {
   const written: RegulationVerdictRecorded[] = [];
+  const chatCalls: Parameters<
+    Parameters<typeof createRegulationVerdictJob>[4]
+  >[0][] = [];
   const writer = {
     writeRegulationVerdictRecorded: async (data: RegulationVerdictRecorded) => {
       written.push(data);
@@ -40,14 +44,15 @@ function harness(options: {
   } as never as PathwayWriter;
   const usable = {
     getFragmentById: async () =>
-      options.fragmentBody == null
+      options.fragmentBody === undefined
         ? null
         : { id: "frag-1", content: options.fragmentBody, title: "t" },
   };
   const queue = {
     listPendingVerdicts: async () => options.cases,
   } as never as RegulationQueueRepository;
-  const chat = async () => {
+  const chat = async (messages: (typeof chatCalls)[number]) => {
+    chatCalls.push(messages);
     if (options.answer instanceof Error) throw options.answer;
     return { text: options.answer ?? "", model: "test-model" };
   };
@@ -57,7 +62,7 @@ function harness(options: {
     isStopRequested: () => false,
     reportProgress: () => {},
   };
-  return { written, run, context };
+  return { written, chatCalls, run, context };
 }
 
 describe("regulation-verdict job", () => {
@@ -112,8 +117,8 @@ describe("regulation-verdict job", () => {
     expect(result.message).toContain("not judged (transient): 1");
   });
 
-  test("a statute case reads its text from the corpus fragment", async () => {
-    const { written, run, context } = harness({
+  test("a statute case sends the fragment BODY to the model, frontmatter stripped", async () => {
+    const { written, chatCalls, run, context } = harness({
       cases: [
         pendingCase({
           caseKey: "logasavn:LOG-K-45-2022",
@@ -121,7 +126,8 @@ describe("regulation-verdict job", () => {
           snapshotFragmentId: "frag-45-2022",
         }),
       ],
-      fragmentBody: "# Title\n\n§ 2. Loyvt er ikki …",
+      fragmentBody:
+        "---\nscraped_at: 2026-05-21\n---\n# Title\n\n§ 2. Loyvt er ikki …",
       answer: JSON.stringify({
         issues: [{ field: "overall", kind: "ok", ref: null, confidence: 1 }],
       }),
@@ -129,6 +135,24 @@ describe("regulation-verdict job", () => {
     await run(undefined, {}, context);
     expect(written).toHaveLength(1);
     expect(written[0]?.status).toBe("ok");
+    expect(chatCalls[0]?.[0]?.content).toContain("§ 2. Loyvt er ikki");
+    expect(chatCalls[0]?.[0]?.content).not.toContain("scraped_at");
+  });
+
+  test("a GONE fragment is durable — records a failed verdict naming it", async () => {
+    // The alternative pins the case to the head of the oldest-first queue as
+    // "transient" forever, burning a limit slot every run.
+    const { written, run, context } = harness({
+      cases: [
+        pendingCase({ snapshotText: null, snapshotFragmentId: "frag-gone" }),
+      ],
+      answer: "unused",
+    });
+    const result = await run(undefined, {}, context);
+    expect(written).toHaveLength(1);
+    expect(written[0]?.status).toBe("failed");
+    expect(written[0]?.error).toContain("frag-gone");
+    expect(result.message).toContain("verdicts failed (recorded): 1");
   });
 
   test("an unreadable fragment is transient — one case costs one case", async () => {
@@ -136,14 +160,16 @@ describe("regulation-verdict job", () => {
       cases: [
         pendingCase({
           snapshotText: null,
-          snapshotFragmentId: "frag-gone",
+          snapshotFragmentId: "frag-unreadable",
         }),
         pendingCase({
           caseKey: "fiskeridir-jmelding:J-2-2026",
           revisionId: "00000000-0000-4000-8000-00000000000b",
         }),
       ],
-      fragmentBody: null,
+      // The fragment exists but its content came back empty — malformed shape,
+      // retried next run.
+      fragmentBody: "",
       answer: JSON.stringify({
         issues: [{ field: "overall", kind: "ok", ref: null, confidence: 1 }],
       }),

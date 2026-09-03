@@ -26,9 +26,7 @@ export class RegulationVerdictProjector {
         verdictModel: payload.model,
         verdictConfidence: confidence,
         verdictRecordedAt: recordedAt,
-        ...(payload.status === "failed" && payload.error
-          ? { parseError: payload.error }
-          : {}),
+        verdictError: payload.status === "failed" ? payload.error : null,
       })
       .where(eq(schema.regulationCaseRevisions.id, payload.revisionId))
       .returning({ caseId: schema.regulationCaseRevisions.caseId });
