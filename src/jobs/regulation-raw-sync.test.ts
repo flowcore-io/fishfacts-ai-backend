@@ -45,14 +45,27 @@ function caseRow(overrides: Partial<RawSyncCaseRow> = {}): RawSyncCaseRow {
 function harness(options: {
   cases: RawSyncCaseRow[];
   existingContent?: string;
+  /** The lookup misses but the key exists — create answers 409. */
+  conflictOnCreate?: boolean;
 }) {
   const calls: Array<{ kind: "create" | "update"; input: unknown }> = [];
+  let lookups = 0;
   const usable: RegulationRawSyncUsable = {
-    getFragmentByKey: async () =>
-      options.existingContent === undefined
+    getFragmentByKey: async () => {
+      lookups += 1;
+      if (options.conflictOnCreate) {
+        // First lookup misses (the capped fallback list); the re-fetch after
+        // the 409 finds it.
+        return lookups === 1 ? null : { id: "frag-dup", title: "t" };
+      }
+      return options.existingContent === undefined
         ? null
-        : { id: "frag-1", content: options.existingContent, title: "t" },
+        : { id: "frag-1", content: options.existingContent, title: "t" };
+    },
     createFragment: async (input) => {
+      if (options.conflictOnCreate) {
+        throw new Error("Usable API HTTP 409: fragment key already exists");
+      }
       calls.push({ kind: "create", input });
       return {};
     },
@@ -111,6 +124,18 @@ describe("regulation-raw-sync job", () => {
     expect(calls).toHaveLength(0);
     expect(result.changed).toBe(false);
     expect(result.message).toContain("already current: 1");
+  });
+
+  test("a 409 on create falls through to updating the existing fragment", async () => {
+    const { calls, run, context } = harness({
+      cases: [caseRow()],
+      conflictOnCreate: true,
+    });
+    const result = await run(undefined, {}, context);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.kind).toBe("update");
+    expect(result.message).toContain("updated: 1");
+    expect(result.message).toContain("failed: 0");
   });
 
   test("updates a fragment whose verdict moved", async () => {

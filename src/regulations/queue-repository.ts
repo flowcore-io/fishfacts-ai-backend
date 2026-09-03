@@ -1,5 +1,6 @@
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
+import type { RawSyncCase } from "@/regulations/raw-fragment";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 /** A case whose current revision still awaits its verdict, with everything
@@ -62,28 +63,14 @@ export class RegulationQueueRepository {
   }
 }
 
-/** What the raw-corpus sync reads per case: the case row joined with its
- * current revision's verdict, plus that revision's geometries. */
-export type RawSyncCaseRow = {
-  caseKey: string;
-  title: string;
-  jurisdiction: string;
-  sourceType: string;
-  sourceRef: string;
-  sourceUrl: string;
-  category: string | null;
-  summary: string | null;
-  sourceStatus: string;
-  changeType: string;
-  regulationStatus: string;
-  adminStatus: string;
-  verdictStatus: string;
-  effectiveFrom: Date | null;
-  effectiveTo: Date | null;
-  currentRevisionId: string;
-  verdict: unknown;
-  verdictRecordedAt: Date | null;
-};
+/**
+ * What the raw-corpus sync reads per case. The shape is DEFINED in
+ * `raw-fragment.ts` (the pure module — the dependency stays repository →
+ * domain) and only aliased here, so adding a column to the select without
+ * teaching the fragment builder about it is a type error, not a field that
+ * silently never renders.
+ */
+export type RawSyncCaseRow = RawSyncCase;
 
 export class RegulationRawSyncRepository {
   constructor(private readonly db: Database) {}

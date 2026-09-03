@@ -111,28 +111,41 @@ export function createRegulationRawSyncJob(
           current += 1;
           continue;
         }
+        const updateInput = {
+          fragmentTypeId: env.REGULATION_RAW_FRAGMENT_TYPE_ID,
+          title: fragment.title,
+          summary: fragment.summary,
+          content: fragment.content,
+          tags: fragment.tags,
+          collectionIds: [env.REGULATION_RAW_COLLECTION_ID],
+        };
         if (existing) {
-          await usable.updateFragment(existing.id, {
-            fragmentTypeId: env.REGULATION_RAW_FRAGMENT_TYPE_ID,
-            title: fragment.title,
-            summary: fragment.summary,
-            content: fragment.content,
-            tags: fragment.tags,
-            collectionIds: [env.REGULATION_RAW_COLLECTION_ID],
-          });
+          await usable.updateFragment(existing.id, updateInput);
           updated += 1;
         } else {
-          await usable.createFragment({
-            workspaceId: env.USABLE_WORKSPACE_ID,
-            fragmentTypeId: env.REGULATION_RAW_FRAGMENT_TYPE_ID,
-            key: fragment.key,
-            title: fragment.title,
-            summary: fragment.summary,
-            content: fragment.content,
-            tags: fragment.tags,
-            collectionIds: [env.REGULATION_RAW_COLLECTION_ID],
-          });
-          created += 1;
+          try {
+            await usable.createFragment({
+              workspaceId: env.USABLE_WORKSPACE_ID,
+              key: fragment.key,
+              ...updateInput,
+            });
+            created += 1;
+          } catch (error) {
+            // Same idiom as the jmelding and POI upserters: a 409 means the
+            // key exists even though the lookup missed it (the fallback list
+            // is capped), so update the fragment the conflict names instead
+            // of logging the same NOT SYNCED failure on every run forever.
+            const message =
+              error instanceof Error ? error.message : String(error);
+            if (!message.includes("409")) throw error;
+            const duplicate = await usable.getFragmentByKey(
+              env.USABLE_WORKSPACE_ID,
+              fragment.key,
+            );
+            if (!duplicate) throw error;
+            await usable.updateFragment(duplicate.id, updateInput);
+            updated += 1;
+          }
         }
       } catch (error) {
         // One 502 costs one case; the next run picks it up again.
