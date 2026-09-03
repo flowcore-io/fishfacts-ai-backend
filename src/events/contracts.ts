@@ -363,3 +363,84 @@ export const gebcoFeatureObservedSchema = z.object({
   checkedAt: z.string().datetime(),
 });
 export type GebcoFeatureObserved = z.infer<typeof gebcoFeatureObservedSchema>;
+
+export const REGULATION_FLOW_TYPE = "fishfacts-regulation.0" as const;
+export const REGULATION_VERDICT_RECORDED_EVENT_TYPE =
+  "regulation.case.verdict.recorded.0" as const;
+export const REGULATION_VERDICT_RECORDED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_VERDICT_RECORDED_EVENT_TYPE}` as const;
+
+/**
+ * The verdict-issue taxonomy, sized against the corpus rather than in the
+ * abstract (dry run of 2026-09-03 over the eight first-pass statutes,
+ * approved by Johann the same day):
+ *
+ * - `underdetermined_boundary` — the dominant real class: a boundary described
+ *   rather than enumerated (bearing lines from named landmarks, distance bands
+ *   off the baselines, longitude limits). Flagged, never computed.
+ * - `unsupported_notation` — readable digits in a grammar the tokenizer does
+ *   not speak (K 113/2014's decimal-degree NEAFC tables). NOT malformed — the
+ *   two route to different fixes.
+ * - `external_reference` — an area defined in a different regulation
+ *   (K 45/2022 § 2 stk. 2's area R), which otherwise vanishes silently.
+ * - `malformed_coordinate` — wrong digit count, impossible minutes: a
+ *   transcription problem in the source itself.
+ * - `unresolved_landmark` — a named place with no printed coordinates; the
+ *   hook stage ② hangs the POI capture loop on. Zero hits on the Faroese
+ *   first pass (their statutes print landmark coordinates), kept for the day
+ *   a source does not.
+ * - `ambiguous_wording` / `missing_expiry` — the lawyer's-reading classes.
+ * - `ok` — an explicit clean bill for the field, so silence stays
+ *   distinguishable from "not examined".
+ */
+export const regulationVerdictIssueKindSchema = z.enum([
+  "underdetermined_boundary",
+  "unsupported_notation",
+  "external_reference",
+  "malformed_coordinate",
+  "unresolved_landmark",
+  "ambiguous_wording",
+  "missing_expiry",
+  "ok",
+]);
+export type RegulationVerdictIssueKind = z.infer<
+  typeof regulationVerdictIssueKindSchema
+>;
+
+export const regulationVerdictIssueSchema = z.object({
+  /** What the issue is about — a §/field/area reference in the source's own
+   * words ("§ 2, stk. 1, nr. 3", "Skjal 1, Talva 2", "expiry"). */
+  field: z.string().min(1).max(200),
+  kind: regulationVerdictIssueKindSchema,
+  /** What the issue points AT, when it points at something: the cited
+   * regulation for external_reference, the landmark name, the offending
+   * coordinate as printed. */
+  ref: z.string().max(500).nullable().default(null),
+  confidence: z.number().min(0).max(1),
+});
+export type RegulationVerdictIssue = z.infer<
+  typeof regulationVerdictIssueSchema
+>;
+
+/**
+ * A structured verdict over one revision of a regulation case.
+ *
+ * `status: "failed"` is the fail-closed state: the model's answer did not
+ * validate against the issue schema, and that FACT is recorded rather than
+ * salvaged — a case whose verdict failed is a case a human looks at.
+ */
+export const regulationVerdictRecordedSchema = z.object({
+  verdictId: z.string().uuid(),
+  caseKey: z.string().min(1),
+  revisionId: z.string().uuid(),
+  contentHash: z.string().nullable().default(null),
+  status: z.enum(["ok", "failed"]),
+  issues: z.array(regulationVerdictIssueSchema).default([]),
+  /** Why a failed verdict failed — schema violation, no JSON, transport. */
+  error: z.string().max(2000).nullable().default(null),
+  model: z.string().nullable().default(null),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationVerdictRecorded = z.infer<
+  typeof regulationVerdictRecordedSchema
+>;

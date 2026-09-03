@@ -43,6 +43,10 @@ import {
   POI_CREATED_PATHWAY,
   POI_FLOW_TYPE,
   type PoiCreated,
+  REGULATION_FLOW_TYPE,
+  REGULATION_VERDICT_RECORDED_EVENT_TYPE,
+  REGULATION_VERDICT_RECORDED_PATHWAY,
+  type RegulationVerdictRecorded,
   SILDELAGET_CATCHJOURNAL_FLOW_TYPE,
   SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE,
   SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY,
@@ -56,6 +60,7 @@ import {
   gillnetVesselObservedSchema,
   jmeldingAnnouncementDiscoveredSchema,
   poiCreatedSchema,
+  regulationVerdictRecordedSchema,
   sildelagetCatchEntryObservedSchema,
 } from "./events/contracts";
 import { chunkAnnouncement } from "./events/jmelding-chunking";
@@ -64,6 +69,7 @@ import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
+import type { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import type { SildelagetCatchProjector } from "./sildelaget/projector";
 
 export interface PathwayWriter {
@@ -80,6 +86,9 @@ export interface PathwayWriter {
   writeAreaUpdated(data: AreaUpdated): Promise<string>;
   writeAreaDeleted(data: AreaDeleted): Promise<string>;
   writePoiCreated(data: PoiCreated): Promise<string>;
+  writeRegulationVerdictRecorded(
+    data: RegulationVerdictRecorded,
+  ): Promise<string>;
   /**
    * Emit one AIS position fix. `opts.eventTime` is set by the BACKFILL job
    * (= location.timestamp) so the event lands in its historical hour-bucket and
@@ -120,6 +129,7 @@ export function createPathwayRuntime(
   gillnetProjector: GillnetProjector,
   gebcoProjector: GebcoProjector,
   poiFragmentProjector: PoiFragmentProjector,
+  regulationVerdictProjector: RegulationVerdictProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -240,6 +250,22 @@ export function createPathwayRuntime(
       const envelope = event as { eventId: string; payload: unknown };
       const parsed = poiCreatedSchema.parse(envelope.payload);
       await poiFragmentProjector.project(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_VERDICT_RECORDED_EVENT_TYPE,
+      schema: regulationVerdictRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "A structured verdict was recorded over one revision of a regulation case",
+    })
+    .handle(REGULATION_VERDICT_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationVerdictRecordedSchema.parse(envelope.payload);
+      await regulationVerdictProjector.handleRecorded(parsed);
     });
 
   pathways
@@ -421,6 +447,27 @@ export function createPathwayRuntime(
             areaId: data.areaId,
             createdBy: data.createdBy,
           },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationVerdictRecorded(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof REGULATION_VERDICT_RECORDED_PATHWAY,
+            input: {
+              data: RegulationVerdictRecorded;
+              metadata: Record<string, unknown>;
+              options?: { fireAndForget?: boolean };
+            },
+          ) => Promise<string | string[]>
+        )(REGULATION_VERDICT_RECORDED_PATHWAY, {
+          data,
+          metadata: {
+            source: "regulation-verdict-job",
+            caseKey: data.caseKey,
+            revisionId: data.revisionId,
+          },
+          options: { fireAndForget: true },
         });
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },

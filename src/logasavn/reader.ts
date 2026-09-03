@@ -225,7 +225,7 @@ export function createEmbedChatReader(env: Env): StatuteReader {
     const answer = await postEmbedChat(env, buildReaderMessages(statute));
     let parsed: unknown;
     try {
-      parsed = JSON.parse(stripAnswerFence(answer));
+      parsed = JSON.parse(stripAnswerFence(answer.text));
     } catch {
       throw new Error(
         `Embed chat answer for "${statute.title}" is not JSON — refusing to salvage a reading from prose`,
