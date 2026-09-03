@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.5.0...v2.5.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **vessels:** fold accents when matching a report's vessel name ([#159](https://github.com/flowcore-io/fishfacts-ai-backend/issues/159)) ([973a078](https://github.com/flowcore-io/fishfacts-ai-backend/commit/973a0780d3d62810db006d8172a04ac76b53f944))
+
 ## [2.5.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.4.0...v2.5.0) (2026-08-31)
 
 
