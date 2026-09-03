@@ -631,6 +631,10 @@ export const regulationCaseRevisions = pgTable(
     // the verdict fails closed as a state, never as a crash.
     verdictStatus: text("verdict_status").notNull().default("pending"),
     verdict: jsonb("verdict"),
+    // Why a failed verdict failed. Its own column: `parse_error` belongs to
+    // the parse stage, and a revision can fail both — each diagnostic must
+    // survive the other.
+    verdictError: text("verdict_error"),
     verdictModel: text("verdict_model"),
     verdictConfidence: doublePrecision("verdict_confidence"),
     verdictRecordedAt: timestamp("verdict_recorded_at", { withTimezone: true }),

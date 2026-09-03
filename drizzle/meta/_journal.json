@@ -155,6 +155,13 @@
       "when": 1788466636438,
       "tag": "0021_petite_nicolaos",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788468742834,
+      "tag": "0022_oval_pepper_potts",
+      "breakpoints": true
     }
   ]
 }
