@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.6.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.5.1...v2.6.0) (2026-09-03)
+
+
+### Features
+
+* **logasavn:** read statutes through the Usable Chat embed, not OpenRouter ([#161](https://github.com/flowcore-io/fishfacts-ai-backend/issues/161)) ([c519dbd](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c519dbdb735958efb5fa04ead0e6dccd5371afa1))
+* **regulations:** project announcement events into the approval-queue case model ([#166](https://github.com/flowcore-io/fishfacts-ai-backend/issues/166)) ([71e1689](https://github.com/flowcore-io/fishfacts-ai-backend/commit/71e1689b9cadd60d007e479700382ebfa35e791d))
+* **regulations:** record structured verdicts over case revisions ([#163](https://github.com/flowcore-io/fishfacts-ai-backend/issues/163)) ([7d9192a](https://github.com/flowcore-io/fishfacts-ai-backend/commit/7d9192af1e95d2f352cc5b6afb0308344f5bac1d))
+* **regulations:** sync parser output into the raw corpus collection ([#164](https://github.com/flowcore-io/fishfacts-ai-backend/issues/164)) ([331db26](https://github.com/flowcore-io/fishfacts-ai-backend/commit/331db26801aa0322066135446fd3c3a07143092d))
+
 ## [2.5.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.5.0...v2.5.1) (2026-09-03)
 
 
