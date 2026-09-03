@@ -66,25 +66,25 @@ const envSchema = z.object({
   // because deciding that `øki a` is an exemption inside `Øki A` is a question
   // about Faroese prose, not about coordinates.
   //
-  // OPTIONAL on purpose: without a key the service still boots and every other
-  // job still runs, and only `logasavn-closures` refuses when it is invoked. A
-  // required key would turn one missing credential into an outage for the whole
-  // backend, which is a steep price for a job that runs once a day.
-  OPENROUTER_API_KEY: z.string().min(1).optional(),
-  OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
-  // The model 1st mate itself runs on — the default of embed config
-  // `663e0bd7-62c3-4a83-95e2-5fa176f06952` (Johann, 2026-08-04). One model for
-  // Faroese statutes across both halves of the product, so a reading that looks
-  // wrong on the map can be reproduced by asking the assistant the same thing.
+  // The call goes through the Usable Chat embed API rather than a model
+  // provider directly. Whoever calls the model owes the billing event, and the
+  // embed already emits it against the key's PAT identity — a direct provider
+  // call would bypass the customer's credits, and emitting the event ourselves
+  // would mean owning a model-pricing table, a write key into the billing data
+  // core, and a billable identity for an unattended cron. The model is chosen
+  // on the embed config, not here, so a reading that looks wrong on the map can
+  // be reproduced by asking the assistant the same thing.
   //
-  // The gate is what makes a fast model a reasonable choice here: every vertex
-  // it quotes is checked against `extractAreas` and withheld on disagreement, so
-  // a transcription slip costs coverage rather than correctness. What the gate
-  // does NOT check is the `kind` label — see `compareReading`.
-  LOGASAVN_READER_MODEL: z
+  // The key is OPTIONAL on purpose: without it the service still boots and
+  // every other job still runs, and only `logasavn-closures` refuses when it is
+  // invoked. A required key would turn one missing credential into an outage
+  // for the whole backend, which is a steep price for a job that runs once a
+  // day. The key is provisioned by a human and never created or edited here.
+  USABLE_CHAT_EMBED_URL: z
     .string()
-    .min(1)
-    .default("google/gemini-3-flash-preview"),
+    .url()
+    .default("https://chat.usable.dev/api/v2/embed/chat"),
+  INGESTION_EMBED_KEY: z.string().min(1).optional(),
   JOB_SCHEDULER_ENABLED: z
     .enum(["true", "false"])
     .default("false")
