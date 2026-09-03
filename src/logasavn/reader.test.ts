@@ -51,7 +51,7 @@ describe("createEmbedChatReader", () => {
     const read = createEmbedChatReader({
       INGESTION_EMBED_KEY: undefined,
     } as Env);
-    expect(
+    await expect(
       read({ title: "Kunngerð nr. 45 (2022)", body: "…", url: null }),
     ).rejects.toThrow("INGESTION_EMBED_KEY");
   });

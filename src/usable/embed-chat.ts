@@ -21,6 +21,15 @@
 
 import type { Env } from "@/env";
 
+/**
+ * Generous on purpose: a statute read legitimately runs a couple of minutes
+ * (the model streams several hundred vertices). What this bounds is the
+ * pathological case — a stalled stream would otherwise hang the whole job run,
+ * because `response.text()` waits for the socket to close and the job's own
+ * stop check only runs between statutes.
+ */
+const EMBED_CHAT_TIMEOUT_MS = 5 * 60 * 1000;
+
 export type EmbedChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -89,14 +98,24 @@ export async function postEmbedChat(
   }
 
   const url = `${env.USABLE_CHAT_EMBED_URL}?token=${encodeURIComponent(key)}`;
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ messages }),
-  });
-  if (!response.ok) {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages }),
+      signal: AbortSignal.timeout(EMBED_CHAT_TIMEOUT_MS),
+    });
+  } catch (error) {
     // The key never goes into an error message; a thrown Error ends up in job
-    // logs and job state fragments.
+    // logs and job state fragments, and fetch rejections can echo the request
+    // URL — which carries the token. Redact before rethrowing.
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Embed chat request failed: ${detail.replaceAll(key, "<redacted>").replaceAll(encodeURIComponent(key), "<redacted>")}`,
+    );
+  }
+  if (!response.ok) {
     throw new Error(`Embed chat answered ${response.status}`);
   }
   return assembleEmbedChatText(await response.text());
