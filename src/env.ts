@@ -85,6 +85,20 @@ const envSchema = z.object({
     .url()
     .default("https://chat.usable.dev/api/v2/embed/chat"),
   INGESTION_EMBED_KEY: z.string().min(1).optional(),
+  // Where the raw-corpus sync pushes PARSER OUTPUT (never the fetched page
+  // text — that snapshot is canonical in PostgreSQL). A dedicated collection
+  // in Fishfacts Knowledge, provisioned by a human: collection membership is
+  // the raw/processed boundary, scoped on the embed config at retrieval time,
+  // so raw stays unreachable from user-facing answers rather than discouraged.
+  REGULATION_RAW_COLLECTION_ID: z
+    .string()
+    .uuid()
+    .default("76f09c34-b93e-41f9-ae68-1b01bae6d6c6"),
+  // "Knowledge" in Fishfacts Knowledge, same type the Lógasavn index uses.
+  REGULATION_RAW_FRAGMENT_TYPE_ID: z
+    .string()
+    .uuid()
+    .default("ad920334-6c96-431e-9089-399f0dab8ebd"),
   JOB_SCHEDULER_ENABLED: z
     .enum(["true", "false"])
     .default("false")
