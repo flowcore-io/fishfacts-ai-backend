@@ -16,6 +16,7 @@
  */
 
 import type { Env } from "@/env";
+import { postEmbedChat } from "@/usable/embed-chat";
 import { z } from "zod";
 import type { StatuteReading } from "./closure-reading";
 
@@ -53,13 +54,18 @@ export const statuteReadingSchema = z.object({
 });
 
 /**
- * The same shape as `statuteReadingSchema`, for OpenRouter's structured output.
+ * The same shape as `statuteReadingSchema`, spelled out for the model.
  *
  * Duplicated deliberately rather than generated: the model is steered by these
  * `description` strings as much as by the prompt, and they say things the zod
  * schema has no way to express — that a coordinate must be copied rather than
  * converted, and that case is meaning. A generator would drop exactly the part
  * that is doing the work.
+ *
+ * The embed API has no structured-output parameter, so this schema travels in
+ * the message text and `parseReaderResponse` is the enforcement — which it
+ * always was: even under OpenRouter's `strict: true` this pipeline was
+ * surprised by fenced and null `content`, so nothing here got weaker.
  */
 const READING_JSON_SCHEMA = {
   type: "object",
@@ -159,16 +165,23 @@ Rules, in order of importance:
 
 If a vertex is written in a notation you cannot read confidently, copy the characters anyway — do not guess at what it should say. Downstream will withhold it.`;
 
+/**
+ * One user message carrying the rules, the schema and the statute.
+ *
+ * The embed API exposes no system role and no structured-output parameter —
+ * the config's own system prompt (human-owned, never edited here) already
+ * commands JSON-only output and transcription discipline, and this message
+ * carries the task on top of it.
+ */
 export function buildReaderMessages(statute: {
   title: string;
   body: string;
   url: string | null;
 }) {
   return [
-    { role: "system" as const, content: READER_SYSTEM_PROMPT },
     {
       role: "user" as const,
-      content: `Statute: ${statute.title}${statute.url ? `\nSource: ${statute.url}` : ""}\n\n---\n\n${statute.body}`,
+      content: `${READER_SYSTEM_PROMPT}\n\nReturn a single JSON object matching this JSON Schema exactly, with no other text:\n${JSON.stringify(READING_JSON_SCHEMA)}\n\nStatute: ${statute.title}${statute.url ? `\nSource: ${statute.url}` : ""}\n\n---\n\n${statute.body}`,
     },
   ];
 }
@@ -184,59 +197,40 @@ export function parseReaderResponse(value: unknown): StatuteReading {
   return statuteReadingSchema.parse(value);
 }
 
-/** OpenRouter's chat-completions envelope, only as far as we read into it. */
-const completionSchema = z.object({
-  choices: z
-    .array(z.object({ message: z.object({ content: z.string() }) }))
-    .min(1),
-});
+/**
+ * Peel a single markdown fence off an answer, if the model added one.
+ *
+ * The embed config's prompt forbids fences, but this pipeline has been
+ * surprised by fenced content before, under a mode that supposedly guaranteed
+ * bare JSON. One fence is transport noise and is removed; anything else about
+ * the answer is meaning and is judged by `parseReaderResponse` as-is.
+ */
+export function stripAnswerFence(answer: string): string {
+  const match = /^\s*```(?:json)?\s*\n([\s\S]*?)\n\s*```\s*$/.exec(answer);
+  return match ? match[1] : answer.trim();
+}
 
-export function createOpenRouterReader(env: Env): StatuteReader {
-  const apiKey = env.OPENROUTER_API_KEY;
-  if (!apiKey) {
+export function createEmbedChatReader(env: Env): StatuteReader {
+  if (!env.INGESTION_EMBED_KEY) {
     // Refused here rather than at boot: the service must start without a key so
     // that every other job keeps running, and only this one job is unavailable.
     return async () => {
       throw new Error(
-        "OPENROUTER_API_KEY is not set — the Lógasavn closure reader cannot run",
+        "INGESTION_EMBED_KEY is not set — the Lógasavn closure reader cannot run",
       );
     };
   }
 
   return async function readStatute(statute) {
-    const response = await fetch(
-      `${env.OPENROUTER_BASE_URL}/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: env.LOGASAVN_READER_MODEL,
-          // Nothing here is a matter of taste, so sampling should not vary the
-          // answer. The same statute read twice must give the same rings.
-          temperature: 0,
-          messages: buildReaderMessages(statute),
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "statute_reading",
-              strict: true,
-              schema: READING_JSON_SCHEMA,
-            },
-          },
-        }),
-      },
-    );
-
-    if (!response.ok) {
+    const answer = await postEmbedChat(env, buildReaderMessages(statute));
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripAnswerFence(answer));
+    } catch {
       throw new Error(
-        `OpenRouter answered ${response.status} reading "${statute.title}"`,
+        `Embed chat answer for "${statute.title}" is not JSON — refusing to salvage a reading from prose`,
       );
     }
-    const completion = completionSchema.parse(await response.json());
-    const content = completion.choices[0]?.message.content ?? "";
-    return parseReaderResponse(JSON.parse(content));
+    return parseReaderResponse(parsed);
   };
 }

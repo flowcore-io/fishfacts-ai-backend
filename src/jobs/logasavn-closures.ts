@@ -128,9 +128,9 @@ const SIGNATURE_VERSION = 2;
  * What "the same drawing" means, for suppression purposes.
  *
  * Deliberately covers the INPUTS and the GEOMETRY, and nothing the model wrote
- * in prose. `summary` and the ring labels are LLM output: `temperature: 0`
- * narrows drift but does not remove it, and through OpenRouter the same model
- * id can be served by a different provider or quantisation between runs. This
+ * in prose. `summary` and the ring labels are LLM output, the reader has no
+ * sampling controls through the embed API, and the embed config can move to a
+ * different model between runs without this code changing at all. This
  * pipeline has already been measured wobbling — the same statute enumerated 8
  * rings on one run and 5 on the next. Put that in the suppression key and every
  * statute re-emits on every run forever, for no change a reader could see: the

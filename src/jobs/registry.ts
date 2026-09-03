@@ -7,7 +7,7 @@ import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
 import type { Env } from "@/env";
 import type { VesselDirectory } from "@/fishfacts/vessel-directory";
-import { createOpenRouterReader } from "@/logasavn/reader";
+import { createEmbedChatReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
 import type { SildelagetAisAnchorRepository } from "@/sildelaget/ais-anchor-repository";
 import type { SildelagetCatchRepository } from "@/sildelaget/repository";
@@ -137,7 +137,7 @@ export function createJobDefinitions(
         env,
         writer,
         usable,
-        createOpenRouterReader(env),
+        createEmbedChatReader(env),
       ),
     },
     {

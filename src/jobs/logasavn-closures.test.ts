@@ -327,7 +327,7 @@ describe("one flaky call costs one statute", () => {
     let call = 0;
     const flaky: StatuteReader = async (statute) => {
       call += 1;
-      if (call === 1) throw new Error("OpenRouter answered 429");
+      if (call === 1) throw new Error("Embed chat answered 429");
       return h.read(statute);
     };
 
