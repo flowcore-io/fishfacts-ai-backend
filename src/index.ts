@@ -34,6 +34,7 @@ import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
 import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
+import { RegulationCaseProjector } from "./regulations/case-projector";
 import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
 import { SildelagetAisAnchorRepository } from "./sildelaget/ais-anchor-repository";
 import { SildelagetCatchProjector } from "./sildelaget/projector";
@@ -80,10 +81,12 @@ const financialsRepository = new FinancialsRepository(env, db);
 const sildelagetCatchProjector = new SildelagetCatchProjector(
   sildelagetCatchRepository,
 );
+const regulationCaseProjector = new RegulationCaseProjector(db);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
   geoProjector,
+  regulationCaseProjector,
 );
 
 // AIS read model (ClickHouse). Migration failure is non-fatal so the core
