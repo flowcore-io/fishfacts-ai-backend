@@ -25,7 +25,7 @@
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import type { JMeldingAnnouncementDiscovered } from "@/events/contracts";
-import { parseJmeldingGeo } from "@/jmelding/geo-parser";
+import { parseJmeldingGeo, pointsToMultipointWkt } from "@/jmelding/geo-parser";
 import { parseValidityEnd, parseValidityStart } from "@/jmelding/validity";
 import { normalizeVornAreas } from "@/jmelding/vorn-ring";
 import { jmeldingFragmentKey } from "@/jobs/jmelding-fragments";
@@ -68,14 +68,6 @@ export function sourceTypeOf(
   if (item.region === "FO") return "vorn-veidibann";
   if (item.region === "IS") return "fiskistofa-wfs";
   return "fiskeridir-jmelding";
-}
-
-function multipointWkt(points: Array<{ lat: number; lon: number }>) {
-  if (points.length === 0) return null;
-  const inner = points
-    .map((p) => `${p.lon.toFixed(6)} ${p.lat.toFixed(6)}`)
-    .join(",");
-  return `MULTIPOINT(${inner})`;
 }
 
 function instantOf(value: string | undefined): Date | null {
@@ -134,7 +126,8 @@ export class RegulationCaseProjector {
         .where(eq(schema.regulationCaseRevisions.id, revisionId));
       if (existingRevision.length > 0) {
         // Replay of a signature already projected — the record is already
-        // faithful, only the freshness stamp moves.
+        // faithful, only the freshness stamps move, and the case's stamp and
+        // the primary source row's claim the same fact, so they move together.
         await tx
           .update(schema.regulationCases)
           .set({
@@ -142,6 +135,17 @@ export class RegulationCaseProjector {
             updatedAt: sql`now()`,
           })
           .where(eq(schema.regulationCases.id, caseId));
+        await tx
+          .update(schema.regulationCaseSources)
+          .set({
+            lastCheckedAt: sql`GREATEST(${schema.regulationCaseSources.lastCheckedAt}, ${checkedAt.toISOString()}::timestamptz)`,
+          })
+          .where(
+            and(
+              eq(schema.regulationCaseSources.caseId, caseId),
+              eq(schema.regulationCaseSources.isPrimary, true),
+            ),
+          );
         return { caseId, caseKey, revisionId, outcome: "replayed" as const };
       }
 
@@ -181,7 +185,7 @@ export class RegulationCaseProjector {
       });
 
       for (const [index, area] of areas.entries()) {
-        const wkt = multipointWkt(area.points);
+        const wkt = pointsToMultipointWkt(area.points);
         await tx.insert(schema.regulationCaseGeometries).values({
           id: geometryIdFor(revisionId, index),
           caseId,

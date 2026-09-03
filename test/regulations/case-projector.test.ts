@@ -234,7 +234,6 @@ describe("RegulationCaseProjector", () => {
     const statute = makeItem("LOG-K-test-45-2022", {
       signature: "sig-log-k-test-45-2022-v1",
       region: "FO",
-      sourceRef: undefined,
       bodyMarkdown: "",
       sourceFragmentId: "test-fragment-45-2022",
       areas: [
@@ -247,7 +246,7 @@ describe("RegulationCaseProjector", () => {
           ],
         },
       ],
-    } as Partial<JMeldingAnnouncementDiscovered>);
+    });
 
     const result = await projector.project(statute);
     expect(result.outcome).toBe("created");
