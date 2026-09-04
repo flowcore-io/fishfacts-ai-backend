@@ -128,6 +128,9 @@ export class RegulationQueueReadRepository {
         // Newest queued first within an urgency band — the inbox convention,
         // and the opposite of the verdict job (which drains oldest-first).
         sql`${schema.regulationCases.firstSeenAt} DESC`,
+        // Unique tie-breaker: identical firstSeenAt must not let a row skip
+        // or repeat across offset pages.
+        asc(schema.regulationCases.id),
       )
       .limit(filters.limit)
       .offset(filters.offset);
