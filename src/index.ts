@@ -39,6 +39,7 @@ import {
   RegulationQueueRepository,
   RegulationRawSyncRepository,
 } from "./regulations/queue-repository";
+import { RegulationQueueReadRepository } from "./regulations/read-repository";
 import { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
 import { SildelagetAisAnchorRepository } from "./sildelaget/ais-anchor-repository";
@@ -90,6 +91,7 @@ const regulationCaseProjector = new RegulationCaseProjector(db);
 const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
 const regulationRawSyncRepository = new RegulationRawSyncRepository(db);
+const regulationQueueReadRepository = new RegulationQueueReadRepository(db);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
@@ -180,6 +182,7 @@ const app = createApp({
   aisIngestState,
   aisSource: aisBackfillSource,
   reportsClient,
+  regulationQueueReadRepository,
   db,
 });
 
