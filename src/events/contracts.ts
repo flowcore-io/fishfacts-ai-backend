@@ -364,7 +364,21 @@ export const gebcoFeatureObservedSchema = z.object({
 });
 export type GebcoFeatureObserved = z.infer<typeof gebcoFeatureObservedSchema>;
 
-export const REGULATION_FLOW_TYPE = "fishfacts-regulation.0" as const;
+/**
+ * NOT `fishfacts-regulation.0`, which is burned.
+ *
+ * A pod crash straddled that flow type's auto-provisioning on 2026-09-03, and
+ * the platform does not enforce name uniqueness within a data core — so the
+ * name ended up on several distinct flow-type ids. Reads resolve an event-type
+ * id back to (flowType, eventType) NAMES, and an ambiguous name resolves to
+ * nothing: every read under it answers `404 Event type(s) not found` while
+ * writes (which address by name) keep succeeding. Events written under it are
+ * therefore unreadable, and the pump can never consume them.
+ *
+ * The version suffix stays `.0` because nothing about the contract changed —
+ * only the name had to move somewhere unambiguous.
+ */
+export const REGULATION_FLOW_TYPE = "fishfacts-regulation-queue.0" as const;
 export const REGULATION_VERDICT_RECORDED_EVENT_TYPE =
   "regulation.case.verdict.recorded.0" as const;
 export const REGULATION_VERDICT_RECORDED_PATHWAY =
