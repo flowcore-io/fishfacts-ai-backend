@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.7.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.6.1...v2.7.0) (2026-09-04)
+
+
+### Features
+
+* **regulations:** inbox action events for the approval queue (stage ② B2) ([#171](https://github.com/flowcore-io/fishfacts-ai-backend/issues/171)) ([424bc99](https://github.com/flowcore-io/fishfacts-ai-backend/commit/424bc991a53c9e483fd29bcda8201f5fee90dad1))
+* **regulations:** read API for the admin approval queue ([#169](https://github.com/flowcore-io/fishfacts-ai-backend/issues/169)) ([4636422](https://github.com/flowcore-io/fishfacts-ai-backend/commit/46364227af6cab2456ea5b152633d6003bd761fb))
+* **regulations:** revision, validation and approval events (stage ② B3) ([#172](https://github.com/flowcore-io/fishfacts-ai-backend/issues/172)) ([def4078](https://github.com/flowcore-io/fishfacts-ai-backend/commit/def4078092de8814b8dde2ce8bb56cc5b45191f1))
+
 ## [2.6.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.6.0...v2.6.1) (2026-09-04)
 
 
