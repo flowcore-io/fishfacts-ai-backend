@@ -1747,7 +1747,7 @@ export const openApiDocument = {
           },
           "400": {
             description:
-              "Invalid action payload, `duplicate_of_self`, or `duplicate_target_not_found`",
+              "Invalid action payload, `duplicate_of_self`, `duplicate_target_not_found`, or `snooze_until_in_past`",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ValidationError" },

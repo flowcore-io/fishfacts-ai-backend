@@ -18,36 +18,23 @@ export class RegulationCaseActionProjector {
   constructor(private readonly db: Database) {}
 
   async handleRecorded(payload: RegulationAdminActionRecorded): Promise<void> {
-    const inserted = await this.db
-      .insert(schema.regulationCaseActions)
-      .values({
-        id: payload.actionId,
-        caseId: payload.caseId,
-        kind: payload.action.kind,
-        action: payload.action,
-        actor: payload.actor,
-        recordedAt: new Date(payload.recordedAt),
-      })
-      .onConflictDoNothing()
-      .returning({ id: schema.regulationCaseActions.id });
-    if (inserted.length === 0) {
-      // Redelivery of an action already projected — the case effect below
-      // already ran once in stream order; running it again out of order
-      // could resurrect a value a LATER action replaced.
-      return;
-    }
-
-    const effect = caseEffectOf(payload.action);
-    if (effect) {
-      const updated = await this.db
-        .update(schema.regulationCases)
-        .set({ ...effect, updatedAt: new Date(payload.recordedAt) })
+    // One transaction for the log row AND the case effect: if the effect
+    // fails after the row committed, redelivery would hit the dedup conflict
+    // and skip the effect forever — the trail claiming an action the case
+    // never reflects. Atomic, both re-land together on redelivery, which is
+    // what makes the onConflictDoNothing dedup safe to rely on at all.
+    await this.db.transaction(async (tx) => {
+      // Existence first, before anything is written: an action for a case
+      // the projection has never seen must commit NOTHING — a log row
+      // without its effect is exactly the trail/state disagreement this
+      // projector exists to prevent. Logged, not thrown: one stray event
+      // must not stall the pump; a full replay re-lands it in order.
+      const [caseRow] = await tx
+        .select({ id: schema.regulationCases.id })
+        .from(schema.regulationCases)
         .where(eq(schema.regulationCases.id, payload.caseId))
-        .returning({ id: schema.regulationCases.id });
-      if (updated.length === 0) {
-        // An action for a case the projection has never seen — the case
-        // observation will arrive and a replay re-lands this. Logged, not
-        // thrown: one stray event must not stall the pump.
+        .limit(1);
+      if (!caseRow) {
         console.warn("[RegulationAction] no such case", {
           caseId: payload.caseId,
           caseKey: payload.caseKey,
@@ -55,23 +42,50 @@ export class RegulationCaseActionProjector {
         });
         return;
       }
-    }
 
-    // Reading a case for the first time moves it out of the `unread` inbox
-    // status — the only implicit transition here. Un-reading deliberately
-    // does not move it back: the case HAS been reviewed once, and §12's
-    // prominence-after-read is carried by is_read/urgency, not the status.
-    if (payload.action.kind === "mark_read" && payload.action.read) {
-      await this.db
-        .update(schema.regulationCases)
-        .set({ adminStatus: "under_review" })
-        .where(
-          and(
-            eq(schema.regulationCases.id, payload.caseId),
-            eq(schema.regulationCases.adminStatus, "unread"),
-          ),
-        );
-    }
+      const inserted = await tx
+        .insert(schema.regulationCaseActions)
+        .values({
+          id: payload.actionId,
+          caseId: payload.caseId,
+          kind: payload.action.kind,
+          action: payload.action,
+          actor: payload.actor,
+          recordedAt: new Date(payload.recordedAt),
+        })
+        .onConflictDoNothing()
+        .returning({ id: schema.regulationCaseActions.id });
+      if (inserted.length === 0) {
+        // Redelivery of an action already fully projected — the case effect
+        // committed with this row; running it again out of order could
+        // resurrect a value a LATER action replaced.
+        return;
+      }
+
+      const effect = caseEffectOf(payload.action);
+      if (effect) {
+        await tx
+          .update(schema.regulationCases)
+          .set({ ...effect, updatedAt: new Date(payload.recordedAt) })
+          .where(eq(schema.regulationCases.id, payload.caseId));
+      }
+
+      // Reading a case for the first time moves it out of the `unread` inbox
+      // status — the only implicit transition here. Un-reading deliberately
+      // does not move it back: the case HAS been reviewed once, and §12's
+      // prominence-after-read is carried by is_read/urgency, not the status.
+      if (payload.action.kind === "mark_read" && payload.action.read) {
+        await tx
+          .update(schema.regulationCases)
+          .set({ adminStatus: "under_review" })
+          .where(
+            and(
+              eq(schema.regulationCases.id, payload.caseId),
+              eq(schema.regulationCases.adminStatus, "unread"),
+            ),
+          );
+      }
+    });
   }
 }
 

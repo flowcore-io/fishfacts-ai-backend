@@ -137,6 +137,19 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       );
     }
     const action = parsed.data;
+    // Route-level, NOT a schema refine: the event schema also validates on
+    // projection, and a future-only refine would reject a redelivered event
+    // whose perfectly valid `until` has since passed.
+    if (
+      action.kind === "snooze" &&
+      action.until !== null &&
+      Date.parse(action.until) <= Date.now()
+    ) {
+      return c.json(
+        { error: "invalid_payload", reason: "snooze_until_in_past" },
+        400,
+      );
+    }
     let caseRef: Awaited<
       ReturnType<RegulationQueueReadRepository["getCaseRef"]>
     >;

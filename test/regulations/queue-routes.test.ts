@@ -158,7 +158,7 @@ describe("POST /api/regulations/cases/:id/actions", () => {
       { kind: "assign", assignee: "gilli" },
       { kind: "assign", assignee: null },
       { kind: "set_urgency", urgency: "critical" },
-      { kind: "snooze", until: new Date().toISOString() },
+      { kind: "snooze", until: new Date(Date.now() + 3600_000).toISOString() },
       { kind: "snooze", until: null },
       { kind: "request_information", note: "Which vessels does §2 cover?" },
       { kind: "reject", reason: "Not a regulation" },
@@ -192,6 +192,17 @@ describe("POST /api/regulations/cases/:id/actions", () => {
     expect(
       (await postAction(app, { kind: "snooze", until: "tomorrow" })).status,
     ).toBe(400);
+  });
+
+  test("a snooze into the past is a 400, not a silent immediate wake", async () => {
+    const { app, written } = makeApp();
+    const res = await postAction(app, {
+      kind: "snooze",
+      until: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).reason).toBe("snooze_until_in_past");
+    expect(written).toHaveLength(0);
   });
 
   test("unknown case is a 404; malformed id never reaches the repo", async () => {

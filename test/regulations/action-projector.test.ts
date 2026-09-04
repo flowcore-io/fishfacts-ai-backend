@@ -224,27 +224,15 @@ describe("RegulationCaseActionProjector", () => {
     expect(await actionRows(caseId)).toHaveLength(2);
   });
 
-  test("an action for an unknown case logs and returns instead of throwing", async () => {
+  test("an action for an unknown case commits NOTHING — no orphan log row, no throw", async () => {
     if (!runCtx) return;
     const projector = new RegulationCaseActionProjector(runCtx.db);
+    const ghostId = caseIdFor("test-source:action-test-ghost");
     await projector.handleRecorded(
-      recordOf(caseIdFor("test-source:action-test-ghost"), "ghost", {
-        kind: "mark_read",
-        read: true,
-      }),
+      recordOf(ghostId, "ghost", { kind: "mark_read", read: true }),
     );
-    // Reaching here without a throw is the assertion; the log row for the
-    // ghost case is cleaned up by the LIKE pattern via its case_id join miss,
-    // so delete it directly.
-    if (runCtx) {
-      await runCtx.db
-        .delete(schema.regulationCaseActions)
-        .where(
-          eq(
-            schema.regulationCaseActions.caseId,
-            caseIdFor("test-source:action-test-ghost"),
-          ),
-        );
-    }
+    // A log row without its case effect would be exactly the trail/state
+    // disagreement the projector exists to prevent.
+    expect(await actionRows(ghostId)).toHaveLength(0);
   });
 });
