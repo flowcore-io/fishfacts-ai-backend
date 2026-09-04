@@ -169,6 +169,13 @@
       "when": 1788537756569,
       "tag": "0023_empty_blacklash",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788539801086,
+      "tag": "0024_tearful_slayback",
+      "breakpoints": true
     }
   ]
 }

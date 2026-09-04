@@ -41,6 +41,7 @@ import {
   RegulationRawSyncRepository,
 } from "./regulations/queue-repository";
 import { RegulationQueueReadRepository } from "./regulations/read-repository";
+import { RegulationRevisionProjector } from "./regulations/revision-projector";
 import { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
 import { SildelagetAisAnchorRepository } from "./sildelaget/ais-anchor-repository";
@@ -94,6 +95,7 @@ const regulationQueueRepository = new RegulationQueueRepository(db);
 const regulationRawSyncRepository = new RegulationRawSyncRepository(db);
 const regulationQueueReadRepository = new RegulationQueueReadRepository(db);
 const regulationCaseActionProjector = new RegulationCaseActionProjector(db);
+const regulationRevisionProjector = new RegulationRevisionProjector(db);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
@@ -134,6 +136,7 @@ const pathways = createPathwayRuntime(
   poiFragmentProjector,
   regulationVerdictProjector,
   regulationCaseActionProjector,
+  regulationRevisionProjector,
 );
 const jobs = createJobDefinitions(
   env,

@@ -1783,6 +1783,319 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/regulations/cases/{id}/revisions": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Propose a redraft of a case (ADMIN authority required)",
+        description:
+          "Emits `regulation.case.revision.proposed.0`. The client sends the complete resulting field draft (plus a full replacement area set when geometry changed); the route derives the change list by diffing against the live case and requires a justification per changed field (§12). A base revision that is no longer current is refused with the diff. Untouched geometry is copied from the base so the event is self-contained.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Case id from the queue list.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/RegulationRevisionProposal",
+              },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description:
+              "Draft event accepted; body carries the new revision id",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationActionAccepted",
+                },
+              },
+            },
+          },
+          "400": {
+            description:
+              "Invalid draft: `no_changes`, `missing_justification`, `justification_for_unchanged_field`, or schema violation",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "409": {
+            description:
+              "The named revision is superseded — body carries the revisions that landed since",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationStaleRevisionError",
+                },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/cases/{id}/revision-pointer": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Move the current-revision pointer (undo/redo; ADMIN)",
+        description:
+          "Emits `regulation.case.revision.pointer-moved.0`. Undo is a deterministic pointer move to an existing revision — a system affordance, never agent behaviour. The projection restores the target revision's fields, geometry set, verdict and validation flags.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Case id from the queue list.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["toRevisionId"],
+                properties: {
+                  toRevisionId: { type: "string", format: "uuid" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Pointer-move event accepted",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationActionAccepted",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "`revision_not_of_case` or schema violation",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/cases/{id}/validations": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Record a validation decision against a revision (ADMIN)",
+        description:
+          "Emits `regulation.case.validation.recorded.0`. Legal and geometry validation are SEPARATE decisions (§12); geometry validation is per-area (`geometryId` required exactly when scope is `geometry`). Only the current revision may be validated — a superseded one is a 409 with the diff.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Case id from the queue list.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/RegulationValidationRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Validation event accepted",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationActionAccepted",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "`geometry_not_of_revision` or schema violation",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "409": {
+            description:
+              "The named revision is superseded — body carries the revisions that landed since",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationStaleRevisionError",
+                },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/cases/{id}/approval": {
+      post: {
+        tags: ["Regulations"],
+        summary:
+          "Approve a named revision (ADMIN — human act, never a chat tool)",
+        description:
+          "Emits `regulation.case.approval.recorded.0`. The approval names a SPECIFIC revision id — that closes the edit-after-review race: a superseded revision is refused with the diff (409), and the projector re-checks under stream order, recording refused approvals rather than applying them. Requires the legal validation, and every per-area geometry validation unless `metadataOnly` (§12's publish-metadata-only path). This endpoint must never be registered as an admin-embed parent tool: the agent proposes, the human decides.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Case id from the queue list.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/RegulationApprovalRequest",
+              },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Approval event accepted",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationActionAccepted",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Schema violation",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "409": {
+            description:
+              "The named revision is superseded — body carries the revisions that landed since",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationStaleRevisionError",
+                },
+              },
+            },
+          },
+          "422": {
+            description:
+              "Validations missing — body lists which (`legal`, `geometry`)",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/areas/{id}": {
       get: {
         tags: ["Areas"],
@@ -3333,6 +3646,32 @@ export const openApiDocument = {
             nullable: true,
           },
           sourceEventSignature: { type: "string" },
+          baseRevisionId: {
+            type: "string",
+            format: "uuid",
+            nullable: true,
+            description:
+              "The revision this redraft was made against; null on collector revisions.",
+          },
+          changes: {
+            type: "array",
+            nullable: true,
+            description:
+              "Per-change justifications (§12); null on collector revisions.",
+            items: {
+              type: "object",
+              properties: {
+                field: { type: "string" },
+                justification: { type: "string" },
+              },
+            },
+          },
+          fields: {
+            allOf: [{ $ref: "#/components/schemas/RegulationRevisionFields" }],
+            nullable: true,
+            description:
+              "Full editable-field snapshot; null on pre-B3 collector revisions.",
+          },
           createdAt: { type: "string", format: "date-time" },
           isCurrent: { type: "boolean" },
           geometries: {
@@ -3430,9 +3769,171 @@ export const openApiDocument = {
           recordedAt: { type: "string", format: "date-time" },
         },
       },
+      RegulationRevisionFields: {
+        type: "object",
+        description:
+          "The complete editable interpretation of a case. A revision carries the full resulting snapshot, not a delta — undo is then a pure pointer move.",
+        required: ["title"],
+        properties: {
+          title: { type: "string" },
+          authority: { type: "string", nullable: true },
+          regulationNumber: { type: "string", nullable: true },
+          category: { type: "string", nullable: true },
+          summary: { type: "string", nullable: true },
+          effectiveFrom: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+          },
+          effectiveTo: { type: "string", format: "date-time", nullable: true },
+          expiresAt: { type: "string", format: "date-time", nullable: true },
+          seasonalRecurrence: { type: "string", nullable: true },
+          interpretationNotes: { type: "string", nullable: true },
+          applicability: { type: "object", nullable: true },
+        },
+      },
+      RegulationRevisionProposal: {
+        type: "object",
+        required: ["baseRevisionId", "fields"],
+        properties: {
+          baseRevisionId: {
+            type: "string",
+            format: "uuid",
+            description: "The revision the edit was made against.",
+          },
+          fields: { $ref: "#/components/schemas/RegulationRevisionFields" },
+          geometries: {
+            type: "array",
+            nullable: true,
+            description:
+              "Full replacement area set; null/omitted keeps the base revision's areas.",
+            items: { type: "object" },
+          },
+          justifications: {
+            type: "object",
+            additionalProperties: { type: "string" },
+            description:
+              "field → why it changed. Required for exactly the fields that differ (use key `geometries` for the area set).",
+          },
+        },
+      },
+      RegulationValidationRequest: {
+        type: "object",
+        required: ["revisionId", "scope", "validated"],
+        properties: {
+          revisionId: { type: "string", format: "uuid" },
+          scope: { type: "string", enum: ["legal", "geometry"] },
+          geometryId: {
+            type: "string",
+            format: "uuid",
+            nullable: true,
+            description: "Required exactly when scope is `geometry`.",
+          },
+          validated: { type: "boolean" },
+          note: { type: "string", nullable: true },
+        },
+      },
+      RegulationApprovalRequest: {
+        type: "object",
+        required: ["revisionId"],
+        properties: {
+          revisionId: { type: "string", format: "uuid" },
+          metadataOnly: {
+            type: "boolean",
+            default: false,
+            description:
+              "Approve on legal validation alone — §12's publish-metadata-only path for cases whose geometry cannot be verified.",
+          },
+          note: { type: "string", nullable: true },
+        },
+      },
+      RegulationStaleRevisionError: {
+        type: "object",
+        required: ["error", "currentRevisionId", "revisionsSince"],
+        properties: {
+          error: { type: "string", enum: ["stale_revision"] },
+          currentRevisionId: { type: "string", format: "uuid" },
+          namedRevisionId: { type: "string", format: "uuid" },
+          revisionsSince: {
+            type: "array",
+            description:
+              "The revisions that superseded the named one — who moved the draft and why.",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", format: "uuid" },
+                position: { type: "integer" },
+                author: { type: "string" },
+                changes: {
+                  type: "array",
+                  items: { type: "object" },
+                  nullable: true,
+                },
+                createdAt: { type: "string", format: "date-time" },
+              },
+            },
+          },
+        },
+      },
+      RegulationCaseValidation: {
+        type: "object",
+        required: [
+          "id",
+          "caseId",
+          "revisionId",
+          "scope",
+          "validated",
+          "actor",
+          "recordedAt",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          caseId: { type: "string", format: "uuid" },
+          revisionId: { type: "string", format: "uuid" },
+          scope: { type: "string", enum: ["legal", "geometry"] },
+          geometryId: { type: "string", format: "uuid", nullable: true },
+          validated: { type: "boolean" },
+          note: { type: "string", nullable: true },
+          actor: { type: "string" },
+          recordedAt: { type: "string", format: "date-time" },
+        },
+      },
+      RegulationCaseApproval: {
+        type: "object",
+        description:
+          "Approvals including refused ones — the losers of the edit-after-review race stay on the audit trail with `applied: false` and the reason.",
+        required: [
+          "id",
+          "caseId",
+          "revisionId",
+          "metadataOnly",
+          "actor",
+          "recordedAt",
+          "applied",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          caseId: { type: "string", format: "uuid" },
+          revisionId: { type: "string", format: "uuid" },
+          metadataOnly: { type: "boolean" },
+          note: { type: "string", nullable: true },
+          actor: { type: "string" },
+          recordedAt: { type: "string", format: "date-time" },
+          applied: { type: "boolean" },
+          refusalReason: { type: "string", nullable: true },
+        },
+      },
       RegulationCaseDetail: {
         type: "object",
-        required: ["case", "revisions", "sources", "links", "actions"],
+        required: [
+          "case",
+          "revisions",
+          "sources",
+          "links",
+          "actions",
+          "validations",
+          "approvals",
+        ],
         properties: {
           case: {
             allOf: [
@@ -3508,6 +4009,15 @@ export const openApiDocument = {
             type: "array",
             description: "The admin-action audit trail, oldest first.",
             items: { $ref: "#/components/schemas/RegulationCaseAction" },
+          },
+          validations: {
+            type: "array",
+            description: "Every validation decision ever taken, oldest first.",
+            items: { $ref: "#/components/schemas/RegulationCaseValidation" },
+          },
+          approvals: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RegulationCaseApproval" },
           },
           links: {
             type: "array",

@@ -185,6 +185,71 @@ export class RegulationQueueReadRepository {
     return row ?? null;
   }
 
+  /** The full case row — the write routes read it for the current pointer,
+   * validation flags and editable-field base. */
+  async getCaseRow(caseId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.regulationCases)
+      .where(eq(schema.regulationCases.id, caseId))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async getRevision(revisionId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, revisionId))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /** The revisions that superseded a given position — what a 409 returns so
+   * the reviewer sees exactly what moved under them. */
+  async listRevisionsSince(caseId: string, position: number) {
+    return await this.db
+      .select({
+        id: schema.regulationCaseRevisions.id,
+        position: schema.regulationCaseRevisions.position,
+        author: schema.regulationCaseRevisions.author,
+        changes: schema.regulationCaseRevisions.changes,
+        createdAt: schema.regulationCaseRevisions.createdAt,
+      })
+      .from(schema.regulationCaseRevisions)
+      .where(
+        and(
+          eq(schema.regulationCaseRevisions.caseId, caseId),
+          sql`${schema.regulationCaseRevisions.position} > ${position}`,
+        ),
+      )
+      .orderBy(asc(schema.regulationCaseRevisions.position));
+  }
+
+  /** One revision's areas in draft shape (no PostGIS column) — the base a
+   * proposal copies when geometry is untouched, and the membership check for
+   * per-area validation. */
+  async getRevisionGeometries(revisionId: string) {
+    return await this.db
+      .select({
+        id: schema.regulationCaseGeometries.id,
+        position: schema.regulationCaseGeometries.position,
+        name: schema.regulationCaseGeometries.name,
+        section: schema.regulationCaseGeometries.section,
+        kind: schema.regulationCaseGeometries.kind,
+        season: schema.regulationCaseGeometries.season,
+        verticesQuoted: schema.regulationCaseGeometries.verticesQuoted,
+        points: schema.regulationCaseGeometries.points,
+        geometrySource: schema.regulationCaseGeometries.geometrySource,
+        coordinateSystem: schema.regulationCaseGeometries.coordinateSystem,
+        precision: schema.regulationCaseGeometries.precision,
+        geometryValidated: schema.regulationCaseGeometries.geometryValidated,
+      })
+      .from(schema.regulationCaseGeometries)
+      .where(eq(schema.regulationCaseGeometries.revisionId, revisionId))
+      .orderBy(asc(schema.regulationCaseGeometries.position));
+  }
+
   /**
    * Everything the case-detail screen shows: the case, its revision history
    * (each revision with its own geometries — validation is per-area, so the
@@ -198,7 +263,15 @@ export class RegulationQueueReadRepository {
       .where(eq(schema.regulationCases.id, caseId))
       .limit(1);
     if (!caseRow) return null;
-    const [revisions, geometries, sources, links, actions] = await Promise.all([
+    const [
+      revisions,
+      geometries,
+      sources,
+      links,
+      actions,
+      validations,
+      approvals,
+    ] = await Promise.all([
       this.db
         .select()
         .from(schema.regulationCaseRevisions)
@@ -237,6 +310,18 @@ export class RegulationQueueReadRepository {
         .from(schema.regulationCaseActions)
         .where(eq(schema.regulationCaseActions.caseId, caseId))
         .orderBy(asc(schema.regulationCaseActions.recordedAt)),
+      // Every validation decision ever taken, oldest first (§12 audit).
+      this.db
+        .select()
+        .from(schema.regulationCaseValidations)
+        .where(eq(schema.regulationCaseValidations.caseId, caseId))
+        .orderBy(asc(schema.regulationCaseValidations.recordedAt)),
+      // Approvals including refused ones — the race losers stay visible.
+      this.db
+        .select()
+        .from(schema.regulationCaseApprovals)
+        .where(eq(schema.regulationCaseApprovals.caseId, caseId))
+        .orderBy(asc(schema.regulationCaseApprovals.recordedAt)),
     ]);
     const geometriesByRevision = new Map<string, typeof geometries>();
     for (const geometry of geometries) {
@@ -254,6 +339,8 @@ export class RegulationQueueReadRepository {
       sources,
       links,
       actions,
+      validations,
+      approvals,
     };
   }
 }
