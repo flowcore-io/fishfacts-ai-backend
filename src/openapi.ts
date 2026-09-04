@@ -40,6 +40,11 @@ export const openApiDocument = {
         "In-chat issue reports: consented session captures from the FishFacts chat (chat log, parent tool calls, FE network requests) relayed into Usable Report fragments. Submission is open to any authenticated user; list/detail are ADMIN-only proxies over the Usable API.",
     },
     {
+      name: "Regulations",
+      description:
+        "Admin Regulations Inbox (approval queue) read API: the case list, unread counts, and full case detail (revisions, per-area geometries, sources, links). ADMIN authority required; strictly read-only — every case mutation is an event with a projector.",
+    },
+    {
       name: "AIS",
       description:
         "Read-only AIS vessel position tracks from the ClickHouse read model. Supports multiple vessels and time-window filters (preset window or explicit from/to), server-side downsampled per vessel.",
@@ -1519,6 +1524,192 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/regulations/queue": {
+      get: {
+        tags: ["Regulations"],
+        summary: "List approval-queue cases (ADMIN authority required)",
+        description:
+          "The §12 inbox list: urgency outranks recency (urgent cases stay on top after being read), newest queued first within an urgency band. Snoozed cases are hidden until their snooze passes unless `includeSnoozed=true`.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description:
+              "Comma-separated admin-case statuses (unread | under_review | awaiting_information | awaiting_regulatory_validation | awaiting_geometry_validation | approved | published | rejected | duplicate | expired). An unknown status is a 400, not an empty list.",
+          },
+          {
+            name: "jurisdiction",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Comma-separated jurisdictions, e.g. `FO,NO,IS`.",
+          },
+          {
+            name: "urgency",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Comma-separated urgency values.",
+          },
+          {
+            name: "assignee",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Exact assignee username.",
+          },
+          {
+            name: "unread",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["true", "false"] },
+            description:
+              "true → unread cases only; false → read cases only; omitted → both.",
+          },
+          {
+            name: "includeSnoozed",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["true", "false"] },
+            description: "Include cases whose snooze has not yet passed.",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+          },
+          {
+            name: "offset",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 0, default: 0 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "One page of queue cases plus the filtered total",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationQueueListResponse",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid query parameter",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "503": {
+            description: "Queue database unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/queue/counts": {
+      get: {
+        tags: ["Regulations"],
+        summary: "Inbox badge counts (ADMIN authority required)",
+        description:
+          "Unread count for the inbox entry point (snoozed cases excluded — hidden means not nagging), the snoozed count, and a per-admin-status breakdown.",
+        security: [{ FishfactsAuthToken: [] }],
+        responses: {
+          "200": {
+            description: "Queue counts",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/RegulationQueueCounts" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "503": {
+            description: "Queue database unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/cases/{id}": {
+      get: {
+        tags: ["Regulations"],
+        summary: "Fetch one case in full (ADMIN authority required)",
+        description:
+          "The case record with its complete revision history (each revision carrying its verdict, snapshot references and per-area geometries), attached sources and replacement links. The revision list is the audit trail the detail screen renders.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Deterministic case id from the queue list.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Full case detail",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/RegulationCaseDetail" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "503": {
+            description: "Queue database unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/areas/{id}": {
       get: {
         tags: ["Areas"],
@@ -2846,6 +3037,330 @@ export const openApiDocument = {
             },
           },
         ],
+      },
+      RegulationQueueCase: {
+        type: "object",
+        description:
+          "One approval-queue case as the inbox lists it. Timestamps are ISO 8601; nullable fields are null until the pipeline or an admin fills them.",
+        required: [
+          "id",
+          "caseKey",
+          "title",
+          "jurisdiction",
+          "sourceType",
+          "sourceUrl",
+          "changeType",
+          "caseType",
+          "adminStatus",
+          "regulationStatus",
+          "verdictStatus",
+          "regulatoryValidated",
+          "geometryValidated",
+          "isRead",
+          "firstSeenAt",
+          "updatedAt",
+          "currentRevisionId",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          caseKey: {
+            type: "string",
+            description:
+              "`${sourceType}:${sourceRef}` — the source's own identity for the regulation.",
+          },
+          title: { type: "string" },
+          authority: { type: "string", nullable: true },
+          regulationNumber: { type: "string", nullable: true },
+          jurisdiction: { type: "string", description: "FO | NO | IS" },
+          sourceType: { type: "string" },
+          sourceUrl: { type: "string" },
+          category: { type: "string", nullable: true },
+          summary: { type: "string", nullable: true },
+          changeType: {
+            type: "string",
+            enum: ["new", "amendment", "replacement", "reopening", "expiry"],
+          },
+          caseType: {
+            type: "string",
+            enum: ["ingested", "mismatch", "customer_report", "expiry"],
+          },
+          adminStatus: {
+            type: "string",
+            enum: [
+              "unread",
+              "under_review",
+              "awaiting_information",
+              "awaiting_regulatory_validation",
+              "awaiting_geometry_validation",
+              "approved",
+              "published",
+              "rejected",
+              "duplicate",
+              "expired",
+            ],
+          },
+          regulationStatus: {
+            type: "string",
+            enum: ["draft", "validated", "published", "replaced", "expired"],
+          },
+          sourceComparison: { type: "string", nullable: true },
+          verdictStatus: {
+            type: "string",
+            enum: ["pending", "ok", "failed"],
+          },
+          regulatoryValidated: { type: "boolean" },
+          geometryValidated: { type: "boolean" },
+          urgency: { type: "string", nullable: true },
+          assignee: { type: "string", nullable: true },
+          isRead: { type: "boolean" },
+          snoozeUntil: { type: "string", format: "date-time", nullable: true },
+          effectiveFrom: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+          },
+          effectiveTo: { type: "string", format: "date-time", nullable: true },
+          expiresAt: { type: "string", format: "date-time", nullable: true },
+          firstSeenAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+          currentRevisionId: { type: "string", format: "uuid" },
+        },
+      },
+      RegulationQueueListResponse: {
+        type: "object",
+        required: ["cases", "returned", "total", "limit", "offset"],
+        properties: {
+          cases: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RegulationQueueCase" },
+          },
+          returned: { type: "integer" },
+          total: {
+            type: "integer",
+            description: "Cases matching the filters across all pages.",
+          },
+          limit: { type: "integer" },
+          offset: { type: "integer" },
+        },
+      },
+      RegulationQueueCounts: {
+        type: "object",
+        required: ["unread", "snoozed", "byAdminStatus"],
+        properties: {
+          unread: {
+            type: "integer",
+            description: "Unread cases, snoozed ones excluded.",
+          },
+          snoozed: { type: "integer" },
+          byAdminStatus: {
+            type: "object",
+            additionalProperties: { type: "integer" },
+          },
+        },
+      },
+      RegulationCaseGeometry: {
+        type: "object",
+        description:
+          "One addressable area of a revision. `points` is the vertex SET in source order — never a derived polygon; a `described` geometrySource is flagged, never computed.",
+        required: [
+          "id",
+          "revisionId",
+          "position",
+          "kind",
+          "points",
+          "geometrySource",
+          "coordinateSystem",
+          "geometryValidated",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          revisionId: { type: "string", format: "uuid" },
+          position: { type: "integer" },
+          name: { type: "string", nullable: true },
+          section: { type: "string", nullable: true },
+          kind: { type: "string", enum: ["closure", "exemption", "other"] },
+          season: { type: "string", nullable: true },
+          verticesQuoted: {
+            type: "array",
+            items: { type: "string" },
+            nullable: true,
+            description: "The coordinates verbatim as the source printed them.",
+          },
+          points: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["lat", "lon"],
+              properties: {
+                lat: { type: "number" },
+                lon: { type: "number" },
+              },
+            },
+          },
+          geometrySource: {
+            type: "string",
+            enum: ["enumerated", "preparsed", "described"],
+          },
+          coordinateSystem: { type: "string" },
+          precision: { type: "string", nullable: true },
+          geometryValidated: { type: "boolean" },
+        },
+      },
+      RegulationCaseRevision: {
+        type: "object",
+        description:
+          "One revision of a case, with its verdict and source snapshot. The current revision is the case's currentRevisionId, not max(position).",
+        required: [
+          "id",
+          "caseId",
+          "position",
+          "changeType",
+          "author",
+          "snapshotUrl",
+          "parseStatus",
+          "verdictStatus",
+          "sourceEventSignature",
+          "createdAt",
+          "isCurrent",
+          "geometries",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          caseId: { type: "string", format: "uuid" },
+          position: { type: "integer" },
+          contentHash: { type: "string", nullable: true },
+          changeType: { type: "string" },
+          author: {
+            type: "string",
+            description:
+              "`collector:<job id>` today; `agent` and `admin:<user>` arrive with stage ② writes.",
+          },
+          snapshotText: { type: "string", nullable: true },
+          snapshotUrl: { type: "string" },
+          snapshotFetchedAt: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+          },
+          snapshotFragmentId: { type: "string", nullable: true },
+          parserVersion: { type: "string", nullable: true },
+          parseStatus: { type: "string" },
+          parseError: { type: "string", nullable: true },
+          verdictStatus: {
+            type: "string",
+            enum: ["pending", "ok", "failed"],
+          },
+          verdict: { type: "object", nullable: true },
+          verdictError: { type: "string", nullable: true },
+          verdictModel: { type: "string", nullable: true },
+          verdictConfidence: { type: "number", nullable: true },
+          verdictRecordedAt: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+          },
+          sourceEventSignature: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          isCurrent: { type: "boolean" },
+          geometries: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RegulationCaseGeometry" },
+          },
+        },
+      },
+      RegulationCaseDetail: {
+        type: "object",
+        required: ["case", "revisions", "sources", "links"],
+        properties: {
+          case: {
+            allOf: [
+              { $ref: "#/components/schemas/RegulationQueueCase" },
+              {
+                type: "object",
+                description:
+                  "The detail read returns the full record — the list shape plus the §4 blocks the inbox table has no column for.",
+                properties: {
+                  sourceRef: { type: "string" },
+                  applicability: {
+                    type: "object",
+                    nullable: true,
+                    description:
+                      "Queryable §4 Applicability structure (species, gear, vessel classes, …).",
+                  },
+                  sourceStatus: { type: "string" },
+                  publishedAt: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  seasonalRecurrence: { type: "string", nullable: true },
+                  evidence: { type: "object", nullable: true },
+                  detectedBy: { type: "string" },
+                  lastCheckedAt: { type: "string", format: "date-time" },
+                  lastVerifiedAt: {
+                    type: "string",
+                    format: "date-time",
+                    nullable: true,
+                  },
+                  interpretationNotes: { type: "string", nullable: true },
+                  duplicateOfCaseId: {
+                    type: "string",
+                    format: "uuid",
+                    nullable: true,
+                  },
+                  contentHash: { type: "string", nullable: true },
+                  createdAt: { type: "string", format: "date-time" },
+                },
+              },
+            ],
+          },
+          revisions: {
+            type: "array",
+            items: { $ref: "#/components/schemas/RegulationCaseRevision" },
+          },
+          sources: {
+            type: "array",
+            items: {
+              type: "object",
+              required: [
+                "caseId",
+                "sourceType",
+                "sourceRef",
+                "isPrimary",
+                "firstSeenAt",
+                "lastCheckedAt",
+              ],
+              properties: {
+                caseId: { type: "string", format: "uuid" },
+                sourceType: { type: "string" },
+                sourceRef: { type: "string" },
+                url: { type: "string", nullable: true },
+                isPrimary: { type: "boolean" },
+                comparison: { type: "string", nullable: true },
+                firstSeenAt: { type: "string", format: "date-time" },
+                lastCheckedAt: { type: "string", format: "date-time" },
+              },
+            },
+          },
+          links: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["caseId", "kind", "targetCaseKey", "createdAt"],
+              properties: {
+                caseId: { type: "string", format: "uuid" },
+                kind: { type: "string", enum: ["replaces", "repeals"] },
+                targetCaseKey: { type: "string" },
+                targetCaseId: {
+                  type: "string",
+                  format: "uuid",
+                  nullable: true,
+                },
+                createdAt: { type: "string", format: "date-time" },
+              },
+            },
+          },
+        },
       },
       AisTrackPoint: {
         type: "object",

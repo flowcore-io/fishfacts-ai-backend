@@ -32,6 +32,8 @@ import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
 import type { PoiRepository } from "./poi/repository";
 import { createPoiRouter } from "./poi/routes";
+import type { RegulationQueueReadRepository } from "./regulations/read-repository";
+import { createRegulationsRouter } from "./regulations/routes";
 import type { ReportsClient } from "./reports/client";
 import { createReportsRouter } from "./reports/routes";
 import type { SildelagetCatchRepository } from "./sildelaget/repository";
@@ -61,6 +63,7 @@ export type AppDependencies = {
   aisSource: AisSource;
   /** null = reports feature unconfigured (no REPORT_FRAGMENT_TYPE_ID). */
   reportsClient: ReportsClient | null;
+  regulationQueueReadRepository: RegulationQueueReadRepository;
   db: Database;
 };
 
@@ -84,6 +87,7 @@ export function createApp({
   aisIngestState,
   aisSource,
   reportsClient,
+  regulationQueueReadRepository,
   db,
 }: AppDependencies) {
   const app = new Hono();
@@ -116,6 +120,7 @@ export function createApp({
   app.use("/api/ais/*", authMiddleware);
   app.use("/api/reports", authMiddleware);
   app.use("/api/reports/*", authMiddleware);
+  app.use("/api/regulations/*", authMiddleware);
 
   app.route(
     "/api/tiles",
@@ -151,6 +156,12 @@ export function createApp({
   // session capture → Usable Report fragment); list/detail are ADMIN-only
   // proxies for the FE admin screen (Usable token never reaches the browser).
   app.route("/api/reports", createReportsRouter({ reports: reportsClient }));
+  // Admin Regulations Inbox, read side (stage ② B1) — ADMIN-only like
+  // /api/jobs; the router applies requireAdmin to every route.
+  app.route(
+    "/api/regulations",
+    createRegulationsRouter({ queue: regulationQueueReadRepository }),
+  );
 
   app.post("/api/events", requireAdmin, async (c) => {
     const body = await c.req.json().catch(() => null);
