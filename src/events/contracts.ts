@@ -458,3 +458,73 @@ export const regulationVerdictRecordedSchema = z.object({
 export type RegulationVerdictRecorded = z.infer<
   typeof regulationVerdictRecordedSchema
 >;
+
+export const REGULATION_ADMIN_ACTION_RECORDED_EVENT_TYPE =
+  "regulation.case.admin-action.recorded.0" as const;
+export const REGULATION_ADMIN_ACTION_RECORDED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_ADMIN_ACTION_RECORDED_EVENT_TYPE}` as const;
+
+/**
+ * The §12 inbox actions, one discriminated union under a single event type:
+ * the actions share a shape (who did what to which case, when) and the
+ * per-action payload is tiny, so one type keeps the flow-type provisioning
+ * surface minimal — each additional auto-provisioned name is another chance
+ * for the duplicate-flow-type failure documented on REGULATION_FLOW_TYPE.
+ *
+ * Approval and revision events (stage ② B3) are deliberately NOT actions:
+ * they target a revision id, not a case, and carry their own semantics.
+ */
+export const regulationAdminActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("mark_read"), read: z.boolean() }),
+  z.object({
+    kind: z.literal("assign"),
+    /** null unassigns. */
+    assignee: z.string().min(1).max(200).nullable(),
+  }),
+  z.object({
+    kind: z.literal("set_urgency"),
+    /** null clears back to routine. */
+    urgency: z.enum(["critical", "high", "medium", "low"]).nullable(),
+  }),
+  z.object({
+    kind: z.literal("snooze"),
+    /** null wakes the case immediately. */
+    until: z.string().datetime().nullable(),
+  }),
+  z.object({
+    kind: z.literal("request_information"),
+    /** What is missing, in the admin's words — carried on the action (and
+     * its log row) so the ask survives; the answer arrives as a revision
+     * (B3), never as a mutation here. */
+    note: z.string().min(1).max(2000),
+  }),
+  z.object({
+    kind: z.literal("reject"),
+    reason: z.string().min(1).max(2000),
+  }),
+  z.object({
+    kind: z.literal("mark_duplicate"),
+    duplicateOfCaseId: z.string().uuid(),
+  }),
+]);
+export type RegulationAdminAction = z.infer<typeof regulationAdminActionSchema>;
+
+/**
+ * An administrator acted on a queue case. The route stamps `actor` from the
+ * authenticated admin and `recordedAt` from the server clock — the same
+ * cannot-be-forged posture as the POI write path.
+ */
+export const regulationAdminActionRecordedSchema = z.object({
+  actionId: z.string().uuid(),
+  caseId: z.string().uuid(),
+  /** The source's own identity for the case — redundant with caseId but kept
+   * on every event so the stream stays greppable without the projection. */
+  caseKey: z.string().min(1),
+  action: regulationAdminActionSchema,
+  /** `admin:<username>`. */
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationAdminActionRecorded = z.infer<
+  typeof regulationAdminActionRecordedSchema
+>;

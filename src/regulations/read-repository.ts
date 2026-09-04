@@ -169,6 +169,22 @@ export class RegulationQueueReadRepository {
     };
   }
 
+  /** Existence + caseKey lookup for the action write path — enough to stamp
+   * an event without dragging the whole detail read along. */
+  async getCaseRef(
+    caseId: string,
+  ): Promise<{ id: string; caseKey: string } | null> {
+    const [row] = await this.db
+      .select({
+        id: schema.regulationCases.id,
+        caseKey: schema.regulationCases.caseKey,
+      })
+      .from(schema.regulationCases)
+      .where(eq(schema.regulationCases.id, caseId))
+      .limit(1);
+    return row ?? null;
+  }
+
   /**
    * Everything the case-detail screen shows: the case, its revision history
    * (each revision with its own geometries — validation is per-area, so the
@@ -182,7 +198,7 @@ export class RegulationQueueReadRepository {
       .where(eq(schema.regulationCases.id, caseId))
       .limit(1);
     if (!caseRow) return null;
-    const [revisions, geometries, sources, links] = await Promise.all([
+    const [revisions, geometries, sources, links, actions] = await Promise.all([
       this.db
         .select()
         .from(schema.regulationCaseRevisions)
@@ -215,6 +231,12 @@ export class RegulationQueueReadRepository {
         .select()
         .from(schema.regulationCaseLinks)
         .where(eq(schema.regulationCaseLinks.caseId, caseId)),
+      // The admin-action audit trail, oldest first — the order it happened.
+      this.db
+        .select()
+        .from(schema.regulationCaseActions)
+        .where(eq(schema.regulationCaseActions.caseId, caseId))
+        .orderBy(asc(schema.regulationCaseActions.recordedAt)),
     ]);
     const geometriesByRevision = new Map<string, typeof geometries>();
     for (const geometry of geometries) {
@@ -231,6 +253,7 @@ export class RegulationQueueReadRepository {
       })),
       sources,
       links,
+      actions,
     };
   }
 }

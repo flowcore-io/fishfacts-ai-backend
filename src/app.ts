@@ -160,7 +160,10 @@ export function createApp({
   // /api/jobs; the router applies requireAdmin to every route.
   app.route(
     "/api/regulations",
-    createRegulationsRouter({ queue: regulationQueueReadRepository }),
+    createRegulationsRouter({
+      queue: regulationQueueReadRepository,
+      writer: pathways.writer,
+    }),
   );
 
   app.post("/api/events", requireAdmin, async (c) => {

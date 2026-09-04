@@ -1710,6 +1710,79 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/regulations/cases/{id}/actions": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Record an inbox action on a case (ADMIN authority required)",
+        description:
+          "Emits a `regulation.case.admin-action.recorded.0` event — the route mutates nothing directly; the projector applies the effect and appends the audit row, so the trail cannot disagree with the state. `actor` and `recordedAt` are stamped server-side from the auth token and clock. Answers 202: the event is durable, the projection catches up via the pump.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Case id from the queue list.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/RegulationAdminAction" },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Action event accepted",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/RegulationActionAccepted",
+                },
+              },
+            },
+          },
+          "400": {
+            description:
+              "Invalid action payload, `duplicate_of_self`, or `duplicate_target_not_found`",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "503": {
+            description: "Queue database unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/areas/{id}": {
       get: {
         tags: ["Areas"],
@@ -3268,9 +3341,98 @@ export const openApiDocument = {
           },
         },
       },
+      RegulationAdminAction: {
+        description:
+          "One §12 inbox action, discriminated on `kind`. Nullable fields clear: `assignee: null` unassigns, `urgency: null` returns to routine, `until: null` wakes a snoozed case.",
+        oneOf: [
+          {
+            type: "object",
+            required: ["kind", "read"],
+            properties: {
+              kind: { type: "string", enum: ["mark_read"] },
+              read: { type: "boolean" },
+            },
+          },
+          {
+            type: "object",
+            required: ["kind", "assignee"],
+            properties: {
+              kind: { type: "string", enum: ["assign"] },
+              assignee: { type: "string", nullable: true },
+            },
+          },
+          {
+            type: "object",
+            required: ["kind", "urgency"],
+            properties: {
+              kind: { type: "string", enum: ["set_urgency"] },
+              urgency: {
+                type: "string",
+                enum: ["critical", "high", "medium", "low"],
+                nullable: true,
+              },
+            },
+          },
+          {
+            type: "object",
+            required: ["kind", "until"],
+            properties: {
+              kind: { type: "string", enum: ["snooze"] },
+              until: { type: "string", format: "date-time", nullable: true },
+            },
+          },
+          {
+            type: "object",
+            required: ["kind", "note"],
+            properties: {
+              kind: { type: "string", enum: ["request_information"] },
+              note: { type: "string", maxLength: 2000 },
+            },
+          },
+          {
+            type: "object",
+            required: ["kind", "reason"],
+            properties: {
+              kind: { type: "string", enum: ["reject"] },
+              reason: { type: "string", maxLength: 2000 },
+            },
+          },
+          {
+            type: "object",
+            required: ["kind", "duplicateOfCaseId"],
+            properties: {
+              kind: { type: "string", enum: ["mark_duplicate"] },
+              duplicateOfCaseId: { type: "string", format: "uuid" },
+            },
+          },
+        ],
+      },
+      RegulationActionAccepted: {
+        type: "object",
+        required: ["actionId", "eventId", "recordedAt"],
+        properties: {
+          actionId: { type: "string", format: "uuid" },
+          eventId: { type: "string" },
+          recordedAt: { type: "string", format: "date-time" },
+        },
+      },
+      RegulationCaseAction: {
+        type: "object",
+        description:
+          "One audit-trail row: the projection of a recorded admin action.",
+        required: ["id", "caseId", "kind", "action", "actor", "recordedAt"],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          caseId: { type: "string", format: "uuid" },
+          kind: { type: "string" },
+          action: { $ref: "#/components/schemas/RegulationAdminAction" },
+          actor: { type: "string", description: "`admin:<username>`" },
+          recordedAt: { type: "string", format: "date-time" },
+        },
+      },
       RegulationCaseDetail: {
         type: "object",
-        required: ["case", "revisions", "sources", "links"],
+        required: ["case", "revisions", "sources", "links", "actions"],
         properties: {
           case: {
             allOf: [
@@ -3341,6 +3503,11 @@ export const openApiDocument = {
                 lastCheckedAt: { type: "string", format: "date-time" },
               },
             },
+          },
+          actions: {
+            type: "array",
+            description: "The admin-action audit trail, oldest first.",
+            items: { $ref: "#/components/schemas/RegulationCaseAction" },
           },
           links: {
             type: "array",
