@@ -13,6 +13,19 @@ import { caseColumnsOfFields } from "./revision-fields";
 
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
+/** The case columns of the flag computation — `geometryCount` feeds the lane
+ * decision and must not reach the UPDATE. */
+function stripGeometryCount(flags: {
+  regulatoryValidated: boolean;
+  geometryValidated: boolean;
+  geometryCount: number;
+}): { regulatoryValidated: boolean; geometryValidated: boolean } {
+  return {
+    regulatoryValidated: flags.regulatoryValidated,
+    geometryValidated: flags.geometryValidated,
+  };
+}
+
 /** The inbox lanes a validation may steer between. Terminal and pre-review
  * lanes are never dragged around by a validation landing. */
 const STEERABLE_LANES = [
@@ -45,6 +58,7 @@ export class RegulationRevisionProjector {
         .select({
           id: schema.regulationCases.id,
           currentRevisionId: schema.regulationCases.currentRevisionId,
+          adminStatus: schema.regulationCases.adminStatus,
         })
         .from(schema.regulationCases)
         .where(eq(schema.regulationCases.id, payload.caseId))
@@ -152,6 +166,16 @@ export class RegulationRevisionProjector {
           // about a revision, and this is a different revision.
           regulatoryValidated: false,
           geometryValidated: false,
+          // An approved case whose draft moves is no longer approved: the
+          // approval named a revision that is no longer current. The
+          // approval row keeps what was approved; the case state must not
+          // keep claiming it. (Published is stage ③'s to rule on.)
+          ...(caseRow.adminStatus === "approved"
+            ? {
+                adminStatus: "under_review",
+                regulationStatus: "draft",
+              }
+            : {}),
           updatedAt: new Date(payload.recordedAt),
         })
         .where(eq(schema.regulationCases.id, payload.caseId));
@@ -198,10 +222,27 @@ export class RegulationRevisionProjector {
         .returning({ id: schema.regulationCaseActions.id });
       if (inserted.length === 0) return;
 
+      const [pointerCase] = await tx
+        .select({
+          adminStatus: schema.regulationCases.adminStatus,
+          currentRevisionId: schema.regulationCases.currentRevisionId,
+        })
+        .from(schema.regulationCases)
+        .where(eq(schema.regulationCases.id, payload.caseId))
+        .limit(1);
+      // Same demotion rule as a proposed draft: undo AWAY from the approved
+      // revision un-approves the case (a no-op move to the same revision
+      // does not). The approval row keeps what was approved.
+      const leavesApprovedRevision =
+        pointerCase?.adminStatus === "approved" &&
+        pointerCase.currentRevisionId !== target.id;
       await tx
         .update(schema.regulationCases)
         .set({
           currentRevisionId: target.id,
+          ...(leavesApprovedRevision
+            ? { adminStatus: "under_review", regulationStatus: "draft" }
+            : {}),
           // Restore what the target revision knew about itself. Pre-B3
           // collector revisions have no fields snapshot; their geometry set
           // and verdict still restore, the field columns stay put.
@@ -211,7 +252,7 @@ export class RegulationRevisionProjector {
               )
             : {}),
           verdictStatus: target.verdictStatus,
-          ...(await this.validationFlagsOf(tx, target.id)),
+          ...stripGeometryCount(await this.validationFlagsOf(tx, target.id)),
           updatedAt: new Date(payload.recordedAt),
         })
         .where(eq(schema.regulationCases.id, payload.caseId));
@@ -287,10 +328,11 @@ export class RegulationRevisionProjector {
       const lane = STEERABLE_LANES.includes(caseRow.adminStatus)
         ? laneOf(flags, caseRow.adminStatus)
         : caseRow.adminStatus;
+      const { geometryCount: _count, ...caseFlags } = flags;
       await tx
         .update(schema.regulationCases)
         .set({
-          ...flags,
+          ...caseFlags,
           adminStatus: lane,
           ...(payload.scope === "legal" && payload.validated
             ? { lastVerifiedAt: new Date(payload.recordedAt) }
@@ -379,7 +421,11 @@ export class RegulationRevisionProjector {
   private async validationFlagsOf(
     tx: Tx,
     revisionId: string,
-  ): Promise<{ regulatoryValidated: boolean; geometryValidated: boolean }> {
+  ): Promise<{
+    regulatoryValidated: boolean;
+    geometryValidated: boolean;
+    geometryCount: number;
+  }> {
     const [latestLegal] = await tx
       .select({ validated: schema.regulationCaseValidations.validated })
       .from(schema.regulationCaseValidations)
@@ -401,18 +447,34 @@ export class RegulationRevisionProjector {
     const total = geometryTotals?.total ?? 0;
     return {
       regulatoryValidated: latestLegal?.validated ?? false,
+      // Zero areas is NOT vacuous validation: a text-only statute and a
+      // parse that silently dropped its areas look identical at zero rows,
+      // and only a human can tell them apart — that is what the approval's
+      // explicit metadataOnly acknowledgment is for.
       geometryValidated: total > 0 && geometryTotals?.validated === total,
+      geometryCount: total,
     };
   }
 }
 
 /** Steer the inbox lane toward whichever validation is still missing; leave
- * it alone once both hold (approval is the next move, and it sets its own). */
+ * it alone once both hold (approval is the next move, and it sets its own).
+ * A case with no areas at all is never steered toward geometry validation —
+ * that lane would be a dead end with nothing in it to validate; its exit is
+ * the approval's explicit metadataOnly acknowledgment. */
 function laneOf(
-  flags: { regulatoryValidated: boolean; geometryValidated: boolean },
+  flags: {
+    regulatoryValidated: boolean;
+    geometryValidated: boolean;
+    geometryCount: number;
+  },
   current: string,
 ): string {
-  if (flags.regulatoryValidated && !flags.geometryValidated) {
+  if (
+    flags.regulatoryValidated &&
+    !flags.geometryValidated &&
+    flags.geometryCount > 0
+  ) {
     return "awaiting_geometry_validation";
   }
   if (!flags.regulatoryValidated && flags.geometryValidated) {

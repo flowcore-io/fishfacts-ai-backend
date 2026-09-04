@@ -437,6 +437,118 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
     expect(approval?.refusalReason).toContain("stale revision");
   });
 
+  test("a zero-geometry case never dead-ends: lane stays put, approval needs the explicit metadataOnly", async () => {
+    if (!runCtx) return;
+    const projector = new RegulationRevisionProjector(runCtx.db);
+    const seeded = await seedCase("revproj-test-zero-geom");
+
+    await projector.handleValidationRecorded({
+      validationId: randomUUID(),
+      caseId: seeded.caseId,
+      caseKey: seeded.caseKey,
+      revisionId: seeded.revisionId,
+      scope: "legal",
+      geometryId: null,
+      validated: true,
+      note: null,
+      actor: "admin:gilli",
+      recordedAt: new Date().toISOString(),
+    });
+    let row = await caseRow(seeded.caseId);
+    expect(row?.regulatoryValidated).toBe(true);
+    // No areas exist — steering to awaiting_geometry_validation would be a
+    // dead-end lane with nothing in it to validate.
+    expect(row?.adminStatus).toBe("under_review");
+    // And zero areas is NOT vacuous validation: a text-only statute and a
+    // parse that dropped its areas look identical at zero rows.
+    expect(row?.geometryValidated).toBe(false);
+
+    await projector.handleApprovalRecorded({
+      approvalId: randomUUID(),
+      caseId: seeded.caseId,
+      caseKey: seeded.caseKey,
+      revisionId: seeded.revisionId,
+      metadataOnly: false,
+      note: null,
+      actor: "admin:gilli",
+      recordedAt: new Date().toISOString(),
+    });
+    row = await caseRow(seeded.caseId);
+    expect(row?.adminStatus).not.toBe("approved");
+    const [refused] = await runCtx.db
+      .select()
+      .from(schema.regulationCaseApprovals)
+      .where(eq(schema.regulationCaseApprovals.caseId, seeded.caseId));
+    expect(refused?.applied).toBe(false);
+    expect(refused?.refusalReason).toContain("geometry");
+  });
+
+  test("editing or undoing an approved case un-approves it; a no-op pointer move does not", async () => {
+    if (!runCtx) return;
+    const projector = new RegulationRevisionProjector(runCtx.db);
+    const seeded = await seedCase("revproj-test-unapprove", { geometries: 1 });
+    const approve = async (revisionId: string) => {
+      await projector.handleValidationRecorded({
+        validationId: randomUUID(),
+        caseId: seeded.caseId,
+        caseKey: seeded.caseKey,
+        revisionId,
+        scope: "legal",
+        geometryId: null,
+        validated: true,
+        note: null,
+        actor: "admin:gilli",
+        recordedAt: new Date().toISOString(),
+      });
+      await projector.handleApprovalRecorded({
+        approvalId: randomUUID(),
+        caseId: seeded.caseId,
+        caseKey: seeded.caseKey,
+        revisionId,
+        metadataOnly: true,
+        note: null,
+        actor: "admin:gilli",
+        recordedAt: new Date().toISOString(),
+      });
+    };
+    await approve(seeded.revisionId);
+    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("approved");
+
+    // A no-op pointer move to the already-current revision changes nothing.
+    await projector.handlePointerMoved({
+      pointerMoveId: randomUUID(),
+      caseId: seeded.caseId,
+      caseKey: seeded.caseKey,
+      toRevisionId: seeded.revisionId,
+      actor: "admin:gilli",
+      recordedAt: new Date().toISOString(),
+    });
+    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("approved");
+
+    // A new draft moves the pointer off the approved revision → demoted.
+    const draft = proposal(seeded);
+    await projector.handleProposed(draft);
+    let row = await caseRow(seeded.caseId);
+    expect(row?.adminStatus).toBe("under_review");
+    expect(row?.regulationStatus).toBe("draft");
+
+    // Re-approve the draft, then undo away from it → demoted again.
+    await approve(draft.revisionId);
+    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("approved");
+    await projector.handlePointerMoved({
+      pointerMoveId: randomUUID(),
+      caseId: seeded.caseId,
+      caseKey: seeded.caseKey,
+      toRevisionId: seeded.revisionId,
+      actor: "admin:gilli",
+      recordedAt: new Date().toISOString(),
+    });
+    row = await caseRow(seeded.caseId);
+    expect(row?.adminStatus).toBe("under_review");
+    expect(row?.regulationStatus).toBe("draft");
+    expect(row?.currentRevisionId).toBe(seeded.revisionId);
+  });
+
   test("metadataOnly approval passes on legal validation alone", async () => {
     if (!runCtx) return;
     const projector = new RegulationRevisionProjector(runCtx.db);

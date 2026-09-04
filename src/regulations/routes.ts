@@ -10,7 +10,7 @@ import type { PathwayWriter } from "@/pathways";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { RegulationQueueReadRepository } from "./read-repository";
-import { editableFieldsOfCase } from "./revision-fields";
+import { editableFieldsOfCase, fieldValueEquals } from "./revision-fields";
 import { ADMIN_STATUSES } from "./status";
 
 /** Case ids are deterministic UUIDs (`ids.ts`); anything else is a miss
@@ -317,8 +317,10 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         Object.keys(baseFields) as Array<keyof typeof baseFields>
       ).filter(
         (key) =>
-          JSON.stringify(parsed.data.fields[key] ?? null) !==
-          JSON.stringify(baseFields[key] ?? null),
+          !fieldValueEquals(
+            parsed.data.fields[key] ?? null,
+            baseFields[key] ?? null,
+          ),
       );
       const changeKeys: string[] = [...changedFields];
       if (parsed.data.geometries !== null) changeKeys.push("geometries");

@@ -261,6 +261,24 @@ describe("POST /cases/:id/revisions", () => {
     );
   });
 
+  test("a re-serialized applicability with reordered keys is not a change", async () => {
+    const { app } = makeApp({
+      applicability: { species: ["herring"], gear: ["trawl"] },
+    } as never);
+    const res = await post(app, "/revisions", {
+      baseRevisionId: CURRENT_REV,
+      fields: {
+        ...FIELDS,
+        title: "Original title",
+        // Same content, opposite key order — structural compare must not
+        // count this as a change and demand a phantom justification.
+        applicability: { gear: ["trawl"], species: ["herring"] },
+      },
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).reason).toBe("no_changes");
+  });
+
   test("replacing geometry needs its own justification", async () => {
     const { app, written } = makeApp();
     const geometries = [
