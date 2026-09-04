@@ -91,7 +91,17 @@ function makeApp(opts: { error?: Error; writeError?: Error } = {}) {
     c.set("auth", auth);
     return next();
   });
-  app.route("/api/regulations", createRegulationsRouter({ queue, writer }));
+  app.route(
+    "/api/regulations",
+    createRegulationsRouter({
+      queue,
+      writer,
+      poi: { list: async () => [] } as never,
+      jobRunner: {
+        startJob: async () => ({ promise: Promise.resolve() }),
+      } as never,
+    }),
+  );
   return { app, calls, written };
 }
 

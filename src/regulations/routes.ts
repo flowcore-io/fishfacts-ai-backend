@@ -6,7 +6,11 @@ import {
   regulationRevisionFieldsSchema,
   regulationRevisionGeometrySchema,
 } from "@/events/contracts";
+import type { RegulationRevisionGeometry } from "@/events/contracts";
+import { parseJmeldingGeo } from "@/jmelding/geo-parser";
+import type { JobRunner } from "@/jobs/runner";
 import type { PathwayWriter } from "@/pathways";
+import type { PoiRepository } from "@/poi/repository";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { RegulationQueueReadRepository } from "./read-repository";
@@ -52,6 +56,10 @@ const queueQuerySchema = z.object({
 export type RegulationsRouterDeps = {
   queue: RegulationQueueReadRepository;
   writer: PathwayWriter;
+  /** B4 agent-tool deps: the POI gazetteer behind resolve_landmark and the
+   * job runner behind verdict recompute. */
+  poi: PoiRepository;
+  jobRunner: Pick<JobRunner, "startJob">;
 };
 
 /**
@@ -570,6 +578,177 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Regulations] approval failed", { caseId: id, message });
+      return c.json({ error: "flowcore_write_failed", message }, 502);
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // B4 — admin agent tool endpoints. These ARE meant to become parent
+  // tools on the admin embed (unlike approval/reject): they investigate
+  // and propose, they never validate, approve or publish.
+  // ---------------------------------------------------------------------
+
+  /** Faroese/Norwegian names carry diacritics inconsistently across
+   * sources; both sides normalise before matching. */
+  const normalizeName = (value: string) =>
+    value
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .replace(/ø/g, "o")
+      .replace(/æ/g, "ae")
+      .replace(/ð/g, "d");
+
+  app.get("/landmarks", async (c) => {
+    const q = c.req.query("q")?.trim() ?? "";
+    if (q.length < 2) {
+      return c.json({ error: "invalid_query", reason: "q_too_short" }, 400);
+    }
+    try {
+      const needle = normalizeName(q);
+      const matches = (await deps.poi.list()).filter((poi) =>
+        [poi.key.replace(/_/g, " "), poi.title ?? "", ...(poi.aliases ?? [])]
+          .map(normalizeName)
+          .some((name) => name.includes(needle) || needle.includes(name)),
+      );
+      return c.json({ matches, returned: matches.length });
+    } catch (error) {
+      console.error("[Regulations] landmark lookup failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return c.json({ error: "poi_unavailable" }, 503);
+    }
+  });
+
+  app.post("/cases/:id/reverdict", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+    }
+    const id = c.req.param("id");
+    if (!CASE_ID.test(id)) return c.json({ error: "not_found" }, 404);
+    try {
+      const caseRef = await deps.queue.getCaseRef(id.toLowerCase());
+      if (!caseRef) return c.json({ error: "not_found" }, 404);
+      // The existing re-judge path: naming a caseKey replaces the pending
+      // filter, so the CURRENT revision is re-judged regardless of its
+      // verdict state, through the same embed → event → projection pipe.
+      const started = await deps.jobRunner.startJob(
+        "regulation-verdict",
+        "manual",
+        {
+          caseKeys: [caseRef.caseKey],
+          limit: 1,
+        },
+      );
+      void started.promise.catch((error: unknown) => {
+        console.error("[Regulations] reverdict run failed", {
+          caseKey: caseRef.caseKey,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return c.json(
+        { ok: true, caseKey: caseRef.caseKey, jobId: "regulation-verdict" },
+        202,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("already running")) {
+        return c.json({ error: "verdict_job_running" }, 409);
+      }
+      console.error("[Regulations] reverdict failed", { caseId: id, message });
+      return c.json({ error: "reverdict_failed", message }, 502);
+    }
+  });
+
+  app.post("/cases/:id/reparse", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+    }
+    const id = c.req.param("id");
+    if (!CASE_ID.test(id)) return c.json({ error: "not_found" }, 404);
+    try {
+      const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
+      if (!caseRow) return c.json({ error: "not_found" }, 404);
+      const revision = await deps.queue.getRevision(caseRow.currentRevisionId);
+      if (!revision?.snapshotText) {
+        // Decision 6 stores the snapshot precisely so this can work; a case
+        // without one predates that or lost its source — say so.
+        return c.json({ error: "no_snapshot_text" }, 422);
+      }
+
+      // The deterministic coordinate grammar over the STORED snapshot —
+      // never a refetch of a source that may have changed or vanished.
+      // Described boundaries (statute-reader output) are not reproducible
+      // deterministically and would be dropped; that is visible in the
+      // proposal, which the admin reviews like any other draft — and undo
+      // is a pointer move.
+      const parsed = parseJmeldingGeo(revision.snapshotText);
+      const proposedGeometries: RegulationRevisionGeometry[] = parsed.areas.map(
+        (area) => ({
+          name: area.name,
+          section: null,
+          kind: "closure",
+          season: null,
+          verticesQuoted: null,
+          points: area.points,
+          geometrySource: "enumerated",
+          coordinateSystem: "WGS84",
+          precision: null,
+        }),
+      );
+
+      const current = await deps.queue.getRevisionGeometries(
+        caseRow.currentRevisionId,
+      );
+      const unchanged = fieldValueEquals(
+        current.map((row) => ({ name: row.name, points: row.points })),
+        proposedGeometries.map((area) => ({
+          name: area.name,
+          points: area.points,
+        })),
+      );
+      if (unchanged) {
+        return c.json({
+          outcome: "no_change",
+          areasParsed: proposedGeometries.length,
+        });
+      }
+
+      const revisionId = randomUUID();
+      const recordedAt = new Date().toISOString();
+      const eventId = await deps.writer.writeRegulationRevisionProposed({
+        revisionId,
+        caseId: caseRow.id,
+        caseKey: caseRow.caseKey,
+        baseRevisionId: caseRow.currentRevisionId,
+        changes: [
+          {
+            field: "geometries",
+            justification:
+              "Deterministic re-parse of the stored source snapshot (parser/POI fix rollout path, decision 6).",
+          },
+        ],
+        fields: editableFieldsOfCase(caseRow),
+        geometries: proposedGeometries,
+        actor: `admin:${auth.user.username}`,
+        recordedAt,
+      });
+      return c.json(
+        {
+          outcome: "proposed",
+          revisionId,
+          eventId,
+          areasParsed: proposedGeometries.length,
+          areasBefore: current.length,
+          recordedAt,
+        },
+        202,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Regulations] reparse failed", { caseId: id, message });
       return c.json({ error: "flowcore_write_failed", message }, 502);
     }
   });
