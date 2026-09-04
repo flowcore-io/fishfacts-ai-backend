@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.6.0...v2.6.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **regulations:** move the queue onto an unambiguous flow-type name ([#167](https://github.com/flowcore-io/fishfacts-ai-backend/issues/167)) ([aee0399](https://github.com/flowcore-io/fishfacts-ai-backend/commit/aee0399f24843cbe5fa01cb7ea5c1dc8f5fd8c48))
+
 ## [2.6.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.5.1...v2.6.0) (2026-09-03)
 
 
