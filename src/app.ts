@@ -163,6 +163,8 @@ export function createApp({
     createRegulationsRouter({
       queue: regulationQueueReadRepository,
       writer: pathways.writer,
+      poi: poiRepository,
+      jobRunner,
     }),
   );
 
