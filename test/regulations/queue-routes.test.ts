@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { AuthContext } from "../../src/auth/types";
+import type { RegulationAdminActionRecorded } from "../../src/events/contracts";
+import type { PathwayWriter } from "../../src/pathways";
 import type {
   QueueListFilters,
   RegulationQueueReadRepository,
@@ -33,6 +35,8 @@ const TOKENS: Record<string, AuthContext> = {
 };
 
 const CASE_ID = "b52ba6c8-2ee0-8f9a-8bd7-6a4d29e0f7c3";
+const DUP_ID = "7c1de9a0-53f2-8b1c-9e4d-0a6b38c5d2e1";
+const CASE_KEY = "test-source:test-ban";
 
 const QUEUE_CASE = { id: CASE_ID, title: "Test ban" };
 const DETAIL = {
@@ -42,11 +46,21 @@ const DETAIL = {
   links: [],
 };
 
-function makeApp(opts: { error?: Error } = {}) {
+function makeApp(opts: { error?: Error; writeError?: Error } = {}) {
   const calls: { listQueue: QueueListFilters[]; getCaseDetail: string[] } = {
     listQueue: [],
     getCaseDetail: [],
   };
+  const written: RegulationAdminActionRecorded[] = [];
+  const writer = {
+    writeRegulationAdminActionRecorded: async (
+      data: RegulationAdminActionRecorded,
+    ) => {
+      if (opts.writeError) throw opts.writeError;
+      written.push(data);
+      return "event-456";
+    },
+  } as unknown as PathwayWriter;
   const queue = {
     listQueue: async (filters: QueueListFilters) => {
       if (opts.error) throw opts.error;
@@ -62,6 +76,12 @@ function makeApp(opts: { error?: Error } = {}) {
       calls.getCaseDetail.push(caseId);
       return caseId === CASE_ID ? DETAIL : null;
     },
+    getCaseRef: async (caseId: string) => {
+      if (opts.error) throw opts.error;
+      if (caseId === CASE_ID) return { id: CASE_ID, caseKey: CASE_KEY };
+      if (caseId === DUP_ID) return { id: DUP_ID, caseKey: "test-source:dup" };
+      return null;
+    },
   } as unknown as RegulationQueueReadRepository;
   const app = new Hono();
   // app.ts blankets the prefix with the auth middleware; mirror that here.
@@ -71,8 +91,25 @@ function makeApp(opts: { error?: Error } = {}) {
     c.set("auth", auth);
     return next();
   });
-  app.route("/api/regulations", createRegulationsRouter({ queue }));
-  return { app, calls };
+  app.route("/api/regulations", createRegulationsRouter({ queue, writer }));
+  return { app, calls, written };
+}
+
+function postAction(
+  app: Hono,
+  body: unknown,
+  opts: { id?: string; token?: string | null } = {},
+) {
+  return app.request(`/api/regulations/cases/${opts.id ?? CASE_ID}/actions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(opts.token === null
+        ? {}
+        : { "x-auth-token": opts.token ?? "admin-token" }),
+    },
+    body: JSON.stringify(body),
+  });
 }
 
 function get(app: Hono, path: string, token: string | null = "admin-token") {
@@ -88,6 +125,120 @@ describe("regulations router auth", () => {
       expect((await get(app, path, null)).status).toBe(401);
       expect((await get(app, path, "user-token")).status).toBe(403);
     }
+    const action = { kind: "mark_read", read: true };
+    expect((await postAction(app, action, { token: null })).status).toBe(401);
+    expect(
+      (await postAction(app, action, { token: "user-token" })).status,
+    ).toBe(403);
+  });
+});
+
+describe("POST /api/regulations/cases/:id/actions", () => {
+  test("emits a stamped event and answers 202", async () => {
+    const { app, written } = makeApp();
+    const res = await postAction(app, { kind: "mark_read", read: true });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.eventId).toBe("event-456");
+    expect(written).toHaveLength(1);
+    const event = written[0];
+    expect(event).toMatchObject({
+      caseId: CASE_ID,
+      caseKey: CASE_KEY,
+      action: { kind: "mark_read", read: true },
+      actor: "admin:gilli",
+    });
+    expect(event?.actionId).toBe(body.actionId);
+    expect(Date.parse(event?.recordedAt ?? "")).not.toBeNaN();
+  });
+
+  test("every action kind validates through", async () => {
+    const { app, written } = makeApp();
+    const actions = [
+      { kind: "assign", assignee: "gilli" },
+      { kind: "assign", assignee: null },
+      { kind: "set_urgency", urgency: "critical" },
+      { kind: "snooze", until: new Date(Date.now() + 3600_000).toISOString() },
+      { kind: "snooze", until: null },
+      { kind: "request_information", note: "Which vessels does §2 cover?" },
+      { kind: "reject", reason: "Not a regulation" },
+      { kind: "mark_duplicate", duplicateOfCaseId: DUP_ID },
+    ];
+    for (const action of actions) {
+      const res = await postAction(app, action);
+      expect(res.status).toBe(202);
+    }
+    expect(written).toHaveLength(actions.length);
+  });
+
+  test("caller cannot forge actor or recordedAt", async () => {
+    const { app, written } = makeApp();
+    await postAction(app, {
+      kind: "mark_read",
+      read: true,
+      actor: "admin:mallory",
+      recordedAt: "1970-01-01T00:00:00.000Z",
+    });
+    expect(written[0]?.actor).toBe("admin:gilli");
+    expect(written[0]?.recordedAt).not.toBe("1970-01-01T00:00:00.000Z");
+  });
+
+  test("unknown action kind or bad payload is a 400", async () => {
+    const { app } = makeApp();
+    expect(
+      (await postAction(app, { kind: "approve", revisionId: DUP_ID })).status,
+    ).toBe(400);
+    expect((await postAction(app, { kind: "reject" })).status).toBe(400);
+    expect(
+      (await postAction(app, { kind: "snooze", until: "tomorrow" })).status,
+    ).toBe(400);
+  });
+
+  test("a snooze into the past is a 400, not a silent immediate wake", async () => {
+    const { app, written } = makeApp();
+    const res = await postAction(app, {
+      kind: "snooze",
+      until: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).reason).toBe("snooze_until_in_past");
+    expect(written).toHaveLength(0);
+  });
+
+  test("unknown case is a 404; malformed id never reaches the repo", async () => {
+    const { app } = makeApp();
+    const action = { kind: "mark_read", read: true };
+    expect(
+      (
+        await postAction(app, action, {
+          id: "00000000-0000-8000-8000-000000000000",
+        })
+      ).status,
+    ).toBe(404);
+    expect((await postAction(app, action, { id: "nope" })).status).toBe(404);
+  });
+
+  test("mark_duplicate refuses self and missing targets", async () => {
+    const { app } = makeApp();
+    const self = await postAction(app, {
+      kind: "mark_duplicate",
+      duplicateOfCaseId: CASE_ID,
+    });
+    expect(self.status).toBe(400);
+    expect((await self.json()).reason).toBe("duplicate_of_self");
+    const missing = await postAction(app, {
+      kind: "mark_duplicate",
+      duplicateOfCaseId: "00000000-0000-8000-8000-000000000000",
+    });
+    expect(missing.status).toBe(400);
+    expect((await missing.json()).reason).toBe("duplicate_target_not_found");
+  });
+
+  test("a failed event write is a 502", async () => {
+    const { app } = makeApp({ writeError: new Error("flowcore down") });
+    const res = await postAction(app, { kind: "mark_read", read: true });
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("flowcore_write_failed");
   });
 });
 

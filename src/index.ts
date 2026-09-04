@@ -34,6 +34,7 @@ import { JobStateStore } from "./jobs/state-store";
 import { createPathwayRuntime } from "./pathways";
 import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
+import { RegulationCaseActionProjector } from "./regulations/action-projector";
 import { RegulationCaseProjector } from "./regulations/case-projector";
 import {
   RegulationQueueRepository,
@@ -92,6 +93,7 @@ const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
 const regulationRawSyncRepository = new RegulationRawSyncRepository(db);
 const regulationQueueReadRepository = new RegulationQueueReadRepository(db);
+const regulationCaseActionProjector = new RegulationCaseActionProjector(db);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
@@ -131,6 +133,7 @@ const pathways = createPathwayRuntime(
   gebcoProjector,
   poiFragmentProjector,
   regulationVerdictProjector,
+  regulationCaseActionProjector,
 );
 const jobs = createJobDefinitions(
   env,

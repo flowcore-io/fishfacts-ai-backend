@@ -750,3 +750,32 @@ export const regulationCaseLinks = pgTable(
     ),
   }),
 );
+
+// Append-only projection of `regulation.case.admin-action.recorded.0` — the
+// audit trail the case-detail screen lists. The id is the event's actionId,
+// so a replay re-lands the same row (insert … on conflict do nothing) and
+// the log never doubles.
+export const regulationCaseActions = pgTable(
+  "regulation_case_actions",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    // The discriminant (`mark_read`, `assign`, …) lifted out of the payload
+    // so the log is filterable without opening jsonb.
+    kind: text("kind").notNull(),
+    // The full action union member, verbatim from the event.
+    action: jsonb("action").notNull(),
+    // `admin:<username>` — stamped by the route from the auth token.
+    actor: text("actor").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    caseIdx: index("regulation_case_actions_case_idx").on(
+      table.caseId,
+      table.recordedAt,
+    ),
+  }),
+);

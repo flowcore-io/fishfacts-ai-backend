@@ -162,6 +162,13 @@
       "when": 1788468742834,
       "tag": "0022_oval_pepper_potts",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788537756569,
+      "tag": "0023_empty_blacklash",
+      "breakpoints": true
     }
   ]
 }

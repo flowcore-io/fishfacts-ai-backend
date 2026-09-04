@@ -38,6 +38,7 @@ describe("sildelaget-catchjournal job", () => {
       writeAreaDeleted: async () => "unused",
       writePoiCreated: async () => "unused",
       writeRegulationVerdictRecorded: async () => "unused",
+      writeRegulationAdminActionRecorded: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -119,6 +120,7 @@ describe("sildelaget-catchjournal job", () => {
       writeAreaDeleted: async () => "unused",
       writePoiCreated: async () => "unused",
       writeRegulationVerdictRecorded: async () => "unused",
+      writeRegulationAdminActionRecorded: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -185,6 +187,7 @@ describe("sildelaget-catchjournal job", () => {
       writeAreaDeleted: async () => "unused",
       writePoiCreated: async () => "unused",
       writeRegulationVerdictRecorded: async () => "unused",
+      writeRegulationAdminActionRecorded: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;

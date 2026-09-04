@@ -43,9 +43,12 @@ import {
   POI_CREATED_PATHWAY,
   POI_FLOW_TYPE,
   type PoiCreated,
+  REGULATION_ADMIN_ACTION_RECORDED_EVENT_TYPE,
+  REGULATION_ADMIN_ACTION_RECORDED_PATHWAY,
   REGULATION_FLOW_TYPE,
   REGULATION_VERDICT_RECORDED_EVENT_TYPE,
   REGULATION_VERDICT_RECORDED_PATHWAY,
+  type RegulationAdminActionRecorded,
   type RegulationVerdictRecorded,
   SILDELAGET_CATCHJOURNAL_FLOW_TYPE,
   SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE,
@@ -60,6 +63,7 @@ import {
   gillnetVesselObservedSchema,
   jmeldingAnnouncementDiscoveredSchema,
   poiCreatedSchema,
+  regulationAdminActionRecordedSchema,
   regulationVerdictRecordedSchema,
   sildelagetCatchEntryObservedSchema,
 } from "./events/contracts";
@@ -69,6 +73,7 @@ import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
+import type { RegulationCaseActionProjector } from "./regulations/action-projector";
 import type { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import type { SildelagetCatchProjector } from "./sildelaget/projector";
 
@@ -88,6 +93,9 @@ export interface PathwayWriter {
   writePoiCreated(data: PoiCreated): Promise<string>;
   writeRegulationVerdictRecorded(
     data: RegulationVerdictRecorded,
+  ): Promise<string>;
+  writeRegulationAdminActionRecorded(
+    data: RegulationAdminActionRecorded,
   ): Promise<string>;
   /**
    * Emit one AIS position fix. `opts.eventTime` is set by the BACKFILL job
@@ -130,6 +138,7 @@ export function createPathwayRuntime(
   gebcoProjector: GebcoProjector,
   poiFragmentProjector: PoiFragmentProjector,
   regulationVerdictProjector: RegulationVerdictProjector,
+  regulationCaseActionProjector: RegulationCaseActionProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -266,6 +275,24 @@ export function createPathwayRuntime(
       const envelope = event as { eventId: string; payload: unknown };
       const parsed = regulationVerdictRecordedSchema.parse(envelope.payload);
       await regulationVerdictProjector.handleRecorded(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_ADMIN_ACTION_RECORDED_EVENT_TYPE,
+      schema: regulationAdminActionRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator acted on a queue case (read/assign/urgency/snooze/request-info/reject/duplicate)",
+    })
+    .handle(REGULATION_ADMIN_ACTION_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationAdminActionRecordedSchema.parse(
+        envelope.payload,
+      );
+      await regulationCaseActionProjector.handleRecorded(parsed);
     });
 
   pathways
@@ -468,6 +495,26 @@ export function createPathwayRuntime(
             revisionId: data.revisionId,
           },
           options: { fireAndForget: true },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationAdminActionRecorded(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof REGULATION_ADMIN_ACTION_RECORDED_PATHWAY,
+            input: {
+              data: RegulationAdminActionRecorded;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(REGULATION_ADMIN_ACTION_RECORDED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            caseKey: data.caseKey,
+            kind: data.action.kind,
+            actor: data.actor,
+          },
         });
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
