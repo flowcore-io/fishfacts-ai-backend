@@ -22,14 +22,18 @@
  * map cannot disagree about what a body says.
  */
 
-import type { Database } from "@/db/client";
+import { type Database, timestampToIso } from "@/db/client";
 import * as schema from "@/db/schema";
-import type { JMeldingAnnouncementDiscovered } from "@/events/contracts";
+import type {
+  JMeldingAnnouncementDiscovered,
+  RegulationRevisionFields,
+} from "@/events/contracts";
 import { parseJmeldingGeo, pointsToMultipointWkt } from "@/jmelding/geo-parser";
 import { parseValidityEnd, parseValidityStart } from "@/jmelding/validity";
 import { normalizeVornAreas } from "@/jmelding/vorn-ring";
 import { jmeldingFragmentKey } from "@/jobs/jmelding-fragments";
 import { and, eq, sql } from "drizzle-orm";
+import type { RegulationApplicability } from "./applicability";
 import { caseIdFor, geometryIdFor, revisionIdFor } from "./ids";
 
 /**
@@ -153,10 +157,34 @@ export class RegulationCaseProjector {
         .select({
           id: schema.regulationCases.id,
           firstSeenAt: schema.regulationCases.firstSeenAt,
+          // The admin-owned editable fields the collector does not carry —
+          // they ride into this revision's `fields` snapshot so a pointer
+          // move back to it restores the full field state.
+          authority: schema.regulationCases.authority,
+          regulationNumber: schema.regulationCases.regulationNumber,
+          expiresAt: schema.regulationCases.expiresAt,
+          seasonalRecurrence: schema.regulationCases.seasonalRecurrence,
+          interpretationNotes: schema.regulationCases.interpretationNotes,
+          applicability: schema.regulationCases.applicability,
         })
         .from(schema.regulationCases)
         .where(eq(schema.regulationCases.id, caseId));
       const isNewCase = existingCase.length === 0;
+      const carried = existingCase[0];
+      const fieldsSnapshot: RegulationRevisionFields = {
+        title: item.title,
+        authority: carried?.authority ?? null,
+        regulationNumber: carried?.regulationNumber ?? null,
+        category: item.category ?? null,
+        summary: item.summary ?? null,
+        effectiveFrom: effectiveFrom?.toISOString() ?? null,
+        effectiveTo: effectiveTo?.toISOString() ?? null,
+        expiresAt: timestampToIso(carried?.expiresAt) ?? null,
+        seasonalRecurrence: carried?.seasonalRecurrence ?? null,
+        interpretationNotes: carried?.interpretationNotes ?? null,
+        applicability:
+          (carried?.applicability as RegulationApplicability | null) ?? null,
+      };
       const changeType = isNewCase ? "new" : "amendment";
 
       const positionRows = await tx
@@ -182,6 +210,7 @@ export class RegulationCaseProjector {
         snapshotFragmentId: item.sourceFragmentId ?? null,
         parserVersion: CASE_PROJECTION_VERSION,
         sourceEventSignature: item.signature,
+        fields: fieldsSnapshot,
       });
 
       for (const [index, area] of areas.entries()) {

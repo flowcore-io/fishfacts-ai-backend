@@ -45,10 +45,22 @@ import {
   type PoiCreated,
   REGULATION_ADMIN_ACTION_RECORDED_EVENT_TYPE,
   REGULATION_ADMIN_ACTION_RECORDED_PATHWAY,
+  REGULATION_APPROVAL_RECORDED_EVENT_TYPE,
+  REGULATION_APPROVAL_RECORDED_PATHWAY,
   REGULATION_FLOW_TYPE,
+  REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE,
+  REGULATION_REVISION_POINTER_MOVED_PATHWAY,
+  REGULATION_REVISION_PROPOSED_EVENT_TYPE,
+  REGULATION_REVISION_PROPOSED_PATHWAY,
+  REGULATION_VALIDATION_RECORDED_EVENT_TYPE,
+  REGULATION_VALIDATION_RECORDED_PATHWAY,
   REGULATION_VERDICT_RECORDED_EVENT_TYPE,
   REGULATION_VERDICT_RECORDED_PATHWAY,
   type RegulationAdminActionRecorded,
+  type RegulationApprovalRecorded,
+  type RegulationRevisionPointerMoved,
+  type RegulationRevisionProposed,
+  type RegulationValidationRecorded,
   type RegulationVerdictRecorded,
   SILDELAGET_CATCHJOURNAL_FLOW_TYPE,
   SILDELAGET_CATCH_ENTRY_OBSERVED_EVENT_TYPE,
@@ -64,6 +76,10 @@ import {
   jmeldingAnnouncementDiscoveredSchema,
   poiCreatedSchema,
   regulationAdminActionRecordedSchema,
+  regulationApprovalRecordedSchema,
+  regulationRevisionPointerMovedSchema,
+  regulationRevisionProposedSchema,
+  regulationValidationRecordedSchema,
   regulationVerdictRecordedSchema,
   sildelagetCatchEntryObservedSchema,
 } from "./events/contracts";
@@ -74,6 +90,7 @@ import type { GillnetProjector } from "./gillnet/projector";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { RegulationCaseActionProjector } from "./regulations/action-projector";
+import type { RegulationRevisionProjector } from "./regulations/revision-projector";
 import type { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import type { SildelagetCatchProjector } from "./sildelaget/projector";
 
@@ -96,6 +113,18 @@ export interface PathwayWriter {
   ): Promise<string>;
   writeRegulationAdminActionRecorded(
     data: RegulationAdminActionRecorded,
+  ): Promise<string>;
+  writeRegulationRevisionProposed(
+    data: RegulationRevisionProposed,
+  ): Promise<string>;
+  writeRegulationRevisionPointerMoved(
+    data: RegulationRevisionPointerMoved,
+  ): Promise<string>;
+  writeRegulationValidationRecorded(
+    data: RegulationValidationRecorded,
+  ): Promise<string>;
+  writeRegulationApprovalRecorded(
+    data: RegulationApprovalRecorded,
   ): Promise<string>;
   /**
    * Emit one AIS position fix. `opts.eventTime` is set by the BACKFILL job
@@ -139,6 +168,7 @@ export function createPathwayRuntime(
   poiFragmentProjector: PoiFragmentProjector,
   regulationVerdictProjector: RegulationVerdictProjector,
   regulationCaseActionProjector: RegulationCaseActionProjector,
+  regulationRevisionProjector: RegulationRevisionProjector,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -293,6 +323,75 @@ export function createPathwayRuntime(
         envelope.payload,
       );
       await regulationCaseActionProjector.handleRecorded(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_REVISION_PROPOSED_EVENT_TYPE,
+      schema: regulationRevisionProposedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "A redraft of a case's interpretation was proposed against a named base revision, with per-change justification",
+    })
+    .handle(REGULATION_REVISION_PROPOSED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationRevisionProposedSchema.parse(envelope.payload);
+      await regulationRevisionProjector.handleProposed(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE,
+      schema: regulationRevisionPointerMovedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "The current-revision pointer of a case moved to an existing revision (undo/redo)",
+    })
+    .handle(REGULATION_REVISION_POINTER_MOVED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationRevisionPointerMovedSchema.parse(
+        envelope.payload,
+      );
+      await regulationRevisionProjector.handlePointerMoved(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_VALIDATION_RECORDED_EVENT_TYPE,
+      schema: regulationValidationRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "A legal or per-geometry validation decision was recorded against a named revision",
+      // The scope↔geometryId refine makes this a ZodEffects, which the
+      // builder's type (but not its runtime) rejects — same cast the AIS
+      // registration already uses for its extra options.
+    } as never)
+    .handle(REGULATION_VALIDATION_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationValidationRecordedSchema.parse(envelope.payload);
+      await regulationRevisionProjector.handleValidationRecorded(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_APPROVAL_RECORDED_EVENT_TYPE,
+      schema: regulationApprovalRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator approved a named revision of a case (refused at projection if superseded)",
+    })
+    .handle(REGULATION_APPROVAL_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationApprovalRecordedSchema.parse(envelope.payload);
+      await regulationRevisionProjector.handleApprovalRecorded(parsed);
     });
 
   pathways
@@ -495,6 +594,87 @@ export function createPathwayRuntime(
             revisionId: data.revisionId,
           },
           options: { fireAndForget: true },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationRevisionProposed(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof REGULATION_REVISION_PROPOSED_PATHWAY,
+            input: {
+              data: RegulationRevisionProposed;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(REGULATION_REVISION_PROPOSED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            caseKey: data.caseKey,
+            revisionId: data.revisionId,
+            actor: data.actor,
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationRevisionPointerMoved(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof REGULATION_REVISION_POINTER_MOVED_PATHWAY,
+            input: {
+              data: RegulationRevisionPointerMoved;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(REGULATION_REVISION_POINTER_MOVED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            caseKey: data.caseKey,
+            toRevisionId: data.toRevisionId,
+            actor: data.actor,
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationValidationRecorded(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof REGULATION_VALIDATION_RECORDED_PATHWAY,
+            input: {
+              data: RegulationValidationRecorded;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(REGULATION_VALIDATION_RECORDED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            caseKey: data.caseKey,
+            revisionId: data.revisionId,
+            scope: data.scope,
+            actor: data.actor,
+          },
+        });
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationApprovalRecorded(data) {
+        const eventId = await (
+          pathways.write as never as (
+            path: typeof REGULATION_APPROVAL_RECORDED_PATHWAY,
+            input: {
+              data: RegulationApprovalRecorded;
+              metadata: Record<string, unknown>;
+            },
+          ) => Promise<string | string[]>
+        )(REGULATION_APPROVAL_RECORDED_PATHWAY, {
+          data,
+          metadata: {
+            source: "fishfacts-ai-backend-api",
+            caseKey: data.caseKey,
+            revisionId: data.revisionId,
+            actor: data.actor,
+          },
         });
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },

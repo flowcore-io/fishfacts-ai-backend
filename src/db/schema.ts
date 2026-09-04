@@ -639,6 +639,14 @@ export const regulationCaseRevisions = pgTable(
     verdictConfidence: doublePrecision("verdict_confidence"),
     verdictRecordedAt: timestamp("verdict_recorded_at", { withTimezone: true }),
     sourceEventSignature: text("source_event_signature").notNull(),
+    // Redraft lineage (stage ② B3). `base_revision_id` names the revision an
+    // edit was made against; `changes` is the per-change justification list;
+    // `fields` is the COMPLETE editable-field snapshot after the edit, so a
+    // pointer move restores state without replaying a delta chain. All three
+    // null on pre-B3 collector revisions.
+    baseRevisionId: text("base_revision_id"),
+    changes: jsonb("changes"),
+    fields: jsonb("fields"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -774,6 +782,67 @@ export const regulationCaseActions = pgTable(
   },
   (table) => ({
     caseIdx: index("regulation_case_actions_case_idx").on(
+      table.caseId,
+      table.recordedAt,
+    ),
+  }),
+);
+
+// Projection of `regulation.case.validation.recorded.0` — every validation
+// decision ever taken, keyed on the event's validationId (replay-safe). The
+// case's two flags are a summary of the CURRENT revision's rows here; these
+// rows are the record.
+export const regulationCaseValidations = pgTable(
+  "regulation_case_validations",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    // legal | geometry — separate decisions (§12), so separate rows.
+    scope: text("scope").notNull(),
+    // Set exactly when scope = geometry: validation is per-area.
+    geometryId: text("geometry_id"),
+    validated: boolean("validated").notNull(),
+    note: text("note"),
+    actor: text("actor").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    caseIdx: index("regulation_case_validations_case_idx").on(
+      table.caseId,
+      table.recordedAt,
+    ),
+    revisionIdx: index("regulation_case_validations_revision_idx").on(
+      table.revisionId,
+    ),
+  }),
+);
+
+// Projection of `regulation.case.approval.recorded.0`. Refused approvals
+// (the losers of the edit-after-review race, caught at projection under
+// stream order) land here too with `applied = false` and the reason — the
+// audit trail keeps what was attempted, not only what stuck.
+export const regulationCaseApprovals = pgTable(
+  "regulation_case_approvals",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    metadataOnly: boolean("metadata_only").notNull().default(false),
+    note: text("note"),
+    actor: text("actor").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+    applied: boolean("applied").notNull(),
+    refusalReason: text("refusal_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    caseIdx: index("regulation_case_approvals_case_idx").on(
       table.caseId,
       table.recordedAt,
     ),

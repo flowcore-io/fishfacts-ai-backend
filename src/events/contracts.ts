@@ -1,3 +1,4 @@
+import { regulationApplicabilitySchema } from "@/regulations/applicability";
 import { z } from "zod";
 
 export const GENERIC_FLOW_TYPE = "fishfacts-generic.0" as const;
@@ -527,4 +528,180 @@ export const regulationAdminActionRecordedSchema = z.object({
 });
 export type RegulationAdminActionRecorded = z.infer<
   typeof regulationAdminActionRecordedSchema
+>;
+
+export const REGULATION_REVISION_PROPOSED_EVENT_TYPE =
+  "regulation.case.revision.proposed.0" as const;
+export const REGULATION_REVISION_PROPOSED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_REVISION_PROPOSED_EVENT_TYPE}` as const;
+export const REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE =
+  "regulation.case.revision.pointer-moved.0" as const;
+export const REGULATION_REVISION_POINTER_MOVED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE}` as const;
+export const REGULATION_VALIDATION_RECORDED_EVENT_TYPE =
+  "regulation.case.validation.recorded.0" as const;
+export const REGULATION_VALIDATION_RECORDED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_VALIDATION_RECORDED_EVENT_TYPE}` as const;
+export const REGULATION_APPROVAL_RECORDED_EVENT_TYPE =
+  "regulation.case.approval.recorded.0" as const;
+export const REGULATION_APPROVAL_RECORDED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_APPROVAL_RECORDED_EVENT_TYPE}` as const;
+
+/**
+ * The editable interpretation of a case — every field an admin (or the agent
+ * acting for one) may redraft. A revision event carries the COMPLETE
+ * resulting snapshot, not a delta: undo is then a pure pointer move with no
+ * chain replay, and the projection stays self-contained under replay.
+ * Dates are ISO instants; null clears.
+ */
+export const regulationRevisionFieldsSchema = z.object({
+  title: z.string().min(1).max(500),
+  authority: z.string().max(200).nullable(),
+  regulationNumber: z.string().max(100).nullable(),
+  category: z.string().max(200).nullable(),
+  summary: z.string().max(2000).nullable(),
+  effectiveFrom: z.string().datetime().nullable(),
+  effectiveTo: z.string().datetime().nullable(),
+  expiresAt: z.string().datetime().nullable(),
+  seasonalRecurrence: z.string().max(500).nullable(),
+  interpretationNotes: z.string().max(4000).nullable(),
+  applicability: regulationApplicabilitySchema.nullable(),
+});
+export type RegulationRevisionFields = z.infer<
+  typeof regulationRevisionFieldsSchema
+>;
+
+/** One area of a revision draft — the same shape the case projector writes,
+ * minus the server-derived columns (ids, PostGIS geom). */
+export const regulationRevisionGeometrySchema = z.object({
+  name: z.string().max(300).nullable().default(null),
+  section: z.string().max(200).nullable().default(null),
+  kind: z.enum(["closure", "exemption", "other"]).default("closure"),
+  season: z.string().max(200).nullable().default(null),
+  verticesQuoted: z.array(z.string().max(200)).nullable().default(null),
+  points: z
+    .array(
+      z.object({
+        lat: z.number().min(-90).max(90),
+        lon: z.number().min(-180).max(180),
+      }),
+    )
+    .min(1),
+  geometrySource: z.enum(["enumerated", "preparsed", "described"]),
+  coordinateSystem: z.string().max(50).default("WGS84"),
+  precision: z.string().max(100).nullable().default(null),
+});
+export type RegulationRevisionGeometry = z.infer<
+  typeof regulationRevisionGeometrySchema
+>;
+
+export const REGULATION_REVISION_CHANGE_FIELDS = [
+  ...regulationRevisionFieldsSchema.keyof().options,
+  "geometries",
+] as const;
+
+/** Which field moved and WHY — §12's per-change justification. The values
+ * live in the snapshot; the justification is the part only a human (or the
+ * agent they instructed) can supply. */
+export const regulationRevisionChangeSchema = z.object({
+  field: z.enum(
+    REGULATION_REVISION_CHANGE_FIELDS as unknown as [string, ...string[]],
+  ),
+  justification: z.string().min(1).max(2000),
+});
+export type RegulationRevisionChange = z.infer<
+  typeof regulationRevisionChangeSchema
+>;
+
+/**
+ * A redraft of a case's interpretation, addressable forever: approvals and
+ * validations name revision ids, so the id rides in the event and survives
+ * projection rebuilds. `baseRevisionId` is the revision the edit was made
+ * against — the projector refuses to land a draft whose base is no longer
+ * current (the edit-after-source-change race).
+ */
+export const regulationRevisionProposedSchema = z.object({
+  revisionId: z.string().uuid(),
+  caseId: z.string().uuid(),
+  caseKey: z.string().min(1),
+  baseRevisionId: z.string().uuid(),
+  changes: z.array(regulationRevisionChangeSchema).min(1),
+  fields: regulationRevisionFieldsSchema,
+  /** The complete resulting area set (copied from the base when untouched);
+   * empty = the case has no drawable areas. */
+  geometries: z.array(regulationRevisionGeometrySchema),
+  /** `admin:<username>` — stamped by the route from the auth token. */
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationRevisionProposed = z.infer<
+  typeof regulationRevisionProposedSchema
+>;
+
+/** Undo/redo: the case's current-revision pointer moved to an existing
+ * revision. A system affordance, deterministic, never agent behaviour. */
+export const regulationRevisionPointerMovedSchema = z.object({
+  pointerMoveId: z.string().uuid(),
+  caseId: z.string().uuid(),
+  caseKey: z.string().min(1),
+  toRevisionId: z.string().uuid(),
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationRevisionPointerMoved = z.infer<
+  typeof regulationRevisionPointerMovedSchema
+>;
+
+/**
+ * One validation decision, always against a named revision id. Legal and
+ * geometry validation are SEPARATE decisions (§12); geometry validation is
+ * per-area, so `geometryId` is required exactly when the scope is geometry.
+ */
+export const regulationValidationRecordedSchema = z
+  .object({
+    validationId: z.string().uuid(),
+    caseId: z.string().uuid(),
+    caseKey: z.string().min(1),
+    revisionId: z.string().uuid(),
+    scope: z.enum(["legal", "geometry"]),
+    geometryId: z.string().uuid().nullable().default(null),
+    validated: z.boolean(),
+    note: z.string().max(2000).nullable().default(null),
+    actor: z.string().min(1),
+    recordedAt: z.string().datetime(),
+  })
+  .refine(
+    (value) =>
+      value.scope === "geometry"
+        ? value.geometryId !== null
+        : value.geometryId === null,
+    {
+      message: "geometryId is required exactly when scope is geometry",
+      path: ["geometryId"],
+    },
+  );
+export type RegulationValidationRecorded = z.infer<
+  typeof regulationValidationRecordedSchema
+>;
+
+/**
+ * An approval of a SPECIFIC revision — what closes the edit-after-review
+ * race. The route refuses a stale revision with the diff; the projector
+ * re-checks under stream order and records a refused approval rather than
+ * applying it, so the audit trail keeps even the race losers.
+ * `metadataOnly` honours §12's publish-metadata-only path: legal validation
+ * suffices when no geometry can be verified.
+ */
+export const regulationApprovalRecordedSchema = z.object({
+  approvalId: z.string().uuid(),
+  caseId: z.string().uuid(),
+  caseKey: z.string().min(1),
+  revisionId: z.string().uuid(),
+  metadataOnly: z.boolean().default(false),
+  note: z.string().max(2000).nullable().default(null),
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationApprovalRecorded = z.infer<
+  typeof regulationApprovalRecordedSchema
 >;
