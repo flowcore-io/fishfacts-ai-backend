@@ -33,6 +33,9 @@ const POIS: PoiEntry[] = [
     title: "Mykineshólmur",
     aliases: ["Mykines holm"],
   },
+  // Deliberately titleless and alias-less: its "" candidates must not make
+  // it match every query.
+  { key: "akraberg", lat: 61.395, lng: -6.68 },
 ];
 
 function userOf(username: string, authorities: string[]): AuthContext {
@@ -143,7 +146,7 @@ function makeApp(
         startJob: async (jobId: string, _trigger: string, args: unknown) => {
           if (opts.startJobError) throw opts.startJobError;
           startJobCalls.push({ jobId, args });
-          return { promise: Promise.resolve() };
+          return { promise: Promise.resolve(), runId: "run-42" };
         },
       } as never,
     }),
@@ -183,6 +186,18 @@ describe("GET /api/regulations/landmarks", () => {
     expect((await byAlias.json()).matches[0]?.key).toBe("skarvenes_lykt");
   });
 
+  test("a titleless POI does not match every query", async () => {
+    const { app } = makeApp();
+    const res = await request(app, "/landmarks?q=mykines");
+    const keys = (await res.json()).matches.map((m: PoiEntry) => m.key);
+    expect(keys).not.toContain("akraberg");
+    // But it still matches by its own key.
+    const own = await request(app, "/landmarks?q=akraberg");
+    expect((await own.json()).matches.map((m: PoiEntry) => m.key)).toEqual([
+      "akraberg",
+    ]);
+  });
+
   test("a too-short query is a 400", async () => {
     const { app } = makeApp();
     expect((await request(app, "/landmarks?q=m")).status).toBe(400);
@@ -204,6 +219,8 @@ describe("POST /api/regulations/cases/:id/reverdict", () => {
       method: "POST",
     });
     expect(res.status).toBe(202);
+    // The run id, not just the job type — the 202 must be correlatable.
+    expect((await res.json()).runId).toBe("run-42");
     expect(startJobCalls).toEqual([
       {
         jobId: "regulation-verdict",
@@ -274,6 +291,25 @@ describe("POST /api/regulations/cases/:id/reparse", () => {
     expect(res.status).toBe(200);
     expect((await res.json()).outcome).toBe("no_change");
     expect(written).toHaveLength(0);
+  });
+
+  test("a snapshot with no parseable coordinates proposes an empty area set (admin-reviewed, undoable)", async () => {
+    const { app, written } = makeApp({
+      snapshotText: "Only described boundaries: a line from the lighthouse.",
+      currentGeometries: [{ name: null, points: [{ lat: 1, lon: 1 }] }],
+    });
+    const res = await request(app, `/cases/${CASE_ID}/reparse`, {
+      method: "POST",
+    });
+    expect(res.status).toBe(202);
+    const body = await res.json();
+    expect(body.outcome).toBe("proposed");
+    expect(body.areasParsed).toBe(0);
+    expect(body.areasBefore).toBe(1);
+    // An empty geometry set is a legal proposal downstream (B3's projector
+    // and contract both accept geometries: []), so it is reviewable, not
+    // an error on write.
+    expect(written[0]?.geometries).toEqual([]);
   });
 
   test("a case without a stored snapshot is a 422", async () => {

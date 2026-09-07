@@ -609,6 +609,10 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       const matches = (await deps.poi.list()).filter((poi) =>
         [poi.key.replace(/_/g, " "), poi.title ?? "", ...(poi.aliases ?? [])]
           .map(normalizeName)
+          // A titleless POI would contribute "" here, and
+          // `needle.includes("")` is true for every needle — silent noise
+          // in every lookup.
+          .filter((name) => name.length > 0)
           .some((name) => name.includes(needle) || needle.includes(name)),
       );
       return c.json({ matches, returned: matches.length });
@@ -648,7 +652,12 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         });
       });
       return c.json(
-        { ok: true, caseKey: caseRef.caseKey, jobId: "regulation-verdict" },
+        {
+          ok: true,
+          caseKey: caseRef.caseKey,
+          jobId: "regulation-verdict",
+          runId: started.runId,
+        },
         202,
       );
     } catch (error) {
