@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { RingPoint } from "./vorn-ring";
 import {
+  dropClosingRepeat,
+  dropClosingRepeats,
   normalizeVornAreas,
   normalizeVornRing,
   ringSelfIntersects,
@@ -16,6 +18,71 @@ const p = (
 ): RingPoint => ({
   lat: latD + latM / 60,
   lon: -(lonD + lonM / 60),
+});
+
+// The typo'd nr. 14/2026 ring, as Vørn published it: the closing "6104 N –
+// 0700 W" was fat-fingered as "6014 N", so the ring never closes and crosses
+// itself. Shared by the repair tests and the as-written tests, which is the
+// point — the same input, two deliberately different answers.
+const P1 = p(61, 4, 7, 0);
+const NR14_TYPO = p(60, 14, 7, 0);
+const NR14_RAW = [
+  P1,
+  p(60, 57, 7, 6),
+  p(60, 45, 7, 0),
+  p(60, 39, 6, 54),
+  p(60, 45, 6, 36),
+  NR14_TYPO,
+];
+
+describe("dropClosingRepeat", () => {
+  test("drops the repeated closing vertex — the pure-convention cleanup", () => {
+    const ring = [p(62, 39, 5, 51), p(62, 30, 6, 0), p(62, 39, 5, 51)];
+    expect(dropClosingRepeat(ring)).toEqual([
+      p(62, 39, 5, 51),
+      p(62, 30, 6, 0),
+    ]);
+  });
+
+  test("keeps a typo'd closing vertex the repair would have removed", () => {
+    // The approval queue's whole reason for existing: the admin has to see the
+    // spike, so the correction is a reviewed revision rather than a silent one.
+    expect(dropClosingRepeat(NR14_RAW)).toEqual(NR14_RAW);
+    expect(normalizeVornRing(NR14_RAW).points).toHaveLength(5);
+  });
+
+  test("leaves a ring that does not close by repeat alone", () => {
+    const ring = [p(62, 0, 7, 0), p(62, 0, 6, 30), p(61, 40, 6, 45)];
+    expect(dropClosingRepeat(ring)).toEqual(ring);
+  });
+
+  test("never empties a degenerate ring", () => {
+    const point = p(62, 0, 7, 0);
+    expect(dropClosingRepeat([point, point])).toHaveLength(2);
+    expect(dropClosingRepeat([point])).toHaveLength(1);
+    expect(dropClosingRepeat([])).toHaveLength(0);
+  });
+
+  test("does not mutate its input", () => {
+    const ring = [p(62, 39, 5, 51), p(62, 30, 6, 0), p(62, 39, 5, 51)];
+    dropClosingRepeat(ring);
+    expect(ring).toHaveLength(3);
+  });
+});
+
+describe("dropClosingRepeats", () => {
+  test("applies per area and preserves the other fields", () => {
+    const areas = dropClosingRepeats([
+      {
+        name: "A",
+        points: [p(62, 39, 5, 51), p(62, 30, 6, 0), p(62, 39, 5, 51)],
+      },
+      { name: "nr14", points: NR14_RAW },
+    ]);
+    expect(areas[0].points).toHaveLength(2);
+    expect(areas[0].name).toBe("A");
+    expect(areas[1].points).toEqual(NR14_RAW); // as written, spike and all
+  });
 });
 
 describe("normalizeVornRing", () => {

@@ -1,13 +1,20 @@
 /**
- * Read-model cleanup for Vørn (FO) closure rings.
+ * Cleanup for Vørn (FO) closure rings, in two strengths.
  *
  * Vørn emergency-ban notices list boundary points as hand-typed text and close
  * every ring by repeating the first vertex as the last. The raw
  * `fishfacts-announcement.0` events faithfully preserve exactly what Vørn
  * published — including the closing duplicate and any coordinate typo — so the
  * source record is never lossy. This module is the transformer step that turns
- * those faithful points into a drawable ring for the read model
- * (`jmelding_geo`), applied by the geo projector.
+ * those faithful points into a drawable ring.
+ *
+ * Two readers, two strengths, deliberately:
+ *  - The read model (`jmelding_geo`, via the geo projector) takes the full
+ *    {@link normalizeVornAreas} — end users must never be shown a degenerate
+ *    closure.
+ *  - The approval queue (`regulations/case-projector.ts`) takes only
+ *    {@link dropClosingRepeats}, because repairing a typo is the judgment call
+ *    the queue was built to hand a human.
  *
  * Two clean-ups:
  *  1. Drop the repeated closing vertex (the normal Vørn convention).
@@ -26,6 +33,8 @@
  */
 
 export type RingPoint = { lat: number; lon: number };
+
+export type NormalizableArea = { name?: string | null; points: RingPoint[] };
 
 function fmtPoint(p: RingPoint): string {
   const ns = p.lat >= 0 ? "N" : "S";
@@ -57,6 +66,43 @@ export function ringSelfIntersects(points: RingPoint[]): boolean {
   return false;
 }
 
+/**
+ * Drop the repeated closing vertex, and nothing else.
+ *
+ * Vørn closes every ring by repeating the first vertex as the last, and a
+ * drawable ring does not carry that repeat. Removing it is pure convention:
+ * the point is still in the ring, so nothing the source published is lost.
+ *
+ * This is the WHOLE geometry cleanup the approval queue applies (see
+ * `regulations/case-projector.ts`). The typo repair below is a judgment call
+ * about what Vørn MEANT, and the queue exists to give that call to a human — a
+ * broken ring has to reach the reviewer as the degenerate shape it is, get
+ * flagged by the automated check, and be corrected as an audited revision. The
+ * read model keeps repairing; see the module header.
+ */
+export function dropClosingRepeat(raw: RingPoint[]): RingPoint[] {
+  const points = [...raw];
+  if (points.length <= 2) return points;
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (first.lat === last.lat && first.lon === last.lon) points.pop();
+  return points;
+}
+
+/**
+ * Apply {@link dropClosingRepeat} to every area of an announcement. Mirrors
+ * {@link normalizeVornAreas} minus the repair, so the queue's path and the read
+ * model's stay recognisably the same shape.
+ */
+export function dropClosingRepeats<A extends NormalizableArea>(
+  areas: A[],
+): A[] {
+  return areas.map((area) => ({
+    ...area,
+    points: dropClosingRepeat(area.points),
+  }));
+}
+
 export type RingNormalization = {
   code: "typo-unclosed-ring-repaired" | "unclosed-ring-unrepairable";
   message: string;
@@ -75,16 +121,14 @@ export function normalizeVornRing(raw: RingPoint[]): {
   points: RingPoint[];
   warning: RingNormalization | null;
 } {
-  const points = [...raw];
+  const points = dropClosingRepeat(raw);
+  // A ring that closed by repeat is well-formed by Vørn's own convention;
+  // there is nothing left to second-guess.
+  if (points.length < raw.length) return { points, warning: null };
   if (points.length <= 2) return { points, warning: null };
+  if (!ringSelfIntersects(points)) return { points, warning: null };
   const first = points[0];
   const last = points[points.length - 1];
-  const closesByRepeat = first.lat === last.lat && first.lon === last.lon;
-  if (closesByRepeat) {
-    points.pop();
-    return { points, warning: null };
-  }
-  if (!ringSelfIntersects(points)) return { points, warning: null };
   const repaired = points.slice(0, -1);
   if (repaired.length >= 3 && !ringSelfIntersects(repaired)) {
     return {
@@ -108,8 +152,6 @@ export function normalizeVornRing(raw: RingPoint[]): {
     },
   };
 }
-
-export type NormalizableArea = { name?: string | null; points: RingPoint[] };
 
 /**
  * Apply {@link normalizeVornRing} to every area of a Vørn (FO) announcement,

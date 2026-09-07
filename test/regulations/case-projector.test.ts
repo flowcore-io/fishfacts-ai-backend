@@ -228,6 +228,81 @@ describe("RegulationCaseProjector", () => {
     expect(revisions[0]?.contentHash).toBe("hash-test-J-1-2026-v1");
   });
 
+  // Veiðibann nr. 14/2026, the case the "no hidden magic" principle was
+  // ratified on. Vørn types vertices as DDMM digit runs; `fo` is the same
+  // arithmetic the scraper does when it puts them on the announcement event.
+  const fo = (latD: number, latM: number, lonD: number, lonM: number) => ({
+    lat: latD + latM / 60,
+    lon: -(lonD + lonM / 60),
+  });
+  const NR14_BODY =
+    "Við heimild í Løgtingslóg nr. 152 frá 23. desember 2019, § 59, ásetir Fiskiveiðueftirlitið bráðfeingis veiðibann fyri trol, á eini leið í vestara kanti á Munkagrunninum. 6104 N – 0700 W 6057 N – 0706 W 6045 N – 0700 W 6039 N – 0654 W 6045 N – 0636 W 6014 N – 0700 W Veiðibannið er galdandi frá í dag, hin 1. juli 2026 klokkan 23:00 til 29. juli 2026 klokkan 23:00.";
+  const NR14_RING = [
+    fo(61, 4, 7, 0),
+    fo(60, 57, 7, 6),
+    fo(60, 45, 7, 0),
+    fo(60, 39, 6, 54),
+    fo(60, 45, 6, 36),
+    fo(60, 14, 7, 0), // the fat-fingered 6104 → 6014, ~93 km too far south
+  ];
+
+  test("a Vørn ring is stored AS WRITTEN — the typo'd vertex reaches the reviewer", async () => {
+    if (!runCtx) return;
+    const projector = new RegulationCaseProjector(runCtx.db);
+    const ban = makeItem("test-vorn-14-2026", {
+      signature: "sig-test-vorn-14-2026-v1",
+      region: "FO",
+      bodyMarkdown: NR14_BODY,
+      areas: [{ name: null, points: NR14_RING }],
+    });
+
+    const result = await projector.project(ban);
+    expect(result.outcome).toBe("created");
+    expect(result.caseKey).toBe("vorn-veidibann:test-vorn-14-2026");
+
+    const [geometry] = await runCtx.db
+      .select()
+      .from(schema.regulationCaseGeometries)
+      .where(eq(schema.regulationCaseGeometries.caseId, result.caseId));
+    // Six, not the repaired five: making that repair is the judgment call the
+    // queue exists to hand a human, so the map has to draw the spike.
+    expect(geometry?.points).toEqual(NR14_RING);
+
+    // And the deterministic re-parse of the stored snapshot agrees with it —
+    // the property that keeps an admin re-parse from proposing a change that
+    // is really just the two readers disagreeing.
+    const [revision] = await runCtx.db
+      .select()
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, result.revisionId));
+    expect(revision?.snapshotText).toBeTruthy();
+    if (!revision?.snapshotText) return;
+    expect(parseJmeldingGeo(revision.snapshotText).areas[0]?.points).toEqual(
+      NR14_RING,
+    );
+  });
+
+  test("Vørn's repeated closing vertex is still dropped — that much is convention", async () => {
+    if (!runCtx) return;
+    const projector = new RegulationCaseProjector(runCtx.db);
+    const first = fo(62, 39, 5, 51);
+    const ban = makeItem("test-vorn-10-2026", {
+      signature: "sig-test-vorn-10-2026-v1",
+      region: "FO",
+      bodyMarkdown: "6239 N – 0551 W 6230 N – 0600 W 6239 N – 0551 W",
+      areas: [{ name: null, points: [first, fo(62, 30, 6, 0), first] }],
+    });
+
+    const result = await projector.project(ban);
+    const [geometry] = await runCtx.db
+      .select()
+      .from(schema.regulationCaseGeometries)
+      .where(eq(schema.regulationCaseGeometries.caseId, result.caseId));
+    // The point is not lost by dropping the repeat — it is still the ring's
+    // first vertex, which is why this one cleanup invents nothing.
+    expect(geometry?.points).toEqual([first, fo(62, 30, 6, 0)]);
+  });
+
   test("a Lógasavn statute keeps its fragment pointer as the snapshot reference", async () => {
     if (!runCtx) return;
     const projector = new RegulationCaseProjector(runCtx.db);
