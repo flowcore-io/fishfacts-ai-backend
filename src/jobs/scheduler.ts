@@ -98,7 +98,13 @@ export class JobScheduler {
     } catch (error) {
       // Skip rather than run: without a claim we cannot tell whether another
       // replica is already on it, and a job that needs Postgres to record its
-      // own state would fail moments later anyway. The next tick retries.
+      // own state would fail moments later anyway.
+      //
+      // Give the bucket back so a later tick in the same minute can retry.
+      // Losing a claim is final — another replica has it — but an *error* is
+      // not an answer, and the caller already burned the in-memory guard. On
+      // an hourly job that would turn one transient blip into a skipped hour.
+      this.lastFiredByJob.delete(jobId);
       console.error("[Jobs] Cron claim failed; skipping tick", {
         jobId,
         bucket,

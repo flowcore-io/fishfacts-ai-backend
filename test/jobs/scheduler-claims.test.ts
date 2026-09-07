@@ -106,6 +106,39 @@ describe("JobScheduler cross-replica claims", () => {
     expect(attempts).toHaveLength(1);
   });
 
+  test("a transient claim error is retried on the next tick in the same minute", async () => {
+    // The in-memory guard is burned before the claim is attempted, so an error
+    // has to hand the bucket back — otherwise one DB blip costs an hourly job
+    // its whole hour, not just that tick.
+    const runs: string[] = [];
+    const attempts: string[] = [];
+    let failNext = true;
+    const flaky = {
+      claim: async (jobId: string, bucket: string) => {
+        attempts.push(`${jobId}@${bucket}`);
+        if (failNext) {
+          failNext = false;
+          throw new Error("connection terminated unexpectedly");
+        }
+        return true;
+      },
+    } as unknown as JobCronClaims;
+    const scheduler = new JobScheduler(
+      env,
+      runnerFor(everyMinute, runs),
+      flaky,
+    );
+
+    await tickOnce(scheduler);
+    await tickOnce(scheduler);
+
+    expect(runs).toEqual(["test-job"]);
+    // Guards against passing for the wrong reason: both ticks must have been in
+    // the same minute, or the retry proves nothing.
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toBe(attempts[1]);
+  });
+
   test("a failing claim skips the tick instead of running twice", async () => {
     const runs: string[] = [];
     const failing = {
