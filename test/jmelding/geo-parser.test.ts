@@ -173,6 +173,45 @@ Henningsvær
   });
 });
 
+describe("parseJmeldingGeo — Vørn (FO) bare degrees+minutes", () => {
+  // Veiðibann nr. 14/2026, exactly as the snapshot is stored on the case. An
+  // admin re-parse reads this text and nothing else, so what comes out here is
+  // what the review map draws.
+  const NR14_SNAPSHOT =
+    "Við heimild í Løgtingslóg nr. 152 frá 23. desember 2019, § 59, ásetir Fiskiveiðueftirlitið bráðfeingis veiðibann fyri trol, á eini leið í vestara kanti á Munkagrunninum. 6104 N – 0700 W 6057 N – 0706 W 6045 N – 0700 W 6039 N – 0654 W 6045 N – 0636 W 6014 N – 0700 W Veiðibannið er galdandi frá í dag, hin 1. juli 2026 klokkan 23:00 til 29. juli 2026 klokkan 23:00.";
+
+  test("reads the ring AS WRITTEN, typo'd closing vertex included", () => {
+    const result = parseJmeldingGeo(NR14_SNAPSHOT);
+    expect(result.hasGeo).toBe(true);
+    const points = result.areas.flatMap((a) => a.points);
+    // Six, not five: the reader must not quietly heal what the reviewer is
+    // there to judge. `6014 N` is the fat-fingered `6104 N`, ~93 km too far
+    // south, and it has to reach the map as the spike it is.
+    expect(points).toHaveLength(6);
+    expect(points[0].lat).toBeCloseTo(61 + 4 / 60, 6);
+    expect(points[0].lon).toBeCloseTo(-7, 6);
+    expect(points[5].lat).toBeCloseTo(60 + 14 / 60, 6);
+    expect(points[5].lon).toBeCloseTo(-7, 6);
+  });
+
+  test("an en dash reads the same as a hyphen", () => {
+    const enDash = parseJmeldingGeo("6104 N – 0700 W 6057 N – 0706 W");
+    const hyphen = parseJmeldingGeo("6104 N - 0700 W 6057 N - 0706 W");
+    expect(enDash.areas).toEqual(hyphen.areas);
+    expect(enDash.areas.flatMap((a) => a.points)).toHaveLength(2);
+  });
+
+  test("does not fire on the Norwegian grammars it sits beside", () => {
+    // The control that matters: adding a loose four-digit format must not
+    // invent points in the J-melding bodies this parser was built for.
+    const result = parseJmeldingGeo(`
+1. Nord 71 grader 10,000 minutter. Øst 024 grader 53,000 minutter.
+2. Nord 71 grader 11,600 minutter. Øst 024 grader 53,700 minutter.
+`);
+    expect(result.areas.flatMap((a) => a.points)).toHaveLength(2);
+  });
+});
+
 describe("areasToFeatureCollection", () => {
   test("returns null for empty areas", () => {
     expect(areasToFeatureCollection([])).toBeNull();
