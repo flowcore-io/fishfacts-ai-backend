@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.7.0...v2.8.0) (2026-09-07)
+
+
+### Features
+
+* **regulations:** admin agent tool endpoints (stage ② B4) ([#173](https://github.com/flowcore-io/fishfacts-ai-backend/issues/173)) ([d63d146](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d63d146b2fc6424465117b5cee344d88c676ec6b))
+
 ## [2.7.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.6.1...v2.7.0) (2026-09-07)
 
 
