@@ -8,6 +8,8 @@ type FakeOptions = {
   /** What `pg_try_advisory_lock` answers on each acquire, in order. */
   locks: boolean[];
   reserveThrows?: boolean;
+  /** Reserve succeeds, but every query on the connection fails. */
+  queryThrows?: boolean;
 };
 
 /**
@@ -24,6 +26,7 @@ function fakeSql(options: FakeOptions) {
       const connection = (async () => {
         // Any query on a dropped connection fails — that is how the holder
         // learns the lock is gone.
+        if (options.queryThrows) throw new Error("statement timeout");
         if (!state.connectionAlive) throw new Error("connection closed");
         return [{ locked: acquired }];
       }) as unknown as Awaited<ReturnType<Sql["reserve"]>>;
@@ -78,6 +81,29 @@ describe("PostgresLeaderLock", () => {
     // Re-acquires rather than reporting a stale true.
     expect(await lock.isLeader()).toBe(false);
     expect(state.reserves).toBe(2);
+  });
+
+  test("a lock query that fails after reserve() hands the connection back", async () => {
+    // The leak that matters: reserve() succeeds, the lock query throws, and the
+    // connection is neither stored nor released. A follower pod runs this every
+    // tick, so a spell of statement timeouts drains the 10-wide pool until the
+    // pod cannot reach Postgres at all.
+    const { sql, state } = fakeSql({ locks: [true], queryThrows: true });
+    const lock = new PostgresLeaderLock(sql, LOCK_KEY);
+
+    expect(await lock.isLeader()).toBe(false);
+    expect(state.reserves).toBe(1);
+    expect(state.releases).toBe(1);
+  });
+
+  test("repeated failures of that kind do not accumulate connections", async () => {
+    const { sql, state } = fakeSql({ locks: [true], queryThrows: true });
+    const lock = new PostgresLeaderLock(sql, LOCK_KEY);
+
+    for (let tick = 0; tick < 5; tick += 1) await lock.isLeader();
+
+    expect(state.reserves).toBe(5);
+    expect(state.releases).toBe(5);
   });
 
   test("an unreachable database reports follower rather than throwing", async () => {

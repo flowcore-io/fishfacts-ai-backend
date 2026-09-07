@@ -45,18 +45,30 @@ export class PostgresLeaderLock {
         this.connection = null;
       }
     }
+    let pending: ReservedConnection | null = null;
     try {
-      const connection = await this.sql.reserve();
+      pending = await this.sql.reserve();
       const rows =
-        await connection`select pg_try_advisory_lock(${this.lockKey}) as locked`;
+        await pending`select pg_try_advisory_lock(${this.lockKey}) as locked`;
       if (rows[0]?.locked) {
-        this.connection = connection;
+        this.connection = pending;
+        pending = null; // ownership moves to this.connection; do not release it
         return true;
       }
-      await connection.release();
       return false;
     } catch {
       return false;
+    } finally {
+      // Whatever is still pending here is ours to hand back: we either lost the
+      // race, or the lock query threw after reserve() had already succeeded.
+      // Missing the second case leaks a connection per call — and a follower
+      // pod calls this every tick, so a spell of statement timeouts would drain
+      // the pool until the pod could not reach Postgres at all.
+      if (pending) {
+        try {
+          await pending.release();
+        } catch {}
+      }
     }
   }
 
