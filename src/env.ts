@@ -125,6 +125,18 @@ const envSchema = z.object({
     .default(
       "https://www.sildelaget.no/umbraco/api/catchjournal/ExportCatchJournal",
     ),
+  /**
+   * What the catch-journal fetch identifies itself as. Configurable because
+   * sildelaget.no sits behind Cloudflare, whose bot ruleset blocks tool-shaped
+   * user-agents: on 2026-09-04 the default below started returning HTTP 403 and
+   * the journal stopped ingesting. Sildelaget have been asked to let us
+   * through — this exists so their answer (whatever identifier they want to
+   * allow-list) is a config change rather than a release.
+   */
+  SILDELAGET_CATCHJOURNAL_USER_AGENT: z
+    .string()
+    .min(1)
+    .default("FishFactsJobs/1.0"),
   SILDELAGET_CATCHMAP_AREAS_URL: z
     .string()
     .url()

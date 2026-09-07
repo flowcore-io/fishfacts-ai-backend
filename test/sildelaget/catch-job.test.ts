@@ -51,6 +51,7 @@ describe("sildelaget-catchjournal job", () => {
       {
         SILDELAGET_CATCHJOURNAL_EXPORT_URL:
           "https://example.test/ExportCatchJournal",
+        SILDELAGET_CATCHJOURNAL_USER_AGENT: "FishFactsJobs/1.0",
         SILDELAGET_CATCHMAP_AREAS_URL: "https://example.test/CatchAreas",
       } as never,
       writer,
@@ -137,6 +138,7 @@ describe("sildelaget-catchjournal job", () => {
       {
         SILDELAGET_CATCHJOURNAL_EXPORT_URL:
           "https://example.test/ExportCatchJournal",
+        SILDELAGET_CATCHJOURNAL_USER_AGENT: "FishFactsJobs/1.0",
         SILDELAGET_CATCHMAP_AREAS_URL: "https://example.test/CatchAreas",
       } as never,
       writer,
@@ -164,6 +166,58 @@ describe("sildelaget-catchjournal job", () => {
     expect(
       new URL(requestedUrl as string).searchParams.get("selectedTime"),
     ).toBe("87600");
+  });
+
+  test("identifies itself with the configured user-agent", async () => {
+    // sildelaget.no sits behind Cloudflare, whose bot ruleset blocks
+    // tool-shaped user-agents — the journal stopped ingesting on 2026-09-04
+    // with HTTP 403. The string has to be settable without a release.
+    const buffer = await makeWorkbook();
+    const sentUserAgents: (string | null)[] = [];
+    globalThis.fetch = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: RequestInit,
+    ) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.includes("CatchAreas")) return Response.json(routeAreasFixture());
+      sentUserAgents.push(new Headers(init?.headers).get("user-agent"));
+      return new Response(new Uint8Array(buffer));
+    }) as unknown as typeof fetch;
+
+    const job = createSildelagetCatchJournalJob(
+      {
+        SILDELAGET_CATCHJOURNAL_EXPORT_URL:
+          "https://example.test/ExportCatchJournal",
+        SILDELAGET_CATCHJOURNAL_USER_AGENT: "AllowListedBySildelaget/2.0",
+        SILDELAGET_CATCHMAP_AREAS_URL: "https://example.test/CatchAreas",
+      } as never,
+      stubWriter(),
+      {
+        getEntryHashes: async () => new Map<string, string>(),
+      } as unknown as SildelagetCatchRepository,
+    );
+
+    await job(
+      undefined,
+      {
+        selectedTime: 168,
+        selectedSpecies: "",
+        selectedCatchType: "",
+        isNor: true,
+      },
+      {
+        signal: new AbortController().signal,
+        isStopRequested: () => false,
+        reportProgress: () => undefined,
+      },
+    );
+
+    expect(sentUserAgents).toEqual(["AllowListedBySildelaget/2.0"]);
   });
 
   test("manual backfill emits unchanged entries for route import", async () => {
@@ -208,6 +262,7 @@ describe("sildelaget-catchjournal job", () => {
       {
         SILDELAGET_CATCHJOURNAL_EXPORT_URL:
           "https://example.test/ExportCatchJournal",
+        SILDELAGET_CATCHJOURNAL_USER_AGENT: "FishFactsJobs/1.0",
         SILDELAGET_CATCHMAP_AREAS_URL: "https://example.test/CatchAreas",
       } as never,
       writer,
@@ -239,6 +294,28 @@ describe("sildelaget-catchjournal job", () => {
     });
   });
 });
+
+function stubWriter(): PathwayWriter {
+  return {
+    writeGeneric: async () => "unused",
+    writeJMeldingAnnouncement: async () => "unused",
+    writeSildelagetCatchEntryObserved: async () => "evt-sild",
+    writeGillnetVesselObserved: async () => "unused",
+    writeGebcoFeatureObserved: async () => "unused",
+    writeAreaCreated: async () => "unused",
+    writeAreaUpdated: async () => "unused",
+    writeAreaDeleted: async () => "unused",
+    writePoiCreated: async () => "unused",
+    writeRegulationVerdictRecorded: async () => "unused",
+    writeRegulationAdminActionRecorded: async () => "unused",
+    writeRegulationRevisionProposed: async () => "unused",
+    writeRegulationRevisionPointerMoved: async () => "unused",
+    writeRegulationValidationRecorded: async () => "unused",
+    writeRegulationApprovalRecorded: async () => "unused",
+    writeAisPositionFixObserved: async () => "unused",
+    writeAisPositionFixBatch: async () => [],
+  } satisfies PathwayWriter;
+}
 
 function makeFetch(buffer: Buffer): typeof fetch {
   return (async (input: Parameters<typeof fetch>[0]) => {

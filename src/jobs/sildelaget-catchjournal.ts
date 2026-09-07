@@ -61,7 +61,7 @@ export function createSildelagetCatchJournalJob(
     });
     const response = await fetch(sourceUrl, {
       headers: {
-        "user-agent": "FishFactsJobs/1.0",
+        "user-agent": env.SILDELAGET_CATCHJOURNAL_USER_AGENT,
         accept:
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
       },
