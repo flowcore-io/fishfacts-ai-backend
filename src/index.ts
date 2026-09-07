@@ -12,6 +12,7 @@ import { AreasProjector } from "./areas/projector";
 import { AreasRepository } from "./areas/repository";
 import { TokenCache } from "./auth/cache";
 import { createDb } from "./db/client";
+import { PostgresLeaderLock } from "./db/leader-lock";
 import { runMigrations } from "./db/migrate";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
@@ -155,7 +156,14 @@ const jobs = createJobDefinitions(
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
-const jobScheduler = new JobScheduler(env, jobRunner);
+// Distinct from the AIS supervisor's key: a stalled scheduler must not hand the
+// supervisor to another pod, or vice versa.
+const SCHEDULER_LOCK_KEY = 414400824;
+const jobScheduler = new JobScheduler(
+  env,
+  jobRunner,
+  new PostgresLeaderLock(client, SCHEDULER_LOCK_KEY),
+);
 const aisBackfillSupervisor = new AisBackfillSupervisor(
   env,
   jobRunner,

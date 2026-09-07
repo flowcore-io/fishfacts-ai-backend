@@ -1,3 +1,4 @@
+import { PostgresLeaderLock } from "@/db/leader-lock";
 import type { Env } from "@/env";
 import type { JobRunner } from "@/jobs/runner";
 import type { Sql } from "postgres";
@@ -30,10 +31,9 @@ const SUPERVISOR_LOCK_KEY = 414400823;
  */
 export class AisBackfillSupervisor {
   private timer: ReturnType<typeof setInterval> | null = null;
-  // Reserved (pinned) connection that holds the advisory lock while this pod is
-  // the elected supervisor. Held for the supervisor's lifetime; on pod death the
-  // connection drops and Postgres auto-releases the lock so another pod takes over.
-  private leaderConn: Awaited<ReturnType<Sql["reserve"]>> | null = null;
+  // Elects the single pod that runs the supervised jobs. See PostgresLeaderLock
+  // for why a dropped connection is the whole failover story.
+  private readonly leader: PostgresLeaderLock;
 
   constructor(
     private readonly env: Env,
@@ -41,34 +41,8 @@ export class AisBackfillSupervisor {
     private readonly state: AisIngestStateRepository,
     private readonly sql: Sql,
     private readonly intervalMs = 60_000,
-  ) {}
-
-  /** True only on the single pod holding the advisory lock. */
-  private async isLeader(): Promise<boolean> {
-    if (this.leaderConn) {
-      try {
-        await this.leaderConn`select 1`;
-        return true; // still hold a live locked connection
-      } catch {
-        try {
-          await this.leaderConn.release();
-        } catch {}
-        this.leaderConn = null; // connection died → lock released; re-acquire below
-      }
-    }
-    try {
-      const conn = await this.sql.reserve();
-      const rows =
-        await conn`select pg_try_advisory_lock(${SUPERVISOR_LOCK_KEY}) as locked`;
-      if (rows[0]?.locked) {
-        this.leaderConn = conn;
-        return true;
-      }
-      await conn.release();
-      return false;
-    } catch {
-      return false;
-    }
+  ) {
+    this.leader = new PostgresLeaderLock(sql, SUPERVISOR_LOCK_KEY);
   }
 
   start(): void {
@@ -87,15 +61,11 @@ export class AisBackfillSupervisor {
       clearInterval(this.timer);
       this.timer = null;
     }
-    if (this.leaderConn) {
-      const conn = this.leaderConn;
-      this.leaderConn = null;
-      void conn.release(); // drops the reserved connection → releases the lock
-    }
+    this.leader.release();
   }
 
   private async tick(): Promise<void> {
-    if (!(await this.isLeader())) return; // another pod owns the supervisor
+    if (!(await this.leader.isLeader())) return; // another pod owns the supervisor
     const control = await this.state.getControl();
     if (!control.backfillEnabled) return; // durable pause
     if (!control.backfillStartAt || !control.startAt) {

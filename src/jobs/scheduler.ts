@@ -1,3 +1,4 @@
+import type { PostgresLeaderLock } from "@/db/leader-lock";
 import type { Env } from "@/env";
 import type { JobRunner } from "./runner";
 
@@ -51,6 +52,7 @@ export class JobScheduler {
   constructor(
     private readonly env: Env,
     private readonly runner: JobRunner,
+    private readonly leader: PostgresLeaderLock,
   ) {}
 
   start() {
@@ -63,12 +65,18 @@ export class JobScheduler {
   }
 
   stop() {
+    this.leader.release();
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
   }
 
   private async tick() {
+    // The scheduler runs in-process in every pod and lastFiredByJob is
+    // per-process, so without this every cron job fired once per replica —
+    // twice, at replicas: 2, a few seconds apart against every upstream we
+    // scrape. Same question, and the same answer, as AisBackfillSupervisor.
+    if (!(await this.leader.isLeader())) return;
     const now = new Date();
     const bucket = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}-${now.getUTCHours()}-${now.getUTCMinutes()}`;
     for (const job of this.runner.definitions()) {
