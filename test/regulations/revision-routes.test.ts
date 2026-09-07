@@ -143,7 +143,17 @@ function makeApp(caseOverrides: Partial<typeof CASE_ROW> = {}) {
     c.set("auth", auth);
     return next();
   });
-  app.route("/api/regulations", createRegulationsRouter({ queue, writer }));
+  app.route(
+    "/api/regulations",
+    createRegulationsRouter({
+      queue,
+      writer,
+      poi: { list: async () => [] } as never,
+      jobRunner: {
+        startJob: async () => ({ promise: Promise.resolve() }),
+      } as never,
+    }),
+  );
   return { app, written };
 }
 

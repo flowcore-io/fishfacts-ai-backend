@@ -1,3 +1,4 @@
+import { API_ERROR, API_REASON } from "@/http/errors";
 import type { MiddlewareHandler } from "hono";
 
 export const ADMIN_AUTHORITY = "ADMIN" as const;
@@ -9,10 +10,13 @@ export function isAdmin(authorities: string[] | undefined | null): boolean {
 export const requireAdmin: MiddlewareHandler = async (c, next) => {
   const auth = c.get("auth");
   if (!auth) {
-    return c.json({ error: "missing_auth_token" }, 401);
+    return c.json({ error: API_ERROR.missingAuthToken }, 401);
   }
   if (!isAdmin(auth.user.authorities)) {
-    return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+    return c.json(
+      { error: API_ERROR.forbidden, reason: API_REASON.adminRequired },
+      403,
+    );
   }
   return next();
 };

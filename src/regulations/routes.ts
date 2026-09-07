@@ -6,7 +6,22 @@ import {
   regulationRevisionFieldsSchema,
   regulationRevisionGeometrySchema,
 } from "@/events/contracts";
+import type { RegulationRevisionGeometry } from "@/events/contracts";
+import {
+  API_ERROR,
+  API_REASON,
+  errorResponse,
+  flowcoreWriteFailed,
+  forbiddenAdminRequired,
+  invalidPayload,
+  invalidQuery,
+  notFound,
+  serviceUnavailable,
+} from "@/http/errors";
+import { parseJmeldingGeo } from "@/jmelding/geo-parser";
+import type { JobRunner } from "@/jobs/runner";
 import type { PathwayWriter } from "@/pathways";
+import type { PoiRepository } from "@/poi/repository";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { RegulationQueueReadRepository } from "./read-repository";
@@ -52,6 +67,10 @@ const queueQuerySchema = z.object({
 export type RegulationsRouterDeps = {
   queue: RegulationQueueReadRepository;
   writer: PathwayWriter;
+  /** B4 agent-tool deps: the POI gazetteer behind resolve_landmark and the
+   * job runner behind verdict recompute. */
+  poi: PoiRepository;
+  jobRunner: Pick<JobRunner, "startJob">;
 };
 
 /**
@@ -69,10 +88,7 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
   app.get("/queue", async (c) => {
     const parsed = queueQuerySchema.safeParse(c.req.query());
     if (!parsed.success) {
-      return c.json(
-        { error: "invalid_query", issues: parsed.error.issues },
-        400,
-      );
+      return invalidQuery(c, { issues: parsed.error.issues });
     }
     const { status, ...rest } = parsed.data;
     try {
@@ -91,7 +107,7 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       console.error("[Regulations] queue list failed", {
         message: error instanceof Error ? error.message : String(error),
       });
-      return c.json({ error: "queue_unavailable" }, 503);
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
     }
   });
 
@@ -102,25 +118,23 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       console.error("[Regulations] queue counts failed", {
         message: error instanceof Error ? error.message : String(error),
       });
-      return c.json({ error: "queue_unavailable" }, 503);
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
     }
   });
 
   app.get("/cases/:id", async (c) => {
     const id = c.req.param("id");
-    if (!CASE_ID.test(id)) {
-      return c.json({ error: "not_found" }, 404);
-    }
+    if (!CASE_ID.test(id)) return notFound(c);
     try {
       const detail = await deps.queue.getCaseDetail(id.toLowerCase());
-      if (!detail) return c.json({ error: "not_found" }, 404);
+      if (!detail) return notFound(c);
       return c.json(detail);
     } catch (error) {
       console.error("[Regulations] case detail failed", {
         caseId: id,
         message: error instanceof Error ? error.message : String(error),
       });
-      return c.json({ error: "queue_unavailable" }, 503);
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
     }
   });
 
@@ -128,19 +142,14 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     const auth = c.get("auth");
     // Service-layer re-check (belt & braces, per IDOR fragment).
     if (!isAdmin(auth.user.authorities)) {
-      return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+      return forbiddenAdminRequired(c);
     }
     const id = c.req.param("id");
-    if (!CASE_ID.test(id)) {
-      return c.json({ error: "not_found" }, 404);
-    }
+    if (!CASE_ID.test(id)) return notFound(c);
     const body = await c.req.json().catch(() => null);
     const parsed = regulationAdminActionSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json(
-        { error: "invalid_payload", issues: parsed.error.issues },
-        400,
-      );
+      return invalidPayload(c, { issues: parsed.error.issues });
     }
     const action = parsed.data;
     // Route-level, NOT a schema refine: the event schema also validates on
@@ -151,32 +160,25 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       action.until !== null &&
       Date.parse(action.until) <= Date.now()
     ) {
-      return c.json(
-        { error: "invalid_payload", reason: "snooze_until_in_past" },
-        400,
-      );
+      return invalidPayload(c, { reason: API_REASON.snoozeUntilInPast });
     }
     let caseRef: Awaited<
       ReturnType<RegulationQueueReadRepository["getCaseRef"]>
     >;
     try {
       caseRef = await deps.queue.getCaseRef(id.toLowerCase());
-      if (!caseRef) return c.json({ error: "not_found" }, 404);
+      if (!caseRef) return notFound(c);
       if (action.kind === "mark_duplicate") {
         if (action.duplicateOfCaseId.toLowerCase() === caseRef.id) {
-          return c.json(
-            { error: "invalid_payload", reason: "duplicate_of_self" },
-            400,
-          );
+          return invalidPayload(c, { reason: API_REASON.duplicateOfSelf });
         }
         const target = await deps.queue.getCaseRef(
           action.duplicateOfCaseId.toLowerCase(),
         );
         if (!target) {
-          return c.json(
-            { error: "invalid_payload", reason: "duplicate_target_not_found" },
-            400,
-          );
+          return invalidPayload(c, {
+            reason: API_REASON.duplicateTargetNotFound,
+          });
         }
       }
     } catch (error) {
@@ -184,7 +186,7 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         caseId: id,
         message: error instanceof Error ? error.message : String(error),
       });
-      return c.json({ error: "queue_unavailable" }, 503);
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
     }
     try {
       const actionId = randomUUID();
@@ -208,7 +210,7 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         kind: action.kind,
         message,
       });
-      return c.json({ error: "flowcore_write_failed", message }, 502);
+      return flowcoreWriteFailed(c, message);
     }
   });
 
@@ -273,7 +275,7 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       ? await deps.queue.listRevisionsSince(caseId, named.position)
       : await deps.queue.listRevisionsSince(caseId, -1);
     return {
-      error: "stale_revision",
+      error: API_ERROR.staleRevision,
       currentRevisionId,
       namedRevisionId,
       revisionsSince,
@@ -283,21 +285,18 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
   app.post("/cases/:id/revisions", async (c) => {
     const auth = c.get("auth");
     if (!isAdmin(auth.user.authorities)) {
-      return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+      return forbiddenAdminRequired(c);
     }
     const id = c.req.param("id");
-    if (!CASE_ID.test(id)) return c.json({ error: "not_found" }, 404);
+    if (!CASE_ID.test(id)) return notFound(c);
     const body = await c.req.json().catch(() => null);
     const parsed = revisionProposalSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json(
-        { error: "invalid_payload", issues: parsed.error.issues },
-        400,
-      );
+      return invalidPayload(c, { issues: parsed.error.issues });
     }
     try {
       const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
-      if (!caseRow) return c.json({ error: "not_found" }, 404);
+      if (!caseRow) return notFound(c);
       if (parsed.data.baseRevisionId !== caseRow.currentRevisionId) {
         return c.json(
           await staleRevisionBody(
@@ -325,33 +324,25 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       const changeKeys: string[] = [...changedFields];
       if (parsed.data.geometries !== null) changeKeys.push("geometries");
       if (changeKeys.length === 0) {
-        return c.json({ error: "invalid_payload", reason: "no_changes" }, 400);
+        return invalidPayload(c, { reason: API_REASON.noChanges });
       }
       const missing = changeKeys.filter(
         (key) => !parsed.data.justifications[key],
       );
       if (missing.length > 0) {
-        return c.json(
-          {
-            error: "invalid_payload",
-            reason: "missing_justification",
-            fields: missing,
-          },
-          400,
-        );
+        return invalidPayload(c, {
+          reason: API_REASON.missingJustification,
+          fields: missing,
+        });
       }
       const unexplained = Object.keys(parsed.data.justifications).filter(
         (key) => !changeKeys.includes(key),
       );
       if (unexplained.length > 0) {
-        return c.json(
-          {
-            error: "invalid_payload",
-            reason: "justification_for_unchanged_field",
-            fields: unexplained,
-          },
-          400,
-        );
+        return invalidPayload(c, {
+          reason: API_REASON.justificationForUnchangedField,
+          fields: unexplained,
+        });
       }
 
       // Materialize the full resulting area set so the event is
@@ -399,34 +390,28 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         caseId: id,
         message,
       });
-      return c.json({ error: "flowcore_write_failed", message }, 502);
+      return flowcoreWriteFailed(c, message);
     }
   });
 
   app.post("/cases/:id/revision-pointer", async (c) => {
     const auth = c.get("auth");
     if (!isAdmin(auth.user.authorities)) {
-      return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+      return forbiddenAdminRequired(c);
     }
     const id = c.req.param("id");
-    if (!CASE_ID.test(id)) return c.json({ error: "not_found" }, 404);
+    if (!CASE_ID.test(id)) return notFound(c);
     const body = await c.req.json().catch(() => null);
     const parsed = pointerMoveSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json(
-        { error: "invalid_payload", issues: parsed.error.issues },
-        400,
-      );
+      return invalidPayload(c, { issues: parsed.error.issues });
     }
     try {
       const caseRef = await deps.queue.getCaseRef(id.toLowerCase());
-      if (!caseRef) return c.json({ error: "not_found" }, 404);
+      if (!caseRef) return notFound(c);
       const target = await deps.queue.getRevision(parsed.data.toRevisionId);
       if (!target || target.caseId !== caseRef.id) {
-        return c.json(
-          { error: "invalid_payload", reason: "revision_not_of_case" },
-          400,
-        );
+        return invalidPayload(c, { reason: API_REASON.revisionNotOfCase });
       }
       const pointerMoveId = randomUUID();
       const recordedAt = new Date().toISOString();
@@ -445,28 +430,25 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         caseId: id,
         message,
       });
-      return c.json({ error: "flowcore_write_failed", message }, 502);
+      return flowcoreWriteFailed(c, message);
     }
   });
 
   app.post("/cases/:id/validations", async (c) => {
     const auth = c.get("auth");
     if (!isAdmin(auth.user.authorities)) {
-      return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+      return forbiddenAdminRequired(c);
     }
     const id = c.req.param("id");
-    if (!CASE_ID.test(id)) return c.json({ error: "not_found" }, 404);
+    if (!CASE_ID.test(id)) return notFound(c);
     const body = await c.req.json().catch(() => null);
     const parsed = validationRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json(
-        { error: "invalid_payload", issues: parsed.error.issues },
-        400,
-      );
+      return invalidPayload(c, { issues: parsed.error.issues });
     }
     try {
       const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
-      if (!caseRow) return c.json({ error: "not_found" }, 404);
+      if (!caseRow) return notFound(c);
       // Validating anything but the current revision is refused outright —
       // a validation of superseded text is not review, it is theatre.
       if (parsed.data.revisionId !== caseRow.currentRevisionId) {
@@ -484,10 +466,9 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
           parsed.data.revisionId,
         );
         if (!geometries.some((g) => g.id === parsed.data.geometryId)) {
-          return c.json(
-            { error: "invalid_payload", reason: "geometry_not_of_revision" },
-            400,
-          );
+          return invalidPayload(c, {
+            reason: API_REASON.geometryNotOfRevision,
+          });
         }
       }
       const validationId = randomUUID();
@@ -511,28 +492,25 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         caseId: id,
         message,
       });
-      return c.json({ error: "flowcore_write_failed", message }, 502);
+      return flowcoreWriteFailed(c, message);
     }
   });
 
   app.post("/cases/:id/approval", async (c) => {
     const auth = c.get("auth");
     if (!isAdmin(auth.user.authorities)) {
-      return c.json({ error: "forbidden", reason: "admin_required" }, 403);
+      return forbiddenAdminRequired(c);
     }
     const id = c.req.param("id");
-    if (!CASE_ID.test(id)) return c.json({ error: "not_found" }, 404);
+    if (!CASE_ID.test(id)) return notFound(c);
     const body = await c.req.json().catch(() => null);
     const parsed = approvalRequestSchema.safeParse(body);
     if (!parsed.success) {
-      return c.json(
-        { error: "invalid_payload", issues: parsed.error.issues },
-        400,
-      );
+      return invalidPayload(c, { issues: parsed.error.issues });
     }
     try {
       const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
-      if (!caseRow) return c.json({ error: "not_found" }, 404);
+      if (!caseRow) return notFound(c);
       // The edit-after-review race, closed synchronously: an approval names
       // a revision, and a superseded one is refused WITH the diff. The
       // projector re-checks under stream order for the write in flight.
@@ -552,7 +530,9 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         missing.push("geometry");
       }
       if (missing.length > 0) {
-        return c.json({ error: "validation_missing", missing }, 422);
+        return errorResponse(c, 422, API_ERROR.validationMissing, {
+          missing,
+        });
       }
       const approvalId = randomUUID();
       const recordedAt = new Date().toISOString();
@@ -570,7 +550,189 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Regulations] approval failed", { caseId: id, message });
-      return c.json({ error: "flowcore_write_failed", message }, 502);
+      return flowcoreWriteFailed(c, message);
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // B4 — admin agent tool endpoints. These ARE meant to become parent
+  // tools on the admin embed (unlike approval/reject): they investigate
+  // and propose, they never validate, approve or publish.
+  // ---------------------------------------------------------------------
+
+  /** Faroese/Norwegian names carry diacritics inconsistently across
+   * sources; both sides normalise before matching. */
+  const normalizeName = (value: string) =>
+    value
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "")
+      .replace(/ø/g, "o")
+      .replace(/æ/g, "ae")
+      .replace(/ð/g, "d");
+
+  app.get("/landmarks", async (c) => {
+    const q = c.req.query("q")?.trim() ?? "";
+    if (q.length < 2) {
+      return invalidQuery(c, { reason: API_REASON.qTooShort });
+    }
+    try {
+      const needle = normalizeName(q);
+      const matches = (await deps.poi.list()).filter((poi) =>
+        [poi.key.replace(/_/g, " "), poi.title ?? "", ...(poi.aliases ?? [])]
+          .map(normalizeName)
+          // A titleless POI would contribute "" here, and
+          // `needle.includes("")` is true for every needle — silent noise
+          // in every lookup.
+          .filter((name) => name.length > 0)
+          .some((name) => name.includes(needle) || needle.includes(name)),
+      );
+      return c.json({ matches, returned: matches.length });
+    } catch (error) {
+      console.error("[Regulations] landmark lookup failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return serviceUnavailable(c, API_ERROR.poiUnavailable);
+    }
+  });
+
+  app.post("/cases/:id/reverdict", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const id = c.req.param("id");
+    if (!CASE_ID.test(id)) return notFound(c);
+    try {
+      const caseRef = await deps.queue.getCaseRef(id.toLowerCase());
+      if (!caseRef) return notFound(c);
+      // The existing re-judge path: naming a caseKey replaces the pending
+      // filter, so the CURRENT revision is re-judged regardless of its
+      // verdict state, through the same embed → event → projection pipe.
+      const started = await deps.jobRunner.startJob(
+        "regulation-verdict",
+        "manual",
+        {
+          caseKeys: [caseRef.caseKey],
+          limit: 1,
+        },
+      );
+      void started.promise.catch((error: unknown) => {
+        console.error("[Regulations] reverdict run failed", {
+          caseKey: caseRef.caseKey,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return c.json(
+        {
+          ok: true,
+          caseKey: caseRef.caseKey,
+          jobId: "regulation-verdict",
+          runId: started.runId,
+        },
+        202,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("already running")) {
+        return errorResponse(c, 409, API_ERROR.verdictJobRunning);
+      }
+      console.error("[Regulations] reverdict failed", { caseId: id, message });
+      return errorResponse(c, 502, API_ERROR.reverdictFailed, {
+        message,
+      });
+    }
+  });
+
+  app.post("/cases/:id/reparse", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const id = c.req.param("id");
+    if (!CASE_ID.test(id)) return notFound(c);
+    try {
+      const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
+      if (!caseRow) return notFound(c);
+      const revision = await deps.queue.getRevision(caseRow.currentRevisionId);
+      if (!revision?.snapshotText) {
+        // Decision 6 stores the snapshot precisely so this can work; a case
+        // without one predates that or lost its source — say so.
+        return errorResponse(c, 422, API_ERROR.noSnapshotText);
+      }
+
+      // The deterministic coordinate grammar over the STORED snapshot —
+      // never a refetch of a source that may have changed or vanished.
+      // Described boundaries (statute-reader output) are not reproducible
+      // deterministically and would be dropped; that is visible in the
+      // proposal, which the admin reviews like any other draft — and undo
+      // is a pointer move.
+      const parsed = parseJmeldingGeo(revision.snapshotText);
+      const proposedGeometries: RegulationRevisionGeometry[] = parsed.areas.map(
+        (area) => ({
+          name: area.name,
+          section: null,
+          kind: "closure",
+          season: null,
+          verticesQuoted: null,
+          points: area.points,
+          geometrySource: "enumerated",
+          coordinateSystem: "WGS84",
+          precision: null,
+        }),
+      );
+
+      const current = await deps.queue.getRevisionGeometries(
+        caseRow.currentRevisionId,
+      );
+      const unchanged = fieldValueEquals(
+        current.map((row) => ({ name: row.name, points: row.points })),
+        proposedGeometries.map((area) => ({
+          name: area.name,
+          points: area.points,
+        })),
+      );
+      if (unchanged) {
+        return c.json({
+          outcome: "no_change",
+          areasParsed: proposedGeometries.length,
+        });
+      }
+
+      const revisionId = randomUUID();
+      const recordedAt = new Date().toISOString();
+      const eventId = await deps.writer.writeRegulationRevisionProposed({
+        revisionId,
+        caseId: caseRow.id,
+        caseKey: caseRow.caseKey,
+        baseRevisionId: caseRow.currentRevisionId,
+        changes: [
+          {
+            field: "geometries",
+            justification:
+              "Deterministic re-parse of the stored source snapshot (parser/POI fix rollout path, decision 6).",
+          },
+        ],
+        fields: editableFieldsOfCase(caseRow),
+        geometries: proposedGeometries,
+        actor: `admin:${auth.user.username}`,
+        recordedAt,
+      });
+      return c.json(
+        {
+          outcome: "proposed",
+          revisionId,
+          eventId,
+          areasParsed: proposedGeometries.length,
+          areasBefore: current.length,
+          recordedAt,
+        },
+        202,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Regulations] reparse failed", { caseId: id, message });
+      return flowcoreWriteFailed(c, message);
     }
   });
 

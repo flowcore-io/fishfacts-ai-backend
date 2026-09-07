@@ -2096,6 +2096,168 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/regulations/landmarks": {
+      get: {
+        tags: ["Regulations"],
+        summary: "Resolve a landmark name against the POI gazetteer (ADMIN)",
+        description:
+          "The admin agent's `resolve_landmark`: accent- and case-insensitive match of a name against POI keys, titles and aliases (Faroese/Norwegian sources carry diacritics inconsistently; both sides are normalised). Backed by the same gazetteer as /api/poi; extend it with `save_poi` (POST /api/poi).",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "q",
+            in: "query",
+            required: true,
+            schema: { type: "string", minLength: 2 },
+            description: "Landmark name or fragment, min 2 characters.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Matching POIs (empty list = no match, not an error)",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["matches", "returned"],
+                  properties: {
+                    matches: {
+                      type: "array",
+                      items: { $ref: "#/components/schemas/PoiEntry" },
+                    },
+                    returned: { type: "integer" },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Query shorter than 2 characters",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "503": {
+            description: "POI gazetteer unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/cases/{id}/reverdict": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Recompute the verdict for one case (ADMIN)",
+        description:
+          "Starts the bounded `regulation-verdict` job scoped to this case's key — the existing re-judge path, through the same embed → event → projection pipeline. The verdict lands asynchronously on the case's current revision.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "202": { description: "Verdict job started for this case" },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "409": {
+            description: "The verdict job is already running",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "502": {
+            description: "Job start failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/cases/{id}/reparse": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Re-parse geometry from the stored source snapshot (ADMIN)",
+        description:
+          "Runs the deterministic coordinate parser over the current revision's STORED snapshot (never a refetch — decision 6's rollout path after a parser or POI fix) and, when the areas differ, proposes the result as a normal revision event: reviewable, justified, undoable via pointer move. Described boundaries from the statute reader are not deterministically reproducible and would be dropped — visible in the proposal.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description:
+              "Parse result identical to the current areas — no revision proposed (`outcome: no_change`)",
+          },
+          "202": {
+            description:
+              "Revision proposed from the parse (`outcome: proposed`, with the new revision id and area counts)",
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "422": {
+            description: "The current revision has no stored snapshot text",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/areas/{id}": {
       get: {
         tags: ["Areas"],
