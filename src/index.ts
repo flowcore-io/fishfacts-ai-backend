@@ -24,6 +24,7 @@ import { GillnetProjector } from "./gillnet/projector";
 import { GillnetRepository } from "./gillnet/repository";
 import { JMeldingGeoProjector } from "./jmelding/geo-projector";
 import { JMeldingGeoRepository } from "./jmelding/geo-repository";
+import { JobCronClaims } from "./jobs/cron-claims";
 import { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
 import { createJobDefinitions } from "./jobs/registry";
@@ -155,7 +156,8 @@ const jobs = createJobDefinitions(
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
-const jobScheduler = new JobScheduler(env, jobRunner);
+const jobCronClaims = new JobCronClaims(db);
+const jobScheduler = new JobScheduler(env, jobRunner, jobCronClaims);
 const aisBackfillSupervisor = new AisBackfillSupervisor(
   env,
   jobRunner,

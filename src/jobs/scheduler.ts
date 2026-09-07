@@ -1,4 +1,5 @@
 import type { Env } from "@/env";
+import type { JobCronClaims } from "./cron-claims";
 import type { JobRunner } from "./runner";
 
 function parseField(field: string, min: number, max: number, value: number) {
@@ -51,6 +52,7 @@ export class JobScheduler {
   constructor(
     private readonly env: Env,
     private readonly runner: JobRunner,
+    private readonly claims: JobCronClaims,
   ) {}
 
   start() {
@@ -75,6 +77,10 @@ export class JobScheduler {
       if (!cronMatches(job.schedule, now)) continue;
       if (this.lastFiredByJob.get(job.id) === bucket) continue;
       this.lastFiredByJob.set(job.id, bucket);
+      // lastFiredByJob is per-process, so it only stops THIS replica firing
+      // twice. Every pod runs its own scheduler, so the bucket must also be
+      // claimed centrally or the job runs once per replica.
+      if (!(await this.claimTick(job.id, bucket))) continue;
       await this.runner
         .runJob(job.id, "cron", job.inputSchema.parse({}))
         .catch((error) => {
@@ -83,6 +89,22 @@ export class JobScheduler {
             message: error instanceof Error ? error.message : String(error),
           });
         });
+    }
+  }
+
+  private async claimTick(jobId: string, bucket: string) {
+    try {
+      return await this.claims.claim(jobId, bucket);
+    } catch (error) {
+      // Skip rather than run: without a claim we cannot tell whether another
+      // replica is already on it, and a job that needs Postgres to record its
+      // own state would fail moments later anyway. The next tick retries.
+      console.error("[Jobs] Cron claim failed; skipping tick", {
+        jobId,
+        bucket,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 }
