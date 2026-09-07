@@ -463,27 +463,6 @@ export const jobRuns = pgTable(
   }),
 );
 
-// One row per (job, scheduled minute) claimed by a replica. The scheduler runs
-// in-process in every pod, so its in-memory "already fired this minute" guard is
-// per-process and every job fired once per replica — twice, at replicas: 2.
-// Inserting here first makes the claim atomic across pods: the primary key lets
-// exactly one replica win a given minute. Rows are pruned by claimed_at.
-export const jobCronClaims = pgTable(
-  "job_cron_claims",
-  {
-    jobId: text("job_id").notNull(),
-    // The scheduler's minute bucket, e.g. "2026-9-7-9-0" (UTC).
-    bucket: text("bucket").notNull(),
-    claimedAt: timestamp("claimed_at", { withTimezone: true })
-      .defaultNow()
-      .notNull(),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.jobId, table.bucket] }),
-    claimedAtIdx: index("job_cron_claims_claimed_at_idx").on(table.claimedAt),
-  }),
-);
-
 // EUR-based year-end FX rates cached from Frankfurter (ECB). Base is always EUR
 // (EUR row = 1). Convert X→Y via rate(EUR→Y) / rate(EUR→X). One row per
 // (year, quote); used to normalise annual-report figures to a display currency.

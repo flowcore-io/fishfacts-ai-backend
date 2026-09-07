@@ -176,13 +176,6 @@
       "when": 1788539801086,
       "tag": "0024_tearful_slayback",
       "breakpoints": true
-    },
-    {
-      "idx": 25,
-      "version": "7",
-      "when": 1788772641329,
-      "tag": "0025_noisy_mockingbird",
-      "breakpoints": true
     }
   ]
 }

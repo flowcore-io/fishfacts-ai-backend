@@ -1,5 +1,5 @@
+import type { PostgresLeaderLock } from "@/db/leader-lock";
 import type { Env } from "@/env";
-import type { JobCronClaims } from "./cron-claims";
 import type { JobRunner } from "./runner";
 
 function parseField(field: string, min: number, max: number, value: number) {
@@ -52,7 +52,7 @@ export class JobScheduler {
   constructor(
     private readonly env: Env,
     private readonly runner: JobRunner,
-    private readonly claims: JobCronClaims,
+    private readonly leader: PostgresLeaderLock,
   ) {}
 
   start() {
@@ -65,22 +65,24 @@ export class JobScheduler {
   }
 
   stop() {
+    this.leader.release();
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
   }
 
   private async tick() {
+    // The scheduler runs in-process in every pod and lastFiredByJob is
+    // per-process, so without this every cron job fired once per replica —
+    // twice, at replicas: 2, a few seconds apart against every upstream we
+    // scrape. Same question, and the same answer, as AisBackfillSupervisor.
+    if (!(await this.leader.isLeader())) return;
     const now = new Date();
     const bucket = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}-${now.getUTCHours()}-${now.getUTCMinutes()}`;
     for (const job of this.runner.definitions()) {
       if (!cronMatches(job.schedule, now)) continue;
       if (this.lastFiredByJob.get(job.id) === bucket) continue;
       this.lastFiredByJob.set(job.id, bucket);
-      // lastFiredByJob is per-process, so it only stops THIS replica firing
-      // twice. Every pod runs its own scheduler, so the bucket must also be
-      // claimed centrally or the job runs once per replica.
-      if (!(await this.claimTick(job.id, bucket))) continue;
       await this.runner
         .runJob(job.id, "cron", job.inputSchema.parse({}))
         .catch((error) => {
@@ -89,28 +91,6 @@ export class JobScheduler {
             message: error instanceof Error ? error.message : String(error),
           });
         });
-    }
-  }
-
-  private async claimTick(jobId: string, bucket: string) {
-    try {
-      return await this.claims.claim(jobId, bucket);
-    } catch (error) {
-      // Skip rather than run: without a claim we cannot tell whether another
-      // replica is already on it, and a job that needs Postgres to record its
-      // own state would fail moments later anyway.
-      //
-      // Give the bucket back so a later tick in the same minute can retry.
-      // Losing a claim is final — another replica has it — but an *error* is
-      // not an answer, and the caller already burned the in-memory guard. On
-      // an hourly job that would turn one transient blip into a skipped hour.
-      this.lastFiredByJob.delete(jobId);
-      console.error("[Jobs] Cron claim failed; skipping tick", {
-        jobId,
-        bucket,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return false;
     }
   }
 }

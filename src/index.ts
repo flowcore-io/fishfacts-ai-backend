@@ -12,6 +12,7 @@ import { AreasProjector } from "./areas/projector";
 import { AreasRepository } from "./areas/repository";
 import { TokenCache } from "./auth/cache";
 import { createDb } from "./db/client";
+import { PostgresLeaderLock } from "./db/leader-lock";
 import { runMigrations } from "./db/migrate";
 import { loadEnv } from "./env";
 import { PostgresGenericEventRepository } from "./events/repository";
@@ -24,7 +25,6 @@ import { GillnetProjector } from "./gillnet/projector";
 import { GillnetRepository } from "./gillnet/repository";
 import { JMeldingGeoProjector } from "./jmelding/geo-projector";
 import { JMeldingGeoRepository } from "./jmelding/geo-repository";
-import { JobCronClaims } from "./jobs/cron-claims";
 import { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
 import { createJobDefinitions } from "./jobs/registry";
@@ -156,8 +156,14 @@ const jobs = createJobDefinitions(
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
-const jobCronClaims = new JobCronClaims(db);
-const jobScheduler = new JobScheduler(env, jobRunner, jobCronClaims);
+// Distinct from the AIS supervisor's key: a stalled scheduler must not hand the
+// supervisor to another pod, or vice versa.
+const SCHEDULER_LOCK_KEY = 414400824;
+const jobScheduler = new JobScheduler(
+  env,
+  jobRunner,
+  new PostgresLeaderLock(client, SCHEDULER_LOCK_KEY),
+);
 const aisBackfillSupervisor = new AisBackfillSupervisor(
   env,
   jobRunner,
