@@ -14,7 +14,10 @@ export const REGULATION_STATUSES = [
   "expired",
 ] as const;
 
-/** Status axis 2 — the admin case (§12 inbox). */
+/** Status axis 2 — the admin case (§12 inbox). Since stage ③ an applied
+ * approval lands the case directly in `published` (approval IS the publish,
+ * one act); `approved` stays in the vocabulary for events projected before
+ * that and for reads that still filter on it. */
 export const ADMIN_STATUSES = [
   "unread",
   "under_review",

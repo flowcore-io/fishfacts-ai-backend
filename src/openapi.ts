@@ -1715,7 +1715,7 @@ export const openApiDocument = {
         tags: ["Regulations"],
         summary: "Record an inbox action on a case (ADMIN authority required)",
         description:
-          "Emits a `regulation.case.admin-action.recorded.0` event — the route mutates nothing directly; the projector applies the effect and appends the audit row, so the trail cannot disagree with the state. `actor` and `recordedAt` are stamped server-side from the auth token and clock. Answers 202: the event is durable, the projection catches up via the pump.",
+          "Emits a `regulation.case.admin-action.recorded.0` event — the route mutates nothing directly; the projector applies the effect and appends the audit row, so the trail cannot disagree with the state. `actor` and `recordedAt` are stamped server-side from the auth token and clock. Answers 202: the event is durable, the projection catches up via the pump. The two declines (`reject`, `mark_duplicate`) are also the explicit un-publish: they clear the published pointer, removing the case from the non-admin published read model — the only path that does.",
         security: [{ FishfactsAuthToken: [] }],
         parameters: [
           {
@@ -2015,7 +2015,7 @@ export const openApiDocument = {
         summary:
           "Approve a named revision (ADMIN — human act, never a chat tool)",
         description:
-          "Emits `regulation.case.approval.recorded.0`. The approval names a SPECIFIC revision id — that closes the edit-after-review race: a superseded revision is refused with the diff (409), and the projector re-checks under stream order, recording refused approvals rather than applying them. Requires the legal validation, and every per-area geometry validation unless `metadataOnly` (§12's publish-metadata-only path). This endpoint must never be registered as an admin-embed parent tool: the agent proposes, the human decides.",
+          "Emits `regulation.case.approval.recorded.0`. The approval names a SPECIFIC revision id — that closes the edit-after-review race: a superseded revision is refused with the diff (409), and the projector re-checks under stream order, recording refused approvals rather than applying them. Requires the legal validation, and every per-area geometry validation unless `metadataOnly` (§12's publish-metadata-only path). An APPLIED approval IS the publish (one act): the case lands in `published` and the approved revision becomes what the non-admin published read model serves, pinned there until the next approval moves it or a decline (reject / mark_duplicate) withdraws it. This endpoint must never be registered as an admin-embed parent tool: the agent proposes, the human decides.",
         security: [{ FishfactsAuthToken: [] }],
         parameters: [
           {

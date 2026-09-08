@@ -105,12 +105,28 @@ function caseEffectOf(
     case "request_information":
       // The note lives on the action row; the case only changes lane.
       return { adminStatus: "awaiting_information" };
+    // The two declines are the explicit un-publish (stage ③): a case ruled
+    // not valid or duplicate must stop being what the 1st mate shows. This
+    // is the ONLY path that clears the published pointer — a redraft merely
+    // un-approves and leaves the pinned revision user-visible. On a case
+    // that was never published, the cleared columns were null already.
     case "reject":
-      return { adminStatus: "rejected" };
+      return { adminStatus: "rejected", ...unpublished() };
     case "mark_duplicate":
       return {
         adminStatus: "duplicate",
         duplicateOfCaseId: action.duplicateOfCaseId,
+        ...unpublished(),
       };
   }
+}
+
+function unpublished(): Partial<typeof schema.regulationCases.$inferInsert> {
+  return {
+    regulationStatus: "draft",
+    publishedRevisionId: null,
+    publishedToUsersAt: null,
+    publishedToUsersBy: null,
+    publishedMetadataOnly: false,
+  };
 }

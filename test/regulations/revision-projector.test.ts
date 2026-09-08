@@ -400,8 +400,12 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       recordedAt: new Date().toISOString(),
     });
     const row = await caseRow(seeded.caseId);
-    expect(row?.adminStatus).toBe("approved");
-    expect(row?.regulationStatus).toBe("validated");
+    // Stage ③: an applied approval IS the publish — one act.
+    expect(row?.adminStatus).toBe("published");
+    expect(row?.regulationStatus).toBe("published");
+    expect(row?.publishedRevisionId).toBe(seeded.revisionId);
+    expect(row?.publishedToUsersBy).toBe("admin:gilli");
+    expect(row?.publishedMetadataOnly).toBe(false);
     const [approval] = await runCtx.db
       .select()
       .from(schema.regulationCaseApprovals)
@@ -428,7 +432,8 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       recordedAt: new Date().toISOString(),
     });
     const row = await caseRow(seeded.caseId);
-    expect(row?.adminStatus).not.toBe("approved");
+    expect(row?.adminStatus).not.toBe("published");
+    expect(row?.publishedRevisionId).toBeNull();
     const [approval] = await runCtx.db
       .select()
       .from(schema.regulationCaseApprovals)
@@ -474,7 +479,8 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       recordedAt: new Date().toISOString(),
     });
     row = await caseRow(seeded.caseId);
-    expect(row?.adminStatus).not.toBe("approved");
+    expect(row?.adminStatus).not.toBe("published");
+    expect(row?.publishedRevisionId).toBeNull();
     const [refused] = await runCtx.db
       .select()
       .from(schema.regulationCaseApprovals)
@@ -512,7 +518,7 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       });
     };
     await approve(seeded.revisionId);
-    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("approved");
+    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("published");
 
     // A no-op pointer move to the already-current revision changes nothing.
     await projector.handlePointerMoved({
@@ -523,18 +529,25 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       actor: "admin:gilli",
       recordedAt: new Date().toISOString(),
     });
-    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("approved");
+    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("published");
 
-    // A new draft moves the pointer off the approved revision → demoted.
+    // A new draft moves the pointer off the approved revision → demoted,
+    // but the PUBLISHED pointer stays pinned: what the 1st mate shows never
+    // changes until the next approval (or a decline).
     const draft = proposal(seeded);
     await projector.handleProposed(draft);
     let row = await caseRow(seeded.caseId);
     expect(row?.adminStatus).toBe("under_review");
-    expect(row?.regulationStatus).toBe("draft");
+    expect(row?.regulationStatus).toBe("published");
+    expect(row?.publishedRevisionId).toBe(seeded.revisionId);
 
-    // Re-approve the draft, then undo away from it → demoted again.
+    // Re-approving the draft moves the published pointer to it…
     await approve(draft.revisionId);
-    expect((await caseRow(seeded.caseId))?.adminStatus).toBe("approved");
+    row = await caseRow(seeded.caseId);
+    expect(row?.adminStatus).toBe("published");
+    expect(row?.publishedRevisionId).toBe(draft.revisionId);
+    // …and undo away from it demotes again, still pinned on the draft —
+    // the LAST APPROVED revision, whatever the admin draft is doing.
     await projector.handlePointerMoved({
       pointerMoveId: randomUUID(),
       caseId: seeded.caseId,
@@ -545,7 +558,8 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
     });
     row = await caseRow(seeded.caseId);
     expect(row?.adminStatus).toBe("under_review");
-    expect(row?.regulationStatus).toBe("draft");
+    expect(row?.regulationStatus).toBe("published");
+    expect(row?.publishedRevisionId).toBe(draft.revisionId);
     expect(row?.currentRevisionId).toBe(seeded.revisionId);
   });
 
@@ -576,6 +590,8 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       recordedAt: new Date().toISOString(),
     });
     const row = await caseRow(seeded.caseId);
-    expect(row?.adminStatus).toBe("approved");
+    expect(row?.adminStatus).toBe("published");
+    // The read model must know this publish carries no geometry by design.
+    expect(row?.publishedMetadataOnly).toBe(true);
   });
 });

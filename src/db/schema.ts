@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -574,6 +575,25 @@ export const regulationCases = pgTable(
     snoozeUntil: timestamp("snooze_until", { withTimezone: true }),
     duplicateOfCaseId: text("duplicate_of_case_id"),
     currentRevisionId: text("current_revision_id").notNull(),
+    // Stage ③ — what the user-facing 1st mate sees. An applied approval IS
+    // the publish (one act, the "Approve & publish" button); the projector
+    // derives these from `approval.recorded.0`, no separate publish event.
+    // The pointer PINS the approved revision: a later redraft un-approves
+    // the case but never changes what users see — only a new approval moves
+    // the pointer, and only an explicit decline (reject / mark_duplicate)
+    // clears it. Null = never published or withdrawn.
+    // (`published_at` above is the SOURCE's publication date — these are ours.)
+    publishedRevisionId: text("published_revision_id"),
+    publishedToUsersAt: timestamp("published_to_users_at", {
+      withTimezone: true,
+    }),
+    publishedToUsersBy: text("published_to_users_by"),
+    // Carried from the approval: a metadata-only publish has no geometry by
+    // design, and the published read model must say so rather than let an
+    // empty area list look like a parse failure.
+    publishedMetadataOnly: boolean("published_metadata_only")
+      .notNull()
+      .default(false),
     contentHash: text("content_hash"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -593,6 +613,11 @@ export const regulationCases = pgTable(
     verdictStatusIdx: index("regulation_cases_verdict_status_idx").on(
       table.verdictStatus,
     ),
+    // The published read model lists by jurisdiction over the (small) subset
+    // of cases with a pinned published revision.
+    publishedIdx: index("regulation_cases_published_idx")
+      .on(table.jurisdiction)
+      .where(sql`published_revision_id IS NOT NULL`),
   }),
 );
 

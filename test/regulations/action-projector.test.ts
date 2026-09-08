@@ -204,6 +204,50 @@ describe("RegulationCaseActionProjector", () => {
     expect((note?.action as { note?: string }).note).toContain("§2");
   });
 
+  test("declining a published case is the explicit un-publish", async () => {
+    if (!runCtx) return;
+    const projector = new RegulationCaseActionProjector(runCtx.db);
+    const { caseId, caseKey } = await seedCase("action-test-unpublish");
+    const other = await seedCase("action-test-unpublish-dup-target");
+
+    // A published case, as the approval projection leaves it (stage ③).
+    const publish = async () => {
+      if (!runCtx) throw new Error("no db");
+      const row = await caseRow(caseId);
+      await runCtx.db
+        .update(schema.regulationCases)
+        .set({
+          adminStatus: "published",
+          regulationStatus: "published",
+          publishedRevisionId: row?.currentRevisionId,
+          publishedToUsersAt: new Date(),
+          publishedToUsersBy: "admin:gilli",
+        })
+        .where(eq(schema.regulationCases.id, caseId));
+    };
+
+    await publish();
+    await projector.handleRecorded(
+      recordOf(caseId, caseKey, { kind: "reject", reason: "Withdrawn" }),
+    );
+    let row = await caseRow(caseId);
+    expect(row?.adminStatus).toBe("rejected");
+    expect(row?.regulationStatus).toBe("draft");
+    expect(row?.publishedRevisionId).toBeNull();
+    expect(row?.publishedToUsersAt).toBeNull();
+
+    await publish();
+    await projector.handleRecorded(
+      recordOf(caseId, caseKey, {
+        kind: "mark_duplicate",
+        duplicateOfCaseId: other.caseId,
+      }),
+    );
+    row = await caseRow(caseId);
+    expect(row?.adminStatus).toBe("duplicate");
+    expect(row?.publishedRevisionId).toBeNull();
+  });
+
   test("a redelivered event neither doubles the log nor clobbers later state", async () => {
     if (!runCtx) return;
     const projector = new RegulationCaseActionProjector(runCtx.db);
