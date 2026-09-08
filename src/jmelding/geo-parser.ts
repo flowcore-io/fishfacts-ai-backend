@@ -16,7 +16,7 @@ type MatchedPoint = {
   point: GeoPoint;
   start: number;
   end: number;
-  format: "dms" | "dmm-long" | "dmm-symbol";
+  format: "dms" | "dmm-long" | "dmm-symbol" | "dmm-fo";
 };
 
 const NORWAY_BOX = { minLat: 54, maxLat: 82, minLon: -10, maxLon: 35 };
@@ -30,6 +30,19 @@ const DMM_LONG_RE =
 
 const DMM_SYMBOL_RE =
   /(\d{1,3})\s*°\s*([\d.,]+)\s*['°]\s*([NS])\s+(\d{1,3})\s*°\s*([\d.,]+)\s*['°]\s*([EØW])/gi;
+
+// Vørn (FO) ban notices type each vertex as a bare degrees+minutes digit run
+// with the hemisphere spelled out and a dash between the two halves:
+// `6104 N - 0700 W`. No degree sign, no separator inside the number.
+// (`normalize` has already folded Vørn's en dash to a hyphen.)
+//
+// Character-for-character the Vørn scraper's own `VORN_COORD_RE`, minutes
+// permissiveness included, and that is the point: this reader runs over a
+// STORED snapshot when an admin re-parses a case, so any divergence would let
+// the queue and the map disagree about the same notice. It also means a
+// hand-typed `6199 N` survives to the reviewer instead of being dropped as
+// unreadable — which is the whole reason the queue exists.
+const DMM_FO_RE = /(\d{2})(\d{2})\s*([NS])\s*-\s*(\d{2,3})(\d{2})\s*([EWVØ])/gi;
 
 const HEADING_PATTERNS: { re: RegExp; group: number }[] = [
   { re: /^\s*-\s+([A-ZÆØÅa-zæøå][^\n]{0,79})$/gm, group: 1 },
@@ -87,6 +100,7 @@ const FORMAT_PRIORITY: Record<MatchedPoint["format"], number> = {
   dms: 0,
   "dmm-long": 1,
   "dmm-symbol": 2,
+  "dmm-fo": 3,
 };
 
 function dedupByProximity(matches: MatchedPoint[]): MatchedPoint[] {
@@ -183,6 +197,23 @@ function findDmmSymbolMatches(text: string, sink: MatchedPoint[]): void {
   }
 }
 
+function findDmmFoMatches(text: string, sink: MatchedPoint[]): void {
+  DMM_FO_RE.lastIndex = 0;
+  for (const match of text.matchAll(DMM_FO_RE)) {
+    if (match.index === undefined) continue;
+    const lat = dmmToDecimal(Number(match[1]), Number(match[2]), match[3]);
+    const lon = dmmToDecimal(Number(match[4]), Number(match[5]), match[6]);
+    const point = { lat, lon };
+    if (!withinBounds(point)) continue;
+    sink.push({
+      point,
+      start: match.index,
+      end: match.index + match[0].length,
+      format: "dmm-fo",
+    });
+  }
+}
+
 type Heading = { name: string; offset: number };
 
 function isCoordinateLine(line: string): boolean {
@@ -190,7 +221,8 @@ function isCoordinateLine(line: string): boolean {
     /\d{1,3}\s*°/.test(line) ||
     /grader.*minutter/i.test(line) ||
     /Nord\s+\d/i.test(line) ||
-    /Øst\s+\d/i.test(line)
+    /Øst\s+\d/i.test(line) ||
+    /\d{4}\s*[NS]\s*-\s*\d{4,5}\s*[EWVØ]/i.test(line)
   );
 }
 
@@ -306,6 +338,7 @@ export function parseJmeldingGeo(
   findDmsMatches(text, rawMatches);
   findDmmLongMatches(text, rawMatches);
   findDmmSymbolMatches(text, rawMatches);
+  findDmmFoMatches(text, rawMatches);
   const matches = dedupByProximity(rawMatches);
   if (matches.length === 0) {
     return { areas: [], bbox: null, hasGeo: false };

@@ -16,10 +16,17 @@
  * editing anything in place.
  *
  * The per-source coordinate grammars stay where they are: pre-parsed FO/IS
- * areas are taken as given (with the same Vørn ring normalisation the geo
- * projector applies, and the same statute exemption from it), and Norwegian
- * bodies go through `parseJmeldingGeo` — the same reader, so the queue and the
- * map cannot disagree about what a body says.
+ * areas are taken as given, and bodies without them go through
+ * `parseJmeldingGeo` — the same reader the map uses, so the queue and the map
+ * cannot disagree about what a body says.
+ *
+ * Geometry is stored AS WRITTEN. The read model (`jmelding_geo`) repairs a
+ * typo'd Vørn closing vertex so end users never see a degenerate closure; the
+ * queue must not, because making that repair IS the judgment call the queue was
+ * built to hand a human. Only the repeated closing vertex is dropped here, and
+ * that is pure convention — the point stays in the ring. So a broken ring
+ * reaches the reviewer as the spike it is, the automated check flags it, and
+ * the correction arrives as an audited, undoable revision.
  */
 
 import { type Database, timestampToIso } from "@/db/client";
@@ -30,7 +37,7 @@ import type {
 } from "@/events/contracts";
 import { parseJmeldingGeo, pointsToMultipointWkt } from "@/jmelding/geo-parser";
 import { parseValidityEnd, parseValidityStart } from "@/jmelding/validity";
-import { normalizeVornAreas } from "@/jmelding/vorn-ring";
+import { dropClosingRepeats } from "@/jmelding/vorn-ring";
 import { jmeldingFragmentKey } from "@/jobs/jmelding-fragments";
 import { and, eq, sql } from "drizzle-orm";
 import type { RegulationApplicability } from "./applicability";
@@ -41,7 +48,7 @@ import { caseIdFor, geometryIdFor, revisionIdFor } from "./ids";
  * reading of an announcement changes, so a re-parse pass can find the rows
  * written under the old reading.
  */
-export const CASE_PROJECTION_VERSION = "case-projection/1";
+export const CASE_PROJECTION_VERSION = "case-projection/2";
 
 export type RegulationSourceType =
   | "logasavn"
@@ -61,7 +68,8 @@ export type CaseProjectionResult = {
  *
  * Statute-derived events are recognisable two ways — the `LOG-K-` row key and
  * `sourceFragmentId` — and both are checked so a statute is never mistaken for
- * a Vørn ban (whose rings get repaired; a statute's must not be).
+ * a Vørn ban (whose rings carry a hand-typed closing convention; a statute's
+ * do not).
  */
 export function sourceTypeOf(
   item: JMeldingAnnouncementDiscovered,
@@ -103,7 +111,11 @@ export class RegulationCaseProjector {
       return { caseId, caseKey, revisionId, outcome: "skipped" };
     }
 
-    // The same geometry reading the geo projector performs, area by area.
+    // Geometry as written — see the module header. Vørn's closing repeat is
+    // the one thing dropped, and statute rings keep even that: their vertices
+    // are machine-derived, so Vørn's hand-typing convention is not theirs to
+    // assume. (`sourceFragmentId` is how a statute is told apart here, the same
+    // guard the geo projector uses.)
     let areas = item.areas;
     let geometrySource: "preparsed" | "enumerated" = "preparsed";
     if (
@@ -112,7 +124,7 @@ export class RegulationCaseProjector {
       item.region === "FO" &&
       !item.sourceFragmentId
     ) {
-      areas = normalizeVornAreas(areas).areas;
+      areas = dropClosingRepeats(areas);
     }
     if (!areas || areas.length === 0) {
       areas = parseJmeldingGeo(item.bodyMarkdown).areas;
