@@ -124,10 +124,7 @@ export class RegulationPublishedReadRepository {
       .innerJoin(
         schema.regulationCaseApprovals,
         and(
-          eq(
-            schema.regulationCaseApprovals.caseId,
-            schema.regulationCases.id,
-          ),
+          eq(schema.regulationCaseApprovals.caseId, schema.regulationCases.id),
           eq(schema.regulationCaseApprovals.applied, true),
         ),
       )
