@@ -239,6 +239,21 @@ describe("RegulationPublishedReadRepository", () => {
     expect(expired?.inForce).toBe("expired");
   });
 
+  test("a snapshot missing a date key reads as null, never as the draft's case column", async () => {
+    if (!runCtx) return;
+    const repository = new RegulationPublishedReadRepository(runCtx.db);
+    const seeded = await seedCase(runCtx.db, {
+      ref: "pub-test-partial-snapshot",
+      // A fields snapshot WITHOUT date keys; the case column meanwhile says
+      // the regulation ended long ago (a draft could write that).
+      published: { fields: { title: "Partial snapshot" } },
+      effectiveTo: new Date(NOW - 10 * DAY),
+    });
+    const detail = await repository.getPublished(seeded.caseId);
+    expect(detail?.effectiveTo).toBeNull();
+    expect(detail?.inForce).toBe("current");
+  });
+
   test("a metadata-only publish says so, and detail reads answer only for published cases", async () => {
     if (!runCtx) return;
     const repository = new RegulationPublishedReadRepository(runCtx.db);

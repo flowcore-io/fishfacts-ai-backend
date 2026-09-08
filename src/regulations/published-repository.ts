@@ -181,9 +181,20 @@ export class RegulationPublishedReadRepository {
         | RegulationRevisionFields
         | null
         | undefined;
-      const effectiveFrom = dateOf(fields?.effectiveFrom, caseRow.effectiveFrom);
-      const effectiveTo = dateOf(fields?.effectiveTo, caseRow.effectiveTo);
-      const expiresAt = dateOf(fields?.expiresAt, caseRow.expiresAt);
+      // Same whole-snapshot gate as the scalar fields below: when a snapshot
+      // exists, EVERY value comes from it — a missing date key reads as null,
+      // never as "fall back to the case column", because the case column is
+      // the in-progress draft and that fallback would be exactly the leak
+      // the pinned-revision design exists to prevent.
+      const effectiveFrom = fields
+        ? dateOrNull(fields.effectiveFrom)
+        : caseRow.effectiveFrom;
+      const effectiveTo = fields
+        ? dateOrNull(fields.effectiveTo)
+        : caseRow.effectiveTo;
+      const expiresAt = fields
+        ? dateOrNull(fields.expiresAt)
+        : caseRow.expiresAt;
       return {
         id: caseRow.id,
         caseKey: caseRow.caseKey,
@@ -218,14 +229,9 @@ export class RegulationPublishedReadRepository {
   }
 }
 
-/** Revision `fields` store instants as ISO strings; a revision without a
- * snapshot falls back to the case column. */
-function dateOf(
-  fromFields: string | null | undefined,
-  fromCase: Date | null,
-): Date | null {
-  if (fromFields === undefined) return fromCase; // revision has no snapshot
-  return fromFields === null ? null : new Date(fromFields);
+/** Revision `fields` store instants as ISO strings. */
+function dateOrNull(iso: string | null | undefined): Date | null {
+  return iso ? new Date(iso) : null;
 }
 
 /** Same reading of the validity window as the jmelding geo index: no window
