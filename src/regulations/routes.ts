@@ -29,8 +29,9 @@ import { editableFieldsOfCase, fieldValueEquals } from "./revision-fields";
 import { ADMIN_STATUSES } from "./status";
 
 /** Case ids are deterministic UUIDs (`ids.ts`); anything else is a miss
- * before it reaches the database. */
-const CASE_ID =
+ * before it reaches the database. Shared with the published (non-admin)
+ * router. */
+export const CASE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** `?status=unread,under_review` → validated list; a typo'd status is a 400,

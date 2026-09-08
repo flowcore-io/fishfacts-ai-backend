@@ -37,6 +37,7 @@ import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { RegulationCaseActionProjector } from "./regulations/action-projector";
 import { RegulationCaseProjector } from "./regulations/case-projector";
+import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import {
   RegulationQueueRepository,
   RegulationRawSyncRepository,
@@ -95,6 +96,9 @@ const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
 const regulationRawSyncRepository = new RegulationRawSyncRepository(db);
 const regulationQueueReadRepository = new RegulationQueueReadRepository(db);
+const regulationPublishedReadRepository = new RegulationPublishedReadRepository(
+  db,
+);
 const regulationCaseActionProjector = new RegulationCaseActionProjector(db);
 const regulationRevisionProjector = new RegulationRevisionProjector(db);
 const chunkAssembler = new JMeldingChunkAssembler(
@@ -197,6 +201,7 @@ const app = createApp({
   aisSource: aisBackfillSource,
   reportsClient,
   regulationQueueReadRepository,
+  regulationPublishedReadRepository,
   db,
 });
 

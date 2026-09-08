@@ -59,6 +59,7 @@ export class RegulationRevisionProjector {
           id: schema.regulationCases.id,
           currentRevisionId: schema.regulationCases.currentRevisionId,
           adminStatus: schema.regulationCases.adminStatus,
+          publishedRevisionId: schema.regulationCases.publishedRevisionId,
         })
         .from(schema.regulationCases)
         .where(eq(schema.regulationCases.id, payload.caseId))
@@ -166,16 +167,13 @@ export class RegulationRevisionProjector {
           // about a revision, and this is a different revision.
           regulatoryValidated: false,
           geometryValidated: false,
-          // An approved case whose draft moves is no longer approved: the
-          // approval named a revision that is no longer current. The
-          // approval row keeps what was approved; the case state must not
-          // keep claiming it. (Published is stage ③'s to rule on.)
-          ...(caseRow.adminStatus === "approved"
-            ? {
-                adminStatus: "under_review",
-                regulationStatus: "draft",
-              }
-            : {}),
+          // An approved/published case whose draft moves is back under
+          // review: the approval named a revision that is no longer current.
+          // The approval row keeps what was approved; the case state must
+          // not keep claiming it. The PUBLISHED pointer stays pinned — the
+          // regulation the 1st mate shows is still the approved revision,
+          // and it only changes on the next approval (or a decline).
+          ...demotionOf(caseRow.adminStatus, caseRow.publishedRevisionId),
           updatedAt: new Date(payload.recordedAt),
         })
         .where(eq(schema.regulationCases.id, payload.caseId));
@@ -226,22 +224,28 @@ export class RegulationRevisionProjector {
         .select({
           adminStatus: schema.regulationCases.adminStatus,
           currentRevisionId: schema.regulationCases.currentRevisionId,
+          publishedRevisionId: schema.regulationCases.publishedRevisionId,
         })
         .from(schema.regulationCases)
         .where(eq(schema.regulationCases.id, payload.caseId))
         .limit(1);
       // Same demotion rule as a proposed draft: undo AWAY from the approved
       // revision un-approves the case (a no-op move to the same revision
-      // does not). The approval row keeps what was approved.
+      // does not). The approval row keeps what was approved, and the
+      // published pointer stays pinned.
       const leavesApprovedRevision =
-        pointerCase?.adminStatus === "approved" &&
+        (pointerCase?.adminStatus === "approved" ||
+          pointerCase?.adminStatus === "published") &&
         pointerCase.currentRevisionId !== target.id;
       await tx
         .update(schema.regulationCases)
         .set({
           currentRevisionId: target.id,
-          ...(leavesApprovedRevision
-            ? { adminStatus: "under_review", regulationStatus: "draft" }
+          ...(leavesApprovedRevision && pointerCase
+            ? demotionOf(
+                pointerCase.adminStatus,
+                pointerCase.publishedRevisionId,
+              )
             : {}),
           // Restore what the target revision knew about itself. Pre-B3
           // collector revisions have no fields snapshot; their geometry set
@@ -403,11 +407,19 @@ export class RegulationRevisionProjector {
         return;
       }
 
+      // Stage ③: an applied approval IS the publish — one act, the
+      // "Approve & publish" button. The pointer pins the approved revision
+      // for the user-facing read model; later drafts never move it, only
+      // the next applied approval (or a decline, which clears it) does.
       await tx
         .update(schema.regulationCases)
         .set({
-          adminStatus: "approved",
-          regulationStatus: "validated",
+          adminStatus: "published",
+          regulationStatus: "published",
+          publishedRevisionId: payload.revisionId,
+          publishedToUsersAt: new Date(payload.recordedAt),
+          publishedToUsersBy: payload.actor,
+          publishedMetadataOnly: payload.metadataOnly,
           lastVerifiedAt: new Date(payload.recordedAt),
           updatedAt: new Date(payload.recordedAt),
         })
@@ -455,6 +467,23 @@ export class RegulationRevisionProjector {
       geometryCount: total,
     };
   }
+}
+
+/** The case-state demotion when the draft moves off an approved/published
+ * revision (a proposed redraft, or an undo away from it): the case goes back
+ * under review, because the approval named a revision that is no longer
+ * current. Axis 1 keeps saying `published` for as long as a pinned revision
+ * is still user-visible — what the 1st mate shows did not change. No-op for
+ * every other lane. */
+function demotionOf(
+  adminStatus: string,
+  publishedRevisionId: string | null,
+): Partial<typeof schema.regulationCases.$inferInsert> {
+  if (adminStatus !== "approved" && adminStatus !== "published") return {};
+  return {
+    adminStatus: "under_review",
+    regulationStatus: publishedRevisionId !== null ? "published" : "draft",
+  };
 }
 
 /** Steer the inbox lane toward whichever validation is still missing; leave
