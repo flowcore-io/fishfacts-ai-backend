@@ -41,6 +41,7 @@ import {
   RegulationQueueRepository,
   RegulationRawSyncRepository,
 } from "./regulations/queue-repository";
+import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import { RegulationQueueReadRepository } from "./regulations/read-repository";
 import { RegulationRevisionProjector } from "./regulations/revision-projector";
 import { RegulationVerdictProjector } from "./regulations/verdict-projector";
@@ -95,6 +96,9 @@ const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
 const regulationRawSyncRepository = new RegulationRawSyncRepository(db);
 const regulationQueueReadRepository = new RegulationQueueReadRepository(db);
+const regulationPublishedReadRepository = new RegulationPublishedReadRepository(
+  db,
+);
 const regulationCaseActionProjector = new RegulationCaseActionProjector(db);
 const regulationRevisionProjector = new RegulationRevisionProjector(db);
 const chunkAssembler = new JMeldingChunkAssembler(
@@ -197,6 +201,7 @@ const app = createApp({
   aisSource: aisBackfillSource,
   reportsClient,
   regulationQueueReadRepository,
+  regulationPublishedReadRepository,
   db,
 });
 

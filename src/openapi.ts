@@ -1524,6 +1524,115 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/regulations/published": {
+      get: {
+        tags: ["Regulations"],
+        summary: "List published regulations (any authenticated user)",
+        description:
+          "The user-facing read model (stage ③) — the ONE non-admin surface under /api/regulations. Serves only cases a human approved, and only the revision the approval PINNED: a redraft in progress never changes what this returns. Every entry carries its areas inline (parsed vertex sets, never derived polygons), shaped for main-chat parent tools and map layers. `metadataOnly: true` means the publish carries no geometry by design — an empty area list there is not a parse failure.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "jurisdiction",
+            in: "query",
+            required: false,
+            schema: { type: "string" },
+            description: "Comma-separated jurisdictions, e.g. `FO,NO,IS`.",
+          },
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["current", "all"],
+              default: "current",
+            },
+            description:
+              "`current` returns regulations in force right now (validity window from the published revision); `all` includes upcoming and expired ones, distinguished by each entry's `inForce`.",
+          },
+          {
+            name: "limit",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 1, maximum: 200, default: 100 },
+          },
+          {
+            name: "offset",
+            in: "query",
+            required: false,
+            schema: { type: "integer", minimum: 0, default: 0 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "One page of published regulations with geometry",
+            content: {
+              "application/json": {
+                schema: {
+                  $ref: "#/components/schemas/PublishedRegulationListResponse",
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Invalid query parameter",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "503": {
+            description: "Published read model unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/published/{id}": {
+      get: {
+        tags: ["Regulations"],
+        summary: "One published regulation (any authenticated user)",
+        description:
+          "The pinned published view of a single case. A case that exists in the admin queue but is not published answers a plain 404 — this surface never reveals the queue.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Case id.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "The published regulation with geometry",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/PublishedRegulation" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "404": { description: "Not published (or no such case)" },
+          "503": {
+            description: "Published read model unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/regulations/queue": {
       get: {
         tags: ["Regulations"],
@@ -3686,6 +3795,119 @@ export const openApiDocument = {
           total: {
             type: "integer",
             description: "Cases matching the filters across all pages.",
+          },
+          limit: { type: "integer" },
+          offset: { type: "integer" },
+        },
+      },
+      PublishedRegulation: {
+        type: "object",
+        description:
+          "A regulation as the user-facing 1st mate sees it: the fields and areas of the revision an admin approved (pinned), never the in-progress draft. Timestamps are ISO 8601.",
+        required: [
+          "id",
+          "caseKey",
+          "jurisdiction",
+          "sourceType",
+          "sourceUrl",
+          "title",
+          "publishedRevisionId",
+          "metadataOnly",
+          "inForce",
+          "geometries",
+        ],
+        properties: {
+          id: { type: "string", format: "uuid" },
+          caseKey: { type: "string" },
+          jurisdiction: { type: "string" },
+          sourceType: { type: "string" },
+          sourceUrl: { type: "string" },
+          title: { type: "string" },
+          authority: { type: "string", nullable: true },
+          regulationNumber: { type: "string", nullable: true },
+          category: { type: "string", nullable: true },
+          summary: { type: "string", nullable: true },
+          applicability: { nullable: true },
+          seasonalRecurrence: { type: "string", nullable: true },
+          interpretationNotes: { type: "string", nullable: true },
+          effectiveFrom: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+          },
+          effectiveTo: { type: "string", format: "date-time", nullable: true },
+          expiresAt: { type: "string", format: "date-time", nullable: true },
+          sourcePublishedAt: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+            description: "The SOURCE's own publication date, when it gave one.",
+          },
+          publishedAt: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+            description: "When an admin approved & published it to users.",
+          },
+          publishedRevisionId: { type: "string", format: "uuid" },
+          metadataOnly: {
+            type: "boolean",
+            description:
+              "Approved on legal validation alone — no geometry exists BY DESIGN; an empty `geometries` here is not a parse failure.",
+          },
+          inForce: {
+            type: "string",
+            enum: ["current", "upcoming", "expired"],
+            description: "Computed from the validity window at read time.",
+          },
+          geometries: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["id", "position", "kind", "points", "geometrySource"],
+              properties: {
+                id: { type: "string", format: "uuid" },
+                position: { type: "integer" },
+                name: { type: "string", nullable: true },
+                section: { type: "string", nullable: true },
+                kind: { type: "string" },
+                season: { type: "string", nullable: true },
+                points: {
+                  type: "array",
+                  description:
+                    "The vertex SET as parsed, in source order — never a derived polygon.",
+                  items: {
+                    type: "object",
+                    required: ["lat", "lon"],
+                    properties: {
+                      lat: { type: "number" },
+                      lon: { type: "number" },
+                    },
+                  },
+                },
+                geometrySource: {
+                  type: "string",
+                  enum: ["enumerated", "preparsed", "described"],
+                },
+                coordinateSystem: { type: "string" },
+                precision: { type: "string", nullable: true },
+              },
+            },
+          },
+        },
+      },
+      PublishedRegulationListResponse: {
+        type: "object",
+        required: ["regulations", "returned", "total", "limit", "offset"],
+        properties: {
+          regulations: {
+            type: "array",
+            items: { $ref: "#/components/schemas/PublishedRegulation" },
+          },
+          returned: { type: "integer" },
+          total: {
+            type: "integer",
+            description: "Regulations matching the filters across all pages.",
           },
           limit: { type: "integer" },
           offset: { type: "integer" },
