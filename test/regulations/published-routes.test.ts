@@ -82,7 +82,9 @@ function makeApp(opts: { error?: Error } = {}) {
       } as never,
       writer: {} as never,
       poi: { list: async () => [] } as never,
-      jobRunner: { startJob: async () => ({ promise: Promise.resolve() }) } as never,
+      jobRunner: {
+        startJob: async () => ({ promise: Promise.resolve() }),
+      } as never,
     }),
   );
   return { app, calls };
@@ -99,7 +101,10 @@ describe("published regulations routes", () => {
     const { app, calls } = makeApp();
     const list = await get(app, "/api/regulations/published");
     expect(list.status).toBe(200);
-    const body = (await list.json()) as { regulations: unknown[]; total: number };
+    const body = (await list.json()) as {
+      regulations: unknown[];
+      total: number;
+    };
     expect(body.regulations).toHaveLength(1);
     expect(body.total).toBe(1);
     // The window filter defaults to in-force-now for map/tool consumers.

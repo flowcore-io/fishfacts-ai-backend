@@ -37,11 +37,11 @@ import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { RegulationCaseActionProjector } from "./regulations/action-projector";
 import { RegulationCaseProjector } from "./regulations/case-projector";
+import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import {
   RegulationQueueRepository,
   RegulationRawSyncRepository,
 } from "./regulations/queue-repository";
-import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import { RegulationQueueReadRepository } from "./regulations/read-repository";
 import { RegulationRevisionProjector } from "./regulations/revision-projector";
 import { RegulationVerdictProjector } from "./regulations/verdict-projector";
