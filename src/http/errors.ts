@@ -18,6 +18,7 @@ export const API_ERROR = {
   invalidQuery: "invalid_query",
   invalidPayload: "invalid_payload",
   queueUnavailable: "queue_unavailable",
+  publishedUnavailable: "published_unavailable",
   poiUnavailable: "poi_unavailable",
   flowcoreWriteFailed: "flowcore_write_failed",
   staleRevision: "stale_revision",
@@ -73,7 +74,10 @@ export const invalidQuery = (
 
 export const serviceUnavailable = (
   c: Context,
-  error: typeof API_ERROR.queueUnavailable | typeof API_ERROR.poiUnavailable,
+  error:
+    | typeof API_ERROR.queueUnavailable
+    | typeof API_ERROR.publishedUnavailable
+    | typeof API_ERROR.poiUnavailable,
 ) => errorResponse(c, 503, error);
 
 export const flowcoreWriteFailed = (c: Context, message: string) =>

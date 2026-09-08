@@ -32,6 +32,8 @@ import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
 import type { PoiRepository } from "./poi/repository";
 import { createPoiRouter } from "./poi/routes";
+import type { RegulationPublishedReadRepository } from "./regulations/published-repository";
+import { createPublishedRegulationsRouter } from "./regulations/published-routes";
 import type { RegulationQueueReadRepository } from "./regulations/read-repository";
 import { createRegulationsRouter } from "./regulations/routes";
 import type { ReportsClient } from "./reports/client";
@@ -64,6 +66,7 @@ export type AppDependencies = {
   /** null = reports feature unconfigured (no REPORT_FRAGMENT_TYPE_ID). */
   reportsClient: ReportsClient | null;
   regulationQueueReadRepository: RegulationQueueReadRepository;
+  regulationPublishedReadRepository: RegulationPublishedReadRepository;
   db: Database;
 };
 
@@ -88,6 +91,7 @@ export function createApp({
   aisSource,
   reportsClient,
   regulationQueueReadRepository,
+  regulationPublishedReadRepository,
   db,
 }: AppDependencies) {
   const app = new Hono();
@@ -156,6 +160,16 @@ export function createApp({
   // session capture → Usable Report fragment); list/detail are ADMIN-only
   // proxies for the FE admin screen (Usable token never reaches the browser).
   app.route("/api/reports", createReportsRouter({ reports: reportsClient }));
+  // Published regulations (stage ③) — the ONE non-admin surface under
+  // /api/regulations: any authenticated user, serving only what a human
+  // approved. Mounted BEFORE the admin router so its more specific path
+  // wins; the blanket /api/regulations/* authMiddleware above covers it.
+  app.route(
+    "/api/regulations/published",
+    createPublishedRegulationsRouter({
+      published: regulationPublishedReadRepository,
+    }),
+  );
   // Admin Regulations Inbox, read side (stage ② B1) — ADMIN-only like
   // /api/jobs; the router applies requireAdmin to every route.
   app.route(
