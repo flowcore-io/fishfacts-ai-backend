@@ -30,7 +30,10 @@ export class RegulationCaseActionProjector {
       // projector exists to prevent. Logged, not thrown: one stray event
       // must not stall the pump; a full replay re-lands it in order.
       const [caseRow] = await tx
-        .select({ id: schema.regulationCases.id })
+        .select({
+          id: schema.regulationCases.id,
+          publishedRevisionId: schema.regulationCases.publishedRevisionId,
+        })
         .from(schema.regulationCases)
         .where(eq(schema.regulationCases.id, payload.caseId))
         .limit(1);
@@ -62,7 +65,10 @@ export class RegulationCaseActionProjector {
         return;
       }
 
-      const effect = caseEffectOf(payload.action);
+      const effect = caseEffectOf(
+        payload.action,
+        caseRow.publishedRevisionId !== null,
+      );
       if (effect) {
         await tx
           .update(schema.regulationCases)
@@ -92,6 +98,7 @@ export class RegulationCaseActionProjector {
 /** The columns an action writes on the case row; null = log-only action. */
 function caseEffectOf(
   action: RegulationAdminAction,
+  isPublished: boolean,
 ): Partial<typeof schema.regulationCases.$inferInsert> | null {
   switch (action.kind) {
     case "mark_read":
@@ -108,15 +115,16 @@ function caseEffectOf(
     // The two declines are the explicit un-publish (stage ③): a case ruled
     // not valid or duplicate must stop being what the 1st mate shows. This
     // is the ONLY path that clears the published pointer — a redraft merely
-    // un-approves and leaves the pinned revision user-visible. On a case
-    // that was never published, the cleared columns were null already.
+    // un-approves and leaves the pinned revision user-visible. A decline of
+    // a case that was never published only moves the inbox lane; every
+    // other column, axis-1 included, stays what it was.
     case "reject":
-      return { adminStatus: "rejected", ...unpublished() };
+      return { adminStatus: "rejected", ...(isPublished ? unpublished() : {}) };
     case "mark_duplicate":
       return {
         adminStatus: "duplicate",
         duplicateOfCaseId: action.duplicateOfCaseId,
-        ...unpublished(),
+        ...(isPublished ? unpublished() : {}),
       };
   }
 }

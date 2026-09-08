@@ -246,6 +246,23 @@ describe("RegulationCaseActionProjector", () => {
     row = await caseRow(caseId);
     expect(row?.adminStatus).toBe("duplicate");
     expect(row?.publishedRevisionId).toBeNull();
+
+    // Declining a case that was NEVER published only moves the inbox lane —
+    // axis 1 keeps whatever it said (here: an already-expired regulation).
+    if (!runCtx) throw new Error("no db");
+    await runCtx.db
+      .update(schema.regulationCases)
+      .set({ regulationStatus: "expired" })
+      .where(eq(schema.regulationCases.id, other.caseId));
+    await projector.handleRecorded(
+      recordOf(other.caseId, other.caseKey, {
+        kind: "reject",
+        reason: "Not a regulation",
+      }),
+    );
+    const unpublishedRow = await caseRow(other.caseId);
+    expect(unpublishedRow?.adminStatus).toBe("rejected");
+    expect(unpublishedRow?.regulationStatus).toBe("expired");
   });
 
   test("a redelivered event neither doubles the log nor clobbers later state", async () => {
