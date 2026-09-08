@@ -32,13 +32,21 @@ function windowLine(item: PublishedRegulation): string {
   return `${item.effectiveFrom?.toISOString() ?? "…"} → ${end?.toISOString() ?? "…"}`;
 }
 
-export function buildPublishedCaseFragment(item: PublishedRegulation): {
+export function buildPublishedCaseFragment(
+  item: PublishedRegulation,
+  now: Date = new Date(),
+): {
   key: string;
   title: string;
   summary: string;
   content: string;
   tags: string[];
 } {
+  // `inForce` is computed at WRITE time and nothing revisits an unchanged
+  // fragment when the window later lapses (staleness keys on revision +
+  // publish stamp only) — so the claim carries its as-of date and defers to
+  // the window, instead of an absolute "current" that can quietly go wrong.
+  const inForceLine = `In force as of ${now.toISOString().slice(0, 10)}: ${item.inForce} (see validity)`;
   const geometrySections = item.geometries.map((geometry) => {
     const heading = `### ${geometry.name ?? `Area ${geometry.position + 1}`} (${geometry.kind}${geometry.season ? `, ${geometry.season}` : ""})`;
     const points = geometry.points
@@ -60,7 +68,7 @@ Reviewed and approved regulation — safe to cite in user-facing answers.
 
 - Jurisdiction: ${item.jurisdiction}${item.authority ? ` · Authority: ${item.authority}` : ""}${item.regulationNumber ? ` · Number: ${item.regulationNumber}` : ""}
 - Source: ${item.sourceType} — ${item.sourceUrl}
-- In force: ${item.inForce} · Validity: ${windowLine(item)}${item.seasonalRecurrence ? `\n- Seasonal recurrence: ${item.seasonalRecurrence}` : ""}${item.category ? `\n- Category: ${item.category}` : ""}${item.summary ? `\n- Summary: ${item.summary}` : ""}${item.interpretationNotes ? `\n- Interpretation notes: ${item.interpretationNotes}` : ""}
+- Validity: ${windowLine(item)} · ${inForceLine}${item.seasonalRecurrence ? `\n- Seasonal recurrence: ${item.seasonalRecurrence}` : ""}${item.category ? `\n- Category: ${item.category}` : ""}${item.summary ? `\n- Summary: ${item.summary}` : ""}${item.interpretationNotes ? `\n- Interpretation notes: ${item.interpretationNotes}` : ""}
 
 ## Areas
 
@@ -72,7 +80,7 @@ ${geometrySections.join("\n\n") || (item.metadataOnly ? "Metadata-only regulatio
   return {
     key: publishedFragmentKeyFor(item.caseKey),
     title: item.title,
-    summary: `Approved regulation ${item.caseKey} (${item.jurisdiction}), ${item.inForce}.`,
+    summary: `Approved regulation ${item.caseKey} (${item.jurisdiction}), ${item.inForce} as of ${now.toISOString().slice(0, 10)}.`,
     content,
     tags: [
       "regulation",

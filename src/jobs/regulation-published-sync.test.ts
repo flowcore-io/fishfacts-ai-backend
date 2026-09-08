@@ -63,6 +63,8 @@ function publishedItem(
 
 function harness(options: {
   published: PublishedRegulation[];
+  /** Total across ALL published cases; defaults to published.length. */
+  publishedTotal?: number;
   withdrawn?: Array<{ caseKey: string; title: string }>;
   existingByKey?: Record<string, { id: string; content: string }>;
   collectionUnset?: boolean;
@@ -87,7 +89,7 @@ function harness(options: {
   const repository = {
     listPublished: async () => ({
       regulations: options.published,
-      total: options.published.length,
+      total: options.publishedTotal ?? options.published.length,
     }),
     listWithdrawn: async () => options.withdrawn ?? [],
   } as never as RegulationPublishedReadRepository;
@@ -207,6 +209,16 @@ describe("regulation-published-sync job", () => {
     const result = await run(undefined, {}, context);
     expect(calls).toHaveLength(0);
     expect(result.changed).toBe(false);
+  });
+
+  test("a capped run says it was truncated instead of passing as complete", async () => {
+    const { run, context } = harness({
+      published: [publishedItem()],
+      publishedTotal: 500,
+    });
+    const result = await run(undefined, { limit: 1 }, context);
+    expect(result.message).toContain("TRUNCATED");
+    expect(result.message).toContain("of 500");
   });
 
   test("refuses to run without the published collection id", async () => {

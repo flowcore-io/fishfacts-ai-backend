@@ -83,14 +83,20 @@ export function createRegulationPublishedSyncJob(
       );
     }
     const checkedAt = new Date().toISOString();
-    const [{ regulations }, withdrawn] = await Promise.all([
-      repository.listPublished({
-        status: "all",
-        limit: args.limit ?? 200,
-        offset: 0,
-      }),
-      repository.listWithdrawn(),
-    ]);
+    const limit = args.limit ?? 200;
+    const [{ regulations, total: publishedTotal }, withdrawn] =
+      await Promise.all([
+        repository.listPublished({ status: "all", limit, offset: 0 }),
+        repository.listWithdrawn(),
+      ]);
+    // A capped "sync everything" run must not truncate silently: say so, so
+    // an operator raises the limit instead of trusting a partial corpus.
+    const truncated = publishedTotal > regulations.length;
+    if (truncated) {
+      console.warn(
+        `[RegulationPublishedSync] TRUNCATED: ${publishedTotal} published cases, limit ${limit} — rerun with a higher limit`,
+      );
+    }
 
     const total = regulations.length + withdrawn.length;
     context.reportProgress({
@@ -204,7 +210,12 @@ export function createRegulationPublishedSyncJob(
           summary: tombstone.summary,
           content: tombstone.content,
           tags: tombstone.tags,
-          // Leaving the collection IS the un-publish.
+          // Leaving the collection IS the un-publish. The PATCH endpoint
+          // treats a provided `collectionIds` as the DESIRED membership set
+          // and removes everything not in it (verified in the API handler,
+          // apps/web/src/app/api/memory-fragments/[id]/route.ts in the
+          // usable repo: toRemove = current − desired) — so [] evicts;
+          // only an OMITTED collectionIds leaves membership alone.
           collectionIds: [],
         });
         withdrawnCount += 1;
@@ -217,7 +228,8 @@ export function createRegulationPublishedSyncJob(
     }
 
     const summary =
-      `published: ${regulations.length}, created: ${created}, updated: ${updated}, ` +
+      `published: ${regulations.length}${truncated ? ` of ${publishedTotal} (TRUNCATED at limit ${limit})` : ""}, ` +
+      `created: ${created}, updated: ${updated}, ` +
       `already current: ${current}, withdrawn: ${withdrawnCount}, failed: ${failures}`;
     console.info("[RegulationPublishedSync]", summary);
     for (const line of lines) console.info("[RegulationPublishedSync]", line);
