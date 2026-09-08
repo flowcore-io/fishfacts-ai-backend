@@ -157,6 +157,7 @@ const jobs = createJobDefinitions(
   vesselDirectory,
   regulationQueueRepository,
   regulationRawSyncRepository,
+  regulationPublishedReadRepository,
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);

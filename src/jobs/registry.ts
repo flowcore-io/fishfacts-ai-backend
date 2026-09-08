@@ -9,6 +9,7 @@ import type { Env } from "@/env";
 import type { VesselDirectory } from "@/fishfacts/vessel-directory";
 import { createEmbedChatReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
+import type { RegulationPublishedReadRepository } from "@/regulations/published-repository";
 import type {
   RegulationQueueRepository,
   RegulationRawSyncRepository,
@@ -24,6 +25,7 @@ import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
 import { createLogasavnClosuresJob } from "./logasavn-closures";
 import { createLogasavnSweepJob } from "./logasavn-sweep";
+import { createRegulationPublishedSyncJob } from "./regulation-published-sync";
 import { createRegulationRawSyncJob } from "./regulation-raw-sync";
 import { createRegulationVerdictJob } from "./regulation-verdict";
 import { createSildelagetAisAnchorsJob } from "./sildelaget-ais-anchors";
@@ -45,6 +47,7 @@ export function createJobDefinitions(
   vesselDirectory: VesselDirectory,
   regulationQueueRepository: RegulationQueueRepository,
   regulationRawSyncRepository: RegulationRawSyncRepository,
+  regulationPublishedReadRepository: RegulationPublishedReadRepository,
 ): JobDefinition[] {
   return [
     {
@@ -187,6 +190,24 @@ export function createJobDefinitions(
         env,
         usable,
         regulationRawSyncRepository,
+      ),
+    },
+    {
+      id: "regulation-published-sync",
+      name: "Regulation published-corpus sync (approved cases for the 1st mate)",
+      // Manual only for the first passes — same idiom as the raw sync. It
+      // writes the corpus user-facing answers retrieve from, and it earns a
+      // schedule after someone has looked at what it writes there.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        // Published cases per run; the withdrawn reconciliation always runs
+        // in full (that set only ever holds decline-after-publish cases).
+        limit: z.coerce.number().int().min(1).default(200),
+      }),
+      execute: createRegulationPublishedSyncJob(
+        env,
+        usable,
+        regulationPublishedReadRepository,
       ),
     },
     {

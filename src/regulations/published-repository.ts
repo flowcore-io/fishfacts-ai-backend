@@ -1,7 +1,7 @@
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import type { RegulationRevisionFields } from "@/events/contracts";
-import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 /**
  * Read side of the PUBLISHED lane (stage ③) — what the user-facing 1st mate
@@ -108,6 +108,27 @@ export class RegulationPublishedReadRepository {
       ),
       total: matching.length,
     };
+  }
+
+  /** The published-sync job's reconciliation read — no route serves this.
+   * Cases that HAVE been published (an applied approval exists) but are not
+   * published now: a decline cleared the pin, so their corpus fragments
+   * must leave the collection. */
+  async listWithdrawn(): Promise<Array<{ caseKey: string; title: string }>> {
+    return await this.db
+      .selectDistinct({
+        caseKey: schema.regulationCases.caseKey,
+        title: schema.regulationCases.title,
+      })
+      .from(schema.regulationCases)
+      .innerJoin(
+        schema.regulationCaseApprovals,
+        and(
+          eq(schema.regulationCaseApprovals.caseId, schema.regulationCases.id),
+          eq(schema.regulationCaseApprovals.applied, true),
+        ),
+      )
+      .where(isNull(schema.regulationCases.publishedRevisionId));
   }
 
   async getPublished(caseId: string): Promise<PublishedRegulation | null> {

@@ -99,6 +99,16 @@ const envSchema = z.object({
     .string()
     .uuid()
     .default("ad920334-6c96-431e-9089-399f0dab8ebd"),
+  // Where the published-corpus sync (stage ③) writes APPROVED regulations
+  // for the 1st mate's retrieval: "Regulations — approved" in Fishfacts
+  // Knowledge, provisioned in stage ① as the RAW collection's counterpart.
+  // Same boundary mechanics — membership is the guard, scoped on the embed
+  // config — with the opposite sense: this is the one regulation collection
+  // user-facing answers may retrieve from.
+  REGULATION_PUBLISHED_COLLECTION_ID: z
+    .string()
+    .uuid()
+    .default("8dea180f-5f77-421f-9a54-751b46da2d90"),
   JOB_SCHEDULER_ENABLED: z
     .enum(["true", "false"])
     .default("false")
