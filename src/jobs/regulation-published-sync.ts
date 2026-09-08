@@ -63,8 +63,11 @@ type Context = {
  * what takes it out of retrieval's reach, the same membership-is-the-guard
  * boundary the raw corpus draws.
  *
- * Refuses to run without `REGULATION_PUBLISHED_COLLECTION_ID`: a corpus of
- * human-approved answers must never land in a guessed destination.
+ * The destination is `REGULATION_PUBLISHED_COLLECTION_ID` — defaulting to
+ * "Regulations — approved" in Fishfacts Knowledge, provisioned in stage ①
+ * as the RAW collection's counterpart. The job still refuses to run if the
+ * value is ever emptied out: a corpus of human-approved answers must never
+ * land in a guessed destination.
  */
 export function createRegulationPublishedSyncJob(
   env: Env,

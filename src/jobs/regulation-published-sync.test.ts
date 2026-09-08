@@ -95,7 +95,7 @@ function harness(options: {
   } as never as RegulationPublishedReadRepository;
   const run = createRegulationPublishedSyncJob(
     options.collectionUnset
-      ? ({ ...env, REGULATION_PUBLISHED_COLLECTION_ID: undefined } as Env)
+      ? ({ ...env, REGULATION_PUBLISHED_COLLECTION_ID: "" } as Env)
       : env,
     usable,
     repository,
