@@ -99,6 +99,13 @@ const envSchema = z.object({
     .string()
     .uuid()
     .default("ad920334-6c96-431e-9089-399f0dab8ebd"),
+  // Where the published-corpus sync (stage ③) writes APPROVED regulations
+  // for the 1st mate's retrieval. Same boundary mechanics as the RAW
+  // collection — membership is the guard, scoped on the embed config — with
+  // the opposite sense: this is the one regulation collection user-facing
+  // answers may retrieve from. Unset until a human provisions it; the sync
+  // job refuses to run without it rather than guess a destination.
+  REGULATION_PUBLISHED_COLLECTION_ID: z.string().uuid().optional(),
   JOB_SCHEDULER_ENABLED: z
     .enum(["true", "false"])
     .default("false")
