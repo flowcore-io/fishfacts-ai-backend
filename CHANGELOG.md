@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.9.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.8.0...v2.9.0) (2026-09-08)
+
+
+### Features
+
+* **regulations:** approval publishes — the pinned published lane (stage ③) ([#177](https://github.com/flowcore-io/fishfacts-ai-backend/issues/177)) ([d6a569f](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d6a569f2347be13414ee721e2d06539f1648b4e3))
+* **regulations:** published-corpus sync for the 1st mate's retrieval ([#179](https://github.com/flowcore-io/fishfacts-ai-backend/issues/179)) ([6e962cd](https://github.com/flowcore-io/fishfacts-ai-backend/commit/6e962cd18009681424be8837bc13a142a752fcce))
+
+
+### Bug Fixes
+
+* **regulations:** store case geometry as written, and let reparse read Vørn ([#176](https://github.com/flowcore-io/fishfacts-ai-backend/issues/176)) ([c85b3ab](https://github.com/flowcore-io/fishfacts-ai-backend/commit/c85b3ab42ce4976f789f3c9e886582d337a03a3c))
+
 ## [2.8.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.7.0...v2.8.0) (2026-09-07)
 
 
