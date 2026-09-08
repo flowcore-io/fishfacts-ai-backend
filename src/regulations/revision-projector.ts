@@ -242,7 +242,10 @@ export class RegulationRevisionProjector {
         .set({
           currentRevisionId: target.id,
           ...(leavesApprovedRevision && pointerCase
-            ? demotionOf(pointerCase.adminStatus, pointerCase.publishedRevisionId)
+            ? demotionOf(
+                pointerCase.adminStatus,
+                pointerCase.publishedRevisionId,
+              )
             : {}),
           // Restore what the target revision knew about itself. Pre-B3
           // collector revisions have no fields snapshot; their geometry set

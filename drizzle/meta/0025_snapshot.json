@@ -351,10 +351,7 @@
       "compositePrimaryKeys": {
         "fx_rate_year_quote_pk": {
           "name": "fx_rate_year_quote_pk",
-          "columns": [
-            "year",
-            "quote"
-          ]
+          "columns": ["year", "quote"]
         }
       },
       "uniqueConstraints": {},
@@ -730,10 +727,7 @@
       "compositePrimaryKeys": {
         "jmelding_chunk_queue_signature_part_number_pk": {
           "name": "jmelding_chunk_queue_signature_part_number_pk",
-          "columns": [
-            "signature",
-            "part_number"
-          ]
+          "columns": ["signature", "part_number"]
         }
       },
       "uniqueConstraints": {},
@@ -1583,11 +1577,7 @@
       "compositePrimaryKeys": {
         "regulation_case_links_case_id_kind_target_case_key_pk": {
           "name": "regulation_case_links_case_id_kind_target_case_key_pk",
-          "columns": [
-            "case_id",
-            "kind",
-            "target_case_key"
-          ]
+          "columns": ["case_id", "kind", "target_case_key"]
         }
       },
       "uniqueConstraints": {},
@@ -1851,11 +1841,7 @@
       "compositePrimaryKeys": {
         "regulation_case_sources_case_id_source_type_source_ref_pk": {
           "name": "regulation_case_sources_case_id_source_type_source_ref_pk",
-          "columns": [
-            "case_id",
-            "source_type",
-            "source_ref"
-          ]
+          "columns": ["case_id", "source_type", "source_ref"]
         }
       },
       "uniqueConstraints": {},
