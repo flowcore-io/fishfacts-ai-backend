@@ -71,7 +71,7 @@ export type JobRunRecord = {
   startedAt: string;
   finishedAt?: string;
   status: JobRunStatus;
-  trigger: "manual" | "cron";
+  trigger: "manual" | "cron" | "event";
   args?: Record<string, unknown>;
   error?: string;
   durationMs?: number;

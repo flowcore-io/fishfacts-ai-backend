@@ -88,6 +88,7 @@ import type { GenericEventRepository } from "./events/repository";
 import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
+import type { PublishedSyncTrigger } from "./jobs/published-sync-trigger";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { RegulationCaseActionProjector } from "./regulations/action-projector";
 import type { RegulationRevisionProjector } from "./regulations/revision-projector";
@@ -169,6 +170,7 @@ export function createPathwayRuntime(
   regulationVerdictProjector: RegulationVerdictProjector,
   regulationCaseActionProjector: RegulationCaseActionProjector,
   regulationRevisionProjector: RegulationRevisionProjector,
+  publishedSyncTrigger: PublishedSyncTrigger,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -323,6 +325,14 @@ export function createPathwayRuntime(
         envelope.payload,
       );
       await regulationCaseActionProjector.handleRecorded(parsed);
+      // Declines are the un-publish (stage ③) — the corpus must withdraw
+      // the fragment. No other admin action touches the published set.
+      if (
+        parsed.action.kind === "reject" ||
+        parsed.action.kind === "mark_duplicate"
+      ) {
+        publishedSyncTrigger.schedule(`decline:${parsed.action.kind}`);
+      }
     });
 
   pathways
@@ -392,6 +402,11 @@ export function createPathwayRuntime(
       const envelope = event as { eventId: string; payload: unknown };
       const parsed = regulationApprovalRecordedSchema.parse(envelope.payload);
       await regulationRevisionProjector.handleApprovalRecorded(parsed);
+      // An applied approval IS the publish. Scheduled even when projection
+      // refused the approval (stale revision) — the sync converges on the
+      // read repository either way, and telling the cases apart here would
+      // duplicate the projector's own rules.
+      publishedSyncTrigger.schedule("approval.recorded");
     });
 
   pathways

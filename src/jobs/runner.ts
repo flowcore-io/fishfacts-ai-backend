@@ -79,13 +79,13 @@ export class JobRunner {
     return definition;
   }
 
-  async runJob(jobId: string, trigger: "manual" | "cron", rawArgs?: unknown) {
+  async runJob(jobId: string, trigger: "manual" | "cron" | "event", rawArgs?: unknown) {
     const started = await this.startJob(jobId, trigger, rawArgs);
     await started.promise;
     return started.result();
   }
 
-  async startJob(jobId: string, trigger: "manual" | "cron", rawArgs?: unknown) {
+  async startJob(jobId: string, trigger: "manual" | "cron" | "event", rawArgs?: unknown) {
     const definition = this.getDefinition(jobId);
     const args = definition.inputSchema.parse(rawArgs ?? {});
     if (this.runningJobs.has(jobId)) {
@@ -436,7 +436,7 @@ export class JobRunner {
     };
   }
 
-  async runAll(trigger: "manual" | "cron") {
+  async runAll(trigger: "manual" | "cron" | "event") {
     const results: Array<{
       jobId: string;
       status: "success" | "error";
