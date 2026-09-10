@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.9.0...v2.10.0) (2026-09-10)
+
+
+### Features
+
+* **regulations:** sync the published corpus on approve/decline ([#181](https://github.com/flowcore-io/fishfacts-ai-backend/issues/181)) ([29854a1](https://github.com/flowcore-io/fishfacts-ai-backend/commit/29854a1ed4ec39183946fc7c15a39b80d4f0dcce))
+
 ## [2.9.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.8.0...v2.9.0) (2026-09-08)
 
 
