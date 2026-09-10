@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.10.0...v2.10.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **regulations:** honour the 202 contract when projection outruns the write wait ([#184](https://github.com/flowcore-io/fishfacts-ai-backend/issues/184)) ([f3ec259](https://github.com/flowcore-io/fishfacts-ai-backend/commit/f3ec25965cc53de0195901cbb39c22e54b4e33ba))
+* **regulations:** snapshot a snapshot-less revision at approval, closing the draft-scalar leak ([#183](https://github.com/flowcore-io/fishfacts-ai-backend/issues/183)) ([138b48e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/138b48eab4a5972fb7f765c78ef17d371f640fa0))
+
 ## [2.10.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.9.0...v2.10.0) (2026-09-10)
 
 
