@@ -165,11 +165,14 @@ export type PathwayRuntime = {
  * honour its 202 contract instead of failing a write that succeeded — the
  * first approval ever processed did exactly this (502 after 31s, fully
  * applied; task followed from the 2026-09-09 demo). String-matched because
- * the lib exports no typed error; the pattern is pinned by a unit test so an
- * upstream reword fails loudly here rather than silently un-recovering.
+ * the lib exports no typed error. The capture anchors on the EVENT ID'S
+ * SHAPE (a UUID) rather than the end of the message: 2.7.0 — inside our
+ * ^-range — already appended explanatory prose after the id, and an
+ * end-anchored pattern would have silently reverted routes to 502-on-success
+ * the day the lockfile moved. Both known wordings are pinned by unit tests.
  */
 const PATHWAY_PROCESSING_TIMEOUT_RE =
-  /^Pathway processing timed out after \d+ms for event (\S+)$/;
+  /^Pathway processing timed out after \d+ms for event ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b/;
 
 export function pendingEventIdOf(error: unknown): string | null {
   if (!(error instanceof Error)) return null;
