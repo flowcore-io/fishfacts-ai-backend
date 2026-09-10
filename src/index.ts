@@ -27,6 +27,7 @@ import { JMeldingGeoProjector } from "./jmelding/geo-projector";
 import { JMeldingGeoRepository } from "./jmelding/geo-repository";
 import { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import { JMeldingFragmentProjector } from "./jobs/jmelding-fragments";
+import { PublishedSyncTrigger } from "./jobs/published-sync-trigger";
 import { createJobDefinitions } from "./jobs/registry";
 import { JobRunner } from "./jobs/runner";
 import { JobScheduler } from "./jobs/scheduler";
@@ -129,6 +130,10 @@ const aisIngestState = new AisIngestStateRepository(db);
 // project history the forward-only pump cursor will never replay.
 const aisBucketReader = new FlowcoreBucketReader(env);
 
+// Constructed before the pathways that call it and attached to the runner
+// below — boot-replay schedules are held pending until the runner exists.
+const publishedSyncTrigger = new PublishedSyncTrigger();
+
 const pathways = createPathwayRuntime(
   env,
   repository,
@@ -142,6 +147,7 @@ const pathways = createPathwayRuntime(
   regulationVerdictProjector,
   regulationCaseActionProjector,
   regulationRevisionProjector,
+  publishedSyncTrigger,
 );
 const jobs = createJobDefinitions(
   env,
@@ -161,6 +167,7 @@ const jobs = createJobDefinitions(
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
+publishedSyncTrigger.attachRunner(jobRunner);
 // Distinct from the AIS supervisor's key: a stalled scheduler must not hand the
 // supervisor to another pod, or vice versa.
 const SCHEDULER_LOCK_KEY = 414400824;

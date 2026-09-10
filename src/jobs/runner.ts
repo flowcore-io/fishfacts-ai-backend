@@ -56,6 +56,19 @@ function normalizeProgress<
   return { ...progress, percent };
 }
 
+/**
+ * Thrown by {@link JobRunner.startJob} when the job holds the in-memory run
+ * lock. A typed class rather than a message: three call sites branch on this
+ * condition (409 vs failure, retry vs drop), and a string match couples them
+ * to wording that nothing would flag on reword.
+ */
+export class JobAlreadyRunningError extends Error {
+  constructor(jobId: string) {
+    super(`Job ${jobId} is already running`);
+    this.name = "JobAlreadyRunningError";
+  }
+}
+
 export class JobRunner {
   private readonly runningJobs = new Map<string, RunningJobHandle>();
 
@@ -79,17 +92,25 @@ export class JobRunner {
     return definition;
   }
 
-  async runJob(jobId: string, trigger: "manual" | "cron", rawArgs?: unknown) {
+  async runJob(
+    jobId: string,
+    trigger: "manual" | "cron" | "event",
+    rawArgs?: unknown,
+  ) {
     const started = await this.startJob(jobId, trigger, rawArgs);
     await started.promise;
     return started.result();
   }
 
-  async startJob(jobId: string, trigger: "manual" | "cron", rawArgs?: unknown) {
+  async startJob(
+    jobId: string,
+    trigger: "manual" | "cron" | "event",
+    rawArgs?: unknown,
+  ) {
     const definition = this.getDefinition(jobId);
     const args = definition.inputSchema.parse(rawArgs ?? {});
     if (this.runningJobs.has(jobId)) {
-      throw new Error(`Job ${jobId} is already running`);
+      throw new JobAlreadyRunningError(jobId);
     }
     const abortController = new AbortController();
     this.runningJobs.set(jobId, { abortController, stopRequested: false });
@@ -436,7 +457,7 @@ export class JobRunner {
     };
   }
 
-  async runAll(trigger: "manual" | "cron") {
+  async runAll(trigger: "manual" | "cron" | "event") {
     const results: Array<{
       jobId: string;
       status: "success" | "error";

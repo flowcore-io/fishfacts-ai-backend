@@ -125,7 +125,7 @@ function rowToRun(row: JobRunRow): JobRunRecord {
     startedAt: row.startedAt.toISOString(),
     finishedAt: toIso(row.finishedAt),
     status: row.status as JobRunStatus,
-    trigger: row.trigger as "manual" | "cron",
+    trigger: row.trigger as "manual" | "cron" | "event",
     args: (row.args as Record<string, unknown> | null) ?? undefined,
     error: row.error ?? undefined,
     durationMs: row.durationMs ?? undefined,
