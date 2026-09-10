@@ -428,6 +428,12 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       geometries: 1,
       snapshotless: true,
     });
+    // A second populated column, so the assertions below cover more than the
+    // one field the redraft happens to move.
+    await runCtx.db
+      .update(schema.regulationCases)
+      .set({ summary: "Original summary" })
+      .where(eq(schema.regulationCases.id, seeded.caseId));
     const validate = (scope: "legal" | "geometry", geometryId: string | null) =>
       projector.handleValidationRecorded({
         validationId: randomUUID(),
@@ -463,6 +469,9 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
     expect((pinned?.fields as RegulationRevisionFields).title).toBe(
       "Original title",
     );
+    expect((pinned?.fields as RegulationRevisionFields).summary).toBe(
+      "Original summary",
+    );
 
     // A redraft moves the case columns — the published view must not move.
     await projector.handleProposed(proposal(seeded));
@@ -473,6 +482,7 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
     expect(drifted?.title).toBe("Amended title"); // the drift is real…
     const view = await published.getPublished(seeded.caseId);
     expect(view?.title).toBe("Original title"); // …and the pin ignores it
+    expect(view?.summary).toBe("Original summary");
     expect(view?.publishedRevisionId).toBe(seeded.revisionId);
   });
 
