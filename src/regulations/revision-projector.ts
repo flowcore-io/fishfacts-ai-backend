@@ -9,7 +9,7 @@ import type {
 import { pointsToMultipointWkt } from "@/jmelding/geo-parser";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { geometryIdFor } from "./ids";
-import { caseColumnsOfFields } from "./revision-fields";
+import { caseColumnsOfFields, editableFieldsOfCase } from "./revision-fields";
 
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
@@ -352,12 +352,7 @@ export class RegulationRevisionProjector {
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
       const [caseRow] = await tx
-        .select({
-          id: schema.regulationCases.id,
-          currentRevisionId: schema.regulationCases.currentRevisionId,
-          regulatoryValidated: schema.regulationCases.regulatoryValidated,
-          geometryValidated: schema.regulationCases.geometryValidated,
-        })
+        .select()
         .from(schema.regulationCases)
         .where(eq(schema.regulationCases.id, payload.caseId))
         .limit(1);
@@ -405,6 +400,29 @@ export class RegulationRevisionProjector {
           refusalReason,
         });
         return;
+      }
+
+      // A pin is only as immutable as its snapshot. Collector revisions from
+      // before snapshots existed have `fields: null`, and for those the
+      // published read falls back to the LIVE case columns — which a later
+      // redraft moves, leaking draft scalars into the published view while
+      // the pin id sits there looking correct. So an approval that pins a
+      // snapshot-less revision writes the snapshot now, from the case
+      // columns as the approving admin saw them: the approval's own
+      // stale-revision check just proved the columns carry this revision's
+      // state. Same transaction as the pin — they hold together or not at
+      // all. Replay converges (columns are rebuilt to this point in stream
+      // order before this event re-applies).
+      const [pinnedRevision] = await tx
+        .select({ fields: schema.regulationCaseRevisions.fields })
+        .from(schema.regulationCaseRevisions)
+        .where(eq(schema.regulationCaseRevisions.id, payload.revisionId))
+        .limit(1);
+      if (pinnedRevision && pinnedRevision.fields === null) {
+        await tx
+          .update(schema.regulationCaseRevisions)
+          .set({ fields: editableFieldsOfCase(caseRow) })
+          .where(eq(schema.regulationCaseRevisions.id, payload.revisionId));
       }
 
       // Stage ③: an applied approval IS the publish — one act, the
