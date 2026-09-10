@@ -12,9 +12,12 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
  * The pinned revision is the source of every field users see. The CASE
  * columns follow the current (draft) revision, so a redraft in progress
  * would leak unapproved edits if this read used them; the published
- * revision's `fields` snapshot is what was approved. Revisions from before
- * the snapshot existed (pre-#172 collectors) have no `fields` — for those
- * the case columns are the only record and are used as they stand.
+ * revision's `fields` snapshot is what was approved. Approving a
+ * snapshot-less revision (pre-#172 collectors) now writes its snapshot at
+ * pin time (revision-projector), so the case-column fallback below only
+ * serves pins made before that fix — kept as defense, not as a path new
+ * publishes may take: without a snapshot, a redraft's column writes would
+ * leak straight into the published view.
  */
 
 export type PublishedRegulationGeometry = {

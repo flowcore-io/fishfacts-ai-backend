@@ -10,6 +10,7 @@ import {
   geometryIdFor,
   revisionIdFor,
 } from "../../src/regulations/ids";
+import { RegulationPublishedReadRepository } from "../../src/regulations/published-repository";
 import { RegulationRevisionProjector } from "../../src/regulations/revision-projector";
 
 const DATABASE_URL =
@@ -67,7 +68,10 @@ const BASE_FIELDS: RegulationRevisionFields = {
   applicability: null,
 };
 
-async function seedCase(ref: string, opts: { geometries?: number } = {}) {
+async function seedCase(
+  ref: string,
+  opts: { geometries?: number; snapshotless?: boolean } = {},
+) {
   if (!runCtx) throw new Error("no db");
   const { db } = runCtx;
   const caseKey = `test-source:${ref}`;
@@ -99,7 +103,9 @@ async function seedCase(ref: string, opts: { geometries?: number } = {}) {
     sourceEventSignature: `${ref}-rev-0`,
     verdictStatus: "ok",
     verdict: [],
-    fields: { ...BASE_FIELDS },
+    // `snapshotless` models a pre-#172 collector revision: no fields
+    // snapshot, the case columns carrying the only record of its state.
+    fields: opts.snapshotless ? null : { ...BASE_FIELDS },
   });
   const geometryIds: string[] = [];
   for (let i = 0; i < (opts.geometries ?? 0); i += 1) {
@@ -412,6 +418,62 @@ describe("RegulationRevisionProjector.handleApprovalRecorded", () => {
       .where(eq(schema.regulationCaseApprovals.caseId, seeded.caseId));
     expect(approval?.applied).toBe(true);
     expect(approval?.refusalReason).toBeNull();
+  });
+
+  test("approving a snapshot-less revision writes its snapshot, so a redraft cannot leak into the published view", async () => {
+    if (!runCtx) return;
+    const projector = new RegulationRevisionProjector(runCtx.db);
+    const published = new RegulationPublishedReadRepository(runCtx.db);
+    const seeded = await seedCase("revproj-test-snapshotless-pin", {
+      geometries: 1,
+      snapshotless: true,
+    });
+    const validate = (scope: "legal" | "geometry", geometryId: string | null) =>
+      projector.handleValidationRecorded({
+        validationId: randomUUID(),
+        caseId: seeded.caseId,
+        caseKey: seeded.caseKey,
+        revisionId: seeded.revisionId,
+        scope,
+        geometryId,
+        validated: true,
+        note: null,
+        actor: "admin:gilli",
+        recordedAt: new Date().toISOString(),
+      });
+    await validate("legal", null);
+    await validate("geometry", seeded.geometryIds[0] as string);
+    await projector.handleApprovalRecorded({
+      approvalId: randomUUID(),
+      caseId: seeded.caseId,
+      caseKey: seeded.caseKey,
+      revisionId: seeded.revisionId,
+      metadataOnly: false,
+      note: null,
+      actor: "admin:gilli",
+      recordedAt: new Date().toISOString(),
+    });
+
+    // The pin now carries a snapshot of the columns the admin approved.
+    const [pinned] = await runCtx.db
+      .select({ fields: schema.regulationCaseRevisions.fields })
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, seeded.revisionId));
+    expect(pinned?.fields).not.toBeNull();
+    expect((pinned?.fields as RegulationRevisionFields).title).toBe(
+      "Original title",
+    );
+
+    // A redraft moves the case columns — the published view must not move.
+    await projector.handleProposed(proposal(seeded));
+    const [drifted] = await runCtx.db
+      .select({ title: schema.regulationCases.title })
+      .from(schema.regulationCases)
+      .where(eq(schema.regulationCases.id, seeded.caseId));
+    expect(drifted?.title).toBe("Amended title"); // the drift is real…
+    const view = await published.getPublished(seeded.caseId);
+    expect(view?.title).toBe("Original title"); // …and the pin ignores it
+    expect(view?.publishedRevisionId).toBe(seeded.revisionId);
   });
 
   test("an approval of a superseded revision is recorded refused, never applied", async () => {
