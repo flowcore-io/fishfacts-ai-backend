@@ -1,6 +1,6 @@
 import { PostgresLeaderLock } from "@/db/leader-lock";
 import type { Env } from "@/env";
-import type { JobRunner } from "@/jobs/runner";
+import { JobAlreadyRunningError, type JobRunner } from "@/jobs/runner";
 import type { Sql } from "postgres";
 import type { AisIngestStateRepository } from "./ingest-state-repository";
 
@@ -116,9 +116,10 @@ export class AisBackfillSupervisor {
         }),
       )
       .catch((error: unknown) => {
-        const msg = error instanceof Error ? error.message : String(error);
-        if (!msg.includes("already running")) {
-          console.error(`[AIS] failed to start ${jobId}`, { message: msg });
+        if (!(error instanceof JobAlreadyRunningError)) {
+          console.error(`[AIS] failed to start ${jobId}`, {
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
       });
   }

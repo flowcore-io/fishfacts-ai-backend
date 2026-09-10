@@ -19,7 +19,7 @@ import {
   serviceUnavailable,
 } from "@/http/errors";
 import { parseJmeldingGeo } from "@/jmelding/geo-parser";
-import type { JobRunner } from "@/jobs/runner";
+import { JobAlreadyRunningError, type JobRunner } from "@/jobs/runner";
 import type { PathwayWriter } from "@/pathways";
 import type { PoiRepository } from "@/poi/repository";
 import { Hono } from "hono";
@@ -635,7 +635,7 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("already running")) {
+      if (error instanceof JobAlreadyRunningError) {
         return errorResponse(c, 409, API_ERROR.verdictJobRunning);
       }
       console.error("[Regulations] reverdict failed", { caseId: id, message });

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { AuthContext } from "../../src/auth/types";
 import type { RegulationRevisionProposed } from "../../src/events/contracts";
+import { JobAlreadyRunningError } from "../../src/jobs/runner";
 import type { PathwayWriter } from "../../src/pathways";
 import type { PoiEntry } from "../../src/poi/repository";
 import type { RegulationQueueReadRepository } from "../../src/regulations/read-repository";
@@ -231,7 +232,7 @@ describe("POST /api/regulations/cases/:id/reverdict", () => {
 
   test("a verdict job already running is a 409, unknown case a 404", async () => {
     const busy = makeApp({
-      startJobError: new Error("Job regulation-verdict is already running"),
+      startJobError: new JobAlreadyRunningError("regulation-verdict"),
     });
     const res = await request(busy.app, `/cases/${CASE_ID}/reverdict`, {
       method: "POST",
