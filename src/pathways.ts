@@ -157,6 +157,51 @@ export type PathwayRuntime = {
   stopPump(): Promise<void>;
 };
 
+/**
+ * The pathways lib's post-write wait throws a plain `Error` when processing
+ * outruns `pathwayTimeoutMs` — but by then the event IS durably written (the
+ * wait only polls `isProcessed(eventId)`). Detect that one error at this one
+ * boundary and recover the eventId it carries, so an interactive route can
+ * honour its 202 contract instead of failing a write that succeeded — the
+ * first approval ever processed did exactly this (502 after 31s, fully
+ * applied; task followed from the 2026-09-09 demo). String-matched because
+ * the lib exports no typed error. The capture anchors on the EVENT ID'S
+ * SHAPE (a UUID) rather than the end of the message: 2.7.0 — inside our
+ * ^-range — already appended explanatory prose after the id, and an
+ * end-anchored pattern would have silently reverted routes to 502-on-success
+ * the day the lockfile moved. Both known wordings are pinned by unit tests.
+ */
+const PATHWAY_PROCESSING_TIMEOUT_RE =
+  /^Pathway processing timed out after \d+ms for event ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b/;
+
+export function pendingEventIdOf(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const match = PATHWAY_PROCESSING_TIMEOUT_RE.exec(error.message);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Await an interactive pathway write, treating a processing timeout as the
+ * slow success it is: the eventId comes back, the projection follows. Real
+ * write failures (nothing durably recorded) still throw.
+ */
+export async function recoverSlowProjection(
+  label: string,
+  doWrite: () => Promise<string | string[]>,
+): Promise<string | string[]> {
+  try {
+    return await doWrite();
+  } catch (error) {
+    const pendingEventId = pendingEventIdOf(error);
+    if (pendingEventId === null) throw error;
+    console.warn(
+      "[Pathways] write recorded but projection outran the wait — returning the pending event",
+      { label, eventId: pendingEventId },
+    );
+    return pendingEventId;
+  }
+}
+
 export function createPathwayRuntime(
   env: Env,
   repository: GenericEventRepository,
@@ -613,104 +658,114 @@ export function createPathwayRuntime(
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeRegulationRevisionProposed(data) {
-        const eventId = await (
-          pathways.write as never as (
-            path: typeof REGULATION_REVISION_PROPOSED_PATHWAY,
-            input: {
-              data: RegulationRevisionProposed;
-              metadata: Record<string, unknown>;
+        const eventId = await recoverSlowProjection("revision.proposed", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_REVISION_PROPOSED_PATHWAY,
+              input: {
+                data: RegulationRevisionProposed;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_REVISION_PROPOSED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              caseKey: data.caseKey,
+              revisionId: data.revisionId,
+              actor: data.actor,
             },
-          ) => Promise<string | string[]>
-        )(REGULATION_REVISION_PROPOSED_PATHWAY, {
-          data,
-          metadata: {
-            source: "fishfacts-ai-backend-api",
-            caseKey: data.caseKey,
-            revisionId: data.revisionId,
-            actor: data.actor,
-          },
-        });
+          }),
+        );
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeRegulationRevisionPointerMoved(data) {
-        const eventId = await (
-          pathways.write as never as (
-            path: typeof REGULATION_REVISION_POINTER_MOVED_PATHWAY,
-            input: {
-              data: RegulationRevisionPointerMoved;
-              metadata: Record<string, unknown>;
+        const eventId = await recoverSlowProjection("revision.pointer", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_REVISION_POINTER_MOVED_PATHWAY,
+              input: {
+                data: RegulationRevisionPointerMoved;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_REVISION_POINTER_MOVED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              caseKey: data.caseKey,
+              toRevisionId: data.toRevisionId,
+              actor: data.actor,
             },
-          ) => Promise<string | string[]>
-        )(REGULATION_REVISION_POINTER_MOVED_PATHWAY, {
-          data,
-          metadata: {
-            source: "fishfacts-ai-backend-api",
-            caseKey: data.caseKey,
-            toRevisionId: data.toRevisionId,
-            actor: data.actor,
-          },
-        });
+          }),
+        );
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeRegulationValidationRecorded(data) {
-        const eventId = await (
-          pathways.write as never as (
-            path: typeof REGULATION_VALIDATION_RECORDED_PATHWAY,
-            input: {
-              data: RegulationValidationRecorded;
-              metadata: Record<string, unknown>;
+        const eventId = await recoverSlowProjection("validation.recorded", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_VALIDATION_RECORDED_PATHWAY,
+              input: {
+                data: RegulationValidationRecorded;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_VALIDATION_RECORDED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              caseKey: data.caseKey,
+              revisionId: data.revisionId,
+              scope: data.scope,
+              actor: data.actor,
             },
-          ) => Promise<string | string[]>
-        )(REGULATION_VALIDATION_RECORDED_PATHWAY, {
-          data,
-          metadata: {
-            source: "fishfacts-ai-backend-api",
-            caseKey: data.caseKey,
-            revisionId: data.revisionId,
-            scope: data.scope,
-            actor: data.actor,
-          },
-        });
+          }),
+        );
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeRegulationApprovalRecorded(data) {
-        const eventId = await (
-          pathways.write as never as (
-            path: typeof REGULATION_APPROVAL_RECORDED_PATHWAY,
-            input: {
-              data: RegulationApprovalRecorded;
-              metadata: Record<string, unknown>;
+        const eventId = await recoverSlowProjection("approval.recorded", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_APPROVAL_RECORDED_PATHWAY,
+              input: {
+                data: RegulationApprovalRecorded;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_APPROVAL_RECORDED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              caseKey: data.caseKey,
+              revisionId: data.revisionId,
+              actor: data.actor,
             },
-          ) => Promise<string | string[]>
-        )(REGULATION_APPROVAL_RECORDED_PATHWAY, {
-          data,
-          metadata: {
-            source: "fishfacts-ai-backend-api",
-            caseKey: data.caseKey,
-            revisionId: data.revisionId,
-            actor: data.actor,
-          },
-        });
+          }),
+        );
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeRegulationAdminActionRecorded(data) {
-        const eventId = await (
-          pathways.write as never as (
-            path: typeof REGULATION_ADMIN_ACTION_RECORDED_PATHWAY,
-            input: {
-              data: RegulationAdminActionRecorded;
-              metadata: Record<string, unknown>;
+        const eventId = await recoverSlowProjection("admin-action", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_ADMIN_ACTION_RECORDED_PATHWAY,
+              input: {
+                data: RegulationAdminActionRecorded;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_ADMIN_ACTION_RECORDED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              caseKey: data.caseKey,
+              kind: data.action.kind,
+              actor: data.actor,
             },
-          ) => Promise<string | string[]>
-        )(REGULATION_ADMIN_ACTION_RECORDED_PATHWAY, {
-          data,
-          metadata: {
-            source: "fishfacts-ai-backend-api",
-            caseKey: data.caseKey,
-            kind: data.action.kind,
-            actor: data.actor,
-          },
-        });
+          }),
+        );
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writePoiCreated(data) {
