@@ -8,14 +8,31 @@
  *
  * The rule the whole feature rests on: NOTHING IS PROPOSED THAT THE SOURCE
  * DOES NOT SAY. A J-melding that closes an area for "torsketrål" must not
- * come back as "trawl" — the broadening is invisible to an admin skimming a
- * list and would put the wrong vessels inside a closure. So every stated
- * dimension has to arrive with a quote, and the quote has to be findable in
- * the source text character-for-character: no case folding, no accent
- * normalisation, no whitespace collapsing. A model that paraphrases its own
- * evidence has already stopped copying, and the whole case is refused rather
- * than half of it kept (a partial proposal is the shape an admin trusts
- * least — it looks complete).
+ * come back as "trål" — the broadening is invisible to an admin skimming a
+ * list and would put the wrong vessels inside a closure. Two checks, both
+ * exact substring containment against the source text (no case folding, no
+ * accent normalisation, no whitespace collapsing — everything that would let
+ * a paraphrase through is precisely what is being caught):
+ *
+ * 1. every stated dimension arrives with a quote that is IN the text;
+ * 2. every VALUE of an atomic dimension (species, gear, vesselType,
+ *    vesselFlag, fishery, permits, and the printed bounds of vesselLength /
+ *    vesselPower) is itself in the text, AS A WHOLE WORD. An honest quote
+ *    does not license a broadened value: `gear: ["trål"]` quoted with "fiske
+ *    med torsketrål" passes check 1, and would pass a plain substring test —
+ *    "trål" sits inside "torsketrål" — so the value check refuses a match
+ *    that continues into a letter or a digit on either side. That is the
+ *    Røstbanken case, and the reason the check is not `String.includes`.
+ *
+ * `exemptions` are deliberately NOT value-checked: a whole condition is
+ * assembled across lines and line breaks ("fartøy under 15 meter som fisker
+ * med garn"), so contiguity in the source is the wrong bar. They are
+ * backstopped by their quote and by the admin's review. `activity` is an
+ * enum with no source form to compare against.
+ *
+ * A model that fails either check has stopped copying, and the whole case is
+ * refused rather than half of it kept (a partial proposal is the shape an
+ * admin trusts least — it looks complete).
  *
  * The spike behind the prompt (11 real FO/IS/NO cases, 30/30 quotes verbatim)
  * is recorded in Usable decision `438dcef1-f0b8-481d-b31c-efd65454dae2`.
@@ -72,8 +89,27 @@ export function buildApplicabilityMessages(input: {
 
 /** Why an extraction produced no proposal. The job adds the reasons that are
  * about fetching rather than reading (`no_source_text`, `chat_error`,
- * `stale_base`) — these two are about the answer itself. */
-export type ApplicabilityFailureReason = "unparseable" | "quote_not_in_source";
+ * `stale_base`) — these three are about the answer itself. */
+export type ApplicabilityFailureReason =
+  | "unparseable"
+  | "quote_not_in_source"
+  | "value_not_in_source";
+
+/** The dimensions whose values are atomic enough to demand verbatim in the
+ * source: a species, a gear, a vessel class, a flag, a fishery, a permit are
+ * all named by the text in one piece. `exemptions` (assembled conditions) and
+ * `activity` (an enum) are not in here — see the module header. */
+const VALUE_CHECKED_LIST_DIMENSIONS = [
+  "species",
+  "gear",
+  "vesselType",
+  "vesselFlag",
+  "fishery",
+  "permits",
+] as const;
+
+/** Printed bounds — `{ max: "15 m" }` — checked the same way, per side. */
+const VALUE_CHECKED_BOUND_DIMENSIONS = ["vesselLength", "vesselPower"] as const;
 
 export type ApplicabilityExtraction =
   | { kind: "proposal"; applicability: RegulationApplicability }
@@ -129,7 +165,7 @@ export function parseApplicabilityAnswer(
     };
   }
 
-  const applicability = result.data;
+  const applicability = normalizeEmptyDimensions(result.data);
   const stated = statedDimensionsOf(applicability);
   const unquoted: string[] = [];
   for (const dimension of stated) {
@@ -145,6 +181,34 @@ export function parseApplicabilityAnswer(
       kind: "failed",
       reason: "quote_not_in_source",
       detail: unquoted.join("; "),
+    };
+  }
+
+  const invented: string[] = [];
+  for (const dimension of VALUE_CHECKED_LIST_DIMENSIONS) {
+    for (const value of applicability[dimension] ?? []) {
+      if (!containsAsWholeWord(sourceText, value)) {
+        invented.push(`${dimension}: "${value}" is not in the source text`);
+      }
+    }
+  }
+  for (const dimension of VALUE_CHECKED_BOUND_DIMENSIONS) {
+    const bound = applicability[dimension];
+    if (bound === undefined) continue;
+    for (const side of ["min", "max"] as const) {
+      const value = bound[side];
+      if (value !== undefined && !containsAsWholeWord(sourceText, value)) {
+        invented.push(
+          `${dimension}.${side}: "${value}" is not in the source text`,
+        );
+      }
+    }
+  }
+  if (invented.length > 0) {
+    return {
+      kind: "failed",
+      reason: "value_not_in_source",
+      detail: invented.join("; "),
     };
   }
 
@@ -164,4 +228,72 @@ export function parseApplicabilityAnswer(
   }
 
   return { kind: "proposal", applicability };
+}
+
+/**
+ * An empty list or an empty pair of bounds is not a statement — it is the
+ * model writing down that it found nothing, which is exactly what an OMITTED
+ * key means. Normalising them away (and dropping the quote that came with
+ * them) keeps one representation of "no restriction stated" instead of two
+ * that render differently, and spares an empty list a quote it cannot have.
+ */
+function normalizeEmptyDimensions(
+  applicability: RegulationApplicability,
+): RegulationApplicability {
+  const normalized = { ...applicability };
+  const evidence = { ...normalized.evidence };
+  let stripped = false;
+  for (const dimension of APPLICABILITY_DIMENSIONS) {
+    const value = normalized[dimension];
+    const isEmpty =
+      (Array.isArray(value) && value.length === 0) ||
+      (dimension === "vesselLength" || dimension === "vesselPower"
+        ? value !== undefined &&
+          (value as { min?: string; max?: string }).min === undefined &&
+          (value as { min?: string; max?: string }).max === undefined
+        : false);
+    if (!isEmpty) continue;
+    normalized[dimension] = undefined;
+    evidence[dimension] = undefined;
+    stripped = true;
+  }
+  if (stripped && normalized.evidence !== undefined) {
+    normalized.evidence = evidence;
+  }
+  return normalized;
+}
+
+/**
+ * Exact containment, but refusing a match that continues into a letter or a
+ * digit — `"trål"` is not found in `"torsketrål"`, and `"15 m"` is not found
+ * in `"15 meter"`. Still exact in every other respect: no case folding, no
+ * accent normalisation, no whitespace collapsing.
+ *
+ * The boundary is only demanded on a side where the VALUE itself ends in a
+ * letter or digit; a value that starts or ends in punctuation ("§ 2,") is
+ * compared as printed.
+ */
+const WORD_CHARACTER = /[\p{L}\p{N}]/u;
+
+function containsAsWholeWord(source: string, value: string): boolean {
+  if (value.length === 0) return false;
+  const needsLeftBoundary = WORD_CHARACTER.test(value[0] as string);
+  const needsRightBoundary = WORD_CHARACTER.test(
+    value[value.length - 1] as string,
+  );
+  let from = 0;
+  for (;;) {
+    const at = source.indexOf(value, from);
+    if (at === -1) return false;
+    const before = at > 0 ? source[at - 1] : undefined;
+    const after = source[at + value.length];
+    const leftOk =
+      !needsLeftBoundary ||
+      before === undefined ||
+      !WORD_CHARACTER.test(before);
+    const rightOk =
+      !needsRightBoundary || after === undefined || !WORD_CHARACTER.test(after);
+    if (leftOk && rightOk) return true;
+    from = at + 1;
+  }
 }

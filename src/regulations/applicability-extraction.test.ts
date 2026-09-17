@@ -102,6 +102,93 @@ describe("parseApplicabilityAnswer", () => {
     }
   });
 
+  test("refuses a broadened value even when its quote is honest", () => {
+    const extraction = parseApplicabilityAnswer(
+      JSON.stringify({
+        gear: ["trål"],
+        evidence: { gear: "Det er forbudt å fiske med torsketrål" },
+      }),
+      SOURCE,
+    );
+    expect(extraction.kind).toBe("failed");
+    if (extraction.kind !== "failed") return;
+    expect(extraction.reason).toBe("value_not_in_source");
+    expect(extraction.detail).toContain("gear");
+    expect(extraction.detail).toContain("trål");
+  });
+
+  test("checks printed bounds the same way, per side", () => {
+    const ok = parseApplicabilityAnswer(
+      JSON.stringify({
+        vesselLength: { max: "15 meter" },
+        evidence: { vesselLength: "fartøy under 15 meter" },
+      }),
+      SOURCE,
+    );
+    expect(ok.kind).toBe("proposal");
+
+    const invented = parseApplicabilityAnswer(
+      JSON.stringify({
+        vesselLength: { max: "15 m" },
+        evidence: { vesselLength: "fartøy under 15 meter" },
+      }),
+      SOURCE,
+    );
+    expect(invented.kind).toBe("failed");
+    if (invented.kind !== "failed") return;
+    expect(invented.reason).toBe("value_not_in_source");
+    expect(invented.detail).toContain("vesselLength.max");
+  });
+
+  test("a whole-word value is accepted where a fragment of one is not", () => {
+    const ok = parseApplicabilityAnswer(
+      JSON.stringify({
+        gear: ["torsketrål"],
+        evidence: { gear: "fiske med torsketrål" },
+      }),
+      SOURCE,
+    );
+    expect(ok.kind).toBe("proposal");
+  });
+
+  test("an exemption assembled across the text is accepted on its quote", () => {
+    const extraction = parseApplicabilityAnswer(
+      JSON.stringify({
+        // Not contiguous anywhere in the source — a condition read out of two
+        // sentences, which is what an exemption normally is.
+        exemptions: ["fartøy under 15 meter som fisker med garn på Røstbanken"],
+        evidence: {
+          exemptions: "Forbudet gjelder ikke fartøy under 15 meter",
+        },
+      }),
+      SOURCE,
+    );
+    expect(extraction.kind).toBe("proposal");
+  });
+
+  test("an empty list or empty bounds reads as omitted, not as stated", () => {
+    const extraction = parseApplicabilityAnswer(
+      JSON.stringify({
+        gear: [],
+        vesselLength: {},
+        species: ["torsketrål"],
+        evidence: {
+          gear: "not a quote from anywhere",
+          species: "fiske med torsketrål",
+        },
+        notes: "Ingen redskap oppgitt.",
+      }),
+      SOURCE,
+    );
+    expect(extraction.kind).toBe("proposal");
+    if (extraction.kind !== "proposal") return;
+    expect(statedDimensionsOf(extraction.applicability)).toEqual(["species"]);
+    expect(extraction.applicability.evidence).toEqual({
+      species: "fiske med torsketrål",
+    });
+    expect(extraction.applicability.notes).toBe("Ingen redskap oppgitt.");
+  });
+
   test("keeps a whole condition in exemptions when it is quoted whole", () => {
     const extraction = parseApplicabilityAnswer(
       JSON.stringify({
