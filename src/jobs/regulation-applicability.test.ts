@@ -61,17 +61,25 @@ function harness(options: {
   fragmentBody?: string;
   /** Simulates the projector refusing the proposal (stale base). */
   pointerStaysPut?: boolean;
+  /** Simulates the pathways wait giving up on a durable write. */
+  projectionPending?: boolean;
+  /** Reads of the case pointer before the proposal shows up. */
+  pointerLandsAfterReads?: number;
 }) {
   const written: RegulationRevisionProposed[] = [];
   const prompts: string[] = [];
   const writer = {
-    writeRegulationRevisionProposed: async (
+    writeRegulationRevisionProposedDetailed: async (
       data: RegulationRevisionProposed,
     ) => {
       written.push(data);
-      return "event-1";
+      return {
+        eventId: "event-1",
+        projectionPending: options.projectionPending ?? false,
+      };
     },
   } as never as PathwayWriter;
+  let pointerReads = 0;
   const usable = {
     getFragmentById: async () =>
       options.fragmentBody === undefined
@@ -81,12 +89,18 @@ function harness(options: {
   const queue = {
     listApplicabilityCandidates: async () => options.cases,
     listRevisionGeometries: async () => [],
-    getCurrentRevisionId: async (caseId: string) =>
-      options.pointerStaysPut
-        ? (options.cases.find((entry) => entry.caseId === caseId)
-            ?.currentRevisionId ?? null)
-        : (written.find((event) => event.caseId === caseId)?.revisionId ??
-          null),
+    getCurrentRevisionId: async (caseId: string) => {
+      const base =
+        options.cases.find((entry) => entry.caseId === caseId)
+          ?.currentRevisionId ?? null;
+      if (options.pointerStaysPut) return base;
+      // The projection lands after N reads — the slow-but-successful case.
+      pointerReads += 1;
+      if (pointerReads <= (options.pointerLandsAfterReads ?? 0)) return base;
+      return (
+        written.find((event) => event.caseId === caseId)?.revisionId ?? null
+      );
+    },
   } as never as RegulationQueueRepository;
   const chat = async (messages: Array<{ role: string; content: string }>) => {
     prompts.push(messages[0]?.content ?? "");
@@ -99,6 +113,10 @@ function harness(options: {
     usable,
     queue,
     chat,
+    {
+      intervalMs: 1,
+      timeoutMs: 40,
+    },
   );
   const context = {
     signal: new AbortController().signal,
@@ -181,6 +199,35 @@ describe("regulation-applicability job", () => {
     expect(result.failed[0]?.title).toBe(candidate().title);
   });
 
+  test("a proposal the projection is still catching up on is not a refusal", async () => {
+    const { written, run, context } = harness({
+      cases: [candidate()],
+      // The pathways wait gave up; the event is durable and lands a beat later.
+      projectionPending: true,
+      pointerLandsAfterReads: 2,
+    });
+    const result = resultOf((await run(undefined, {}, context)).message);
+    expect(written).toHaveLength(1);
+    expect(result.failed).toEqual([]);
+    expect(result.proposed[0]?.revisionId).toBe(
+      written[0]?.revisionId as string,
+    );
+  });
+
+  test("a durable write that never lands is projection_pending, naming the revision", async () => {
+    const { written, run, context } = harness({
+      cases: [candidate()],
+      projectionPending: true,
+      pointerStaysPut: true,
+    });
+    const result = resultOf((await run(undefined, {}, context)).message);
+    expect(result.proposed).toEqual([]);
+    expect(result.failed[0]?.reason).toBe("projection_pending");
+    expect(result.failed[0]?.detail).toContain(
+      written[0]?.revisionId as string,
+    );
+  });
+
   test("a gone fragment is durable (no_source_text), an unreadable one transient", async () => {
     const gone = harness({
       cases: [candidate({ snapshotText: null, snapshotFragmentId: "frag-1" })],
@@ -198,7 +245,8 @@ describe("regulation-applicability job", () => {
     const unreadableResult = resultOf(
       (await unreadable.run(undefined, {}, unreadable.context)).message,
     );
-    expect(unreadableResult.failed[0]?.reason).toBe("chat_error");
+    expect(unreadableResult.failed[0]?.reason).toBe("source_unreadable");
+    expect(unreadableResult.failed[0]?.detail).toContain("without content");
   });
 
   test("a transport error writes no event and does not stop the run", async () => {

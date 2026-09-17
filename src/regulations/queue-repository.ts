@@ -53,16 +53,22 @@ export class RegulationQueueRepository {
    * it, exactly as in `listPendingVerdicts`: naming a case is already a
    * human decision to spend, and it is the only RE-extraction path — a case
    * that already has an applicability is not a candidate, so ANDing the two
-   * would select nothing.
+   * would select nothing. A named list is never truncated by `limit` either.
    */
   async listApplicabilityCandidates(options: {
     limit: number;
     caseKeys?: string[];
   }): Promise<ApplicabilityCandidateCase[]> {
+    const named = options.caseKeys ?? [];
     const condition =
-      options.caseKeys && options.caseKeys.length > 0
-        ? inArray(schema.regulationCases.caseKey, options.caseKeys)
+      named.length > 0
+        ? inArray(schema.regulationCases.caseKey, named)
         : isNull(schema.regulationCases.applicability);
+    // A named list is a human asking for exactly those cases; silently
+    // dropping the tail of it past the default limit would look like the
+    // extraction skipped them. The limit still bounds the unnamed backfill,
+    // which is where it earns its keep.
+    const limit = Math.max(options.limit, named.length);
     const rows = await this.db
       .select({
         caseId: schema.regulationCases.id,
@@ -97,7 +103,7 @@ export class RegulationQueueRepository {
         sql`(${schema.regulationCases.jurisdiction} = 'FO') desc`,
         asc(schema.regulationCases.firstSeenAt),
       )
-      .limit(options.limit);
+      .limit(limit);
 
     return rows.map((row) => ({
       caseId: row.caseId,

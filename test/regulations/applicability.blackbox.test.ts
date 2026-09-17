@@ -497,6 +497,35 @@ describe("regulation applicability black-box", () => {
     expect(after.revisions).toHaveLength(before.revisions.length);
   });
 
+  test("a named list of cases is never truncated by the run's limit", async () => {
+    const faroese = await caseDetail(await caseIdOf(CASES.faroese.jmNumber));
+    const norwegian = await caseDetail(
+      await caseIdOf(CASES.norwegian.jmNumber),
+    );
+    await resetJobState();
+    usable.queueEmbedChatAnswer(FAROESE_ANSWER, FAROESE_ANSWER);
+    const started = await adminFetch("/api/jobs/run", {
+      method: "POST",
+      body: JSON.stringify({
+        jobId: JOB_ID,
+        args: {
+          // Two cases named, a limit of one: naming them IS the decision to
+          // spend, so the tail must not be dropped silently.
+          caseKeys: [faroese.case.caseKey, norwegian.case.caseKey],
+          limit: 1,
+        },
+      }),
+    });
+    expect(started.status).toBe(202);
+
+    const result = await lastRunResult();
+    expect(
+      [...result.proposed, ...result.failed]
+        .map((entry) => entry.caseKey)
+        .sort(),
+    ).toEqual([faroese.case.caseKey, norwegian.case.caseKey].sort());
+  });
+
   test("an admin corrects the proposal, approves it, and the published case carries the correction", async () => {
     const caseId = await caseIdOf(CASES.published.jmNumber);
     const detail = await caseDetail(caseId);

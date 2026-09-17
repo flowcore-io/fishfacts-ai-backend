@@ -52,11 +52,25 @@ type Context = {
  * silently, because silence is indistinguishable from "nothing to say". */
 export type ApplicabilityRunFailureReason =
   | "no_source_text"
+  | "source_unreadable"
   | "chat_error"
   | "unparseable"
   | "quote_not_in_source"
   | "value_not_in_source"
-  | "stale_base";
+  | "stale_base"
+  | "projection_pending";
+
+/** The source fragment is there but came back without content — transient,
+ * like a failed chat turn, and named apart from one so a run's output does
+ * not blame the model for the corpus. */
+class SourceUnreadableError extends Error {}
+
+/** How long the job waits for its own proposal to appear before deciding
+ * what happened to it. The handler is local and normally lands in
+ * milliseconds; this covers the case where the pathways wait timed out with
+ * the event already durable, and the projection is still catching up. */
+const POINTER_POLL_INTERVAL_MS = 250;
+const POINTER_POLL_TIMEOUT_MS = 10_000;
 
 export type ApplicabilityRunResult = {
   /** A human sentence, so the job-state screen reads as prose even though
@@ -93,9 +107,10 @@ export type ApplicabilityRunResult = {
  *   source, or a value the source never printed → NO event, and the case
  *   named in `failed` with the reason.
  *   These are durable facts about the case, and a human has to see them;
- * - a transport error (the embed unreachable, a fragment fetch failing) →
- *   no event either, reason `chat_error`. That is not a fact about the text,
- *   so nothing is recorded against the case and the next run retries it.
+ * - a transport error (`chat_error`: the embed unreachable) or a corpus
+ *   fragment that came back contentless (`source_unreadable`) → no event
+ *   either. Those are not facts about the text, so nothing is recorded
+ *   against the case and the next run retries it.
  *
  * Bounded by `limit` because each case costs an LLM call and the first-run
  * backlog is every case ever ingested. Manual only: a job that decides who a
@@ -112,7 +127,37 @@ export function createRegulationApplicabilityJob(
   usable: RegulationApplicabilityUsable,
   queue: RegulationQueueRepository,
   chat: ApplicabilityChat,
+  /** Test seam: the pointer read-back's patience, in milliseconds. */
+  polling: {
+    intervalMs?: number;
+    timeoutMs?: number;
+  } = {},
 ) {
+  const pollIntervalMs = polling.intervalMs ?? POINTER_POLL_INTERVAL_MS;
+  const pollTimeoutMs = polling.timeoutMs ?? POINTER_POLL_TIMEOUT_MS;
+
+  /**
+   * Wait for the case pointer to reach the revision we just proposed.
+   *
+   * A single read would be a race the job usually wins and occasionally
+   * loses: `recoverSlowProjection` returns the moment the pathways wait gives
+   * up, with the event durably written and the handler still running, so an
+   * immediate read shows the OLD pointer for a proposal that lands seconds
+   * later. Polling turns that into the non-event it is.
+   */
+  async function pointerReaches(
+    caseId: string,
+    revisionId: string,
+  ): Promise<boolean> {
+    const deadline = Date.now() + pollTimeoutMs;
+    for (;;) {
+      if ((await queue.getCurrentRevisionId(caseId)) === revisionId)
+        return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+  }
+
   async function sourceTextOf(
     candidate: ApplicabilityCandidateCase,
   ): Promise<string | null> {
@@ -127,8 +172,8 @@ export function createRegulationApplicabilityJob(
     // (present but contentless) IS transient, and throws.
     if (fragment === null) return null;
     if (!fragment.content) {
-      throw new Error(
-        `fragment ${candidate.snapshotFragmentId} is unreadable — retrying next run`,
+      throw new SourceUnreadableError(
+        `fragment ${candidate.snapshotFragmentId} came back without content — retrying next run`,
       );
     }
     return bodyFromContent(fragment.content);
@@ -203,7 +248,7 @@ export function createRegulationApplicabilityJob(
         // delta: the base's fields with applicability replaced, and the
         // base's areas copied across untouched — an omitted area would land
         // as a deleted one.
-        await writer.writeRegulationRevisionProposed({
+        const written = await writer.writeRegulationRevisionProposedDetailed({
           revisionId,
           caseId: candidate.caseId,
           caseKey: candidate.caseKey,
@@ -230,20 +275,35 @@ export function createRegulationApplicabilityJob(
         // because an event is a fact that must not throw on replay. Reading
         // the pointer back is how this job learns its proposal was refused,
         // instead of reporting a revision that does not exist.
-        const current = await queue.getCurrentRevisionId(candidate.caseId);
-        if (current !== revisionId) {
-          failed.push({
-            ...named,
-            reason: "stale_base",
-            detail: `base revision ${candidate.currentRevisionId} was superseded before the proposal landed`,
-          });
+        if (!(await pointerReaches(candidate.caseId, revisionId))) {
+          // A pointer that has not moved is only a REFUSAL if the projection
+          // finished. When the write came back through the slow-recovery path
+          // the event is durable and its handler was still running, so the
+          // honest report is "not landed yet, go look" — naming the revision
+          // so an admin can.
+          failed.push(
+            written.projectionPending
+              ? {
+                  ...named,
+                  reason: "projection_pending",
+                  detail: `revision ${revisionId} is written but had not landed when the run ended — check the case`,
+                }
+              : {
+                  ...named,
+                  reason: "stale_base",
+                  detail: `base revision ${candidate.currentRevisionId} was superseded before the proposal landed`,
+                },
+          );
           continue;
         }
         proposed.push({ ...named, revisionId });
       } catch (error) {
         failed.push({
           ...named,
-          reason: "chat_error",
+          reason:
+            error instanceof SourceUnreadableError
+              ? "source_unreadable"
+              : "chat_error",
           detail: error instanceof Error ? error.message : String(error),
         });
       } finally {
