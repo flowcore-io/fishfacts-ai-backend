@@ -524,7 +524,9 @@ export const regulationCases = pgTable(
     summary: text("summary"),
     // Applicability block (§4) — queryable structure, never free text, so
     // "Applicability differs" can be computed between two records. Shape is
-    // `regulationApplicabilitySchema`; null until an extraction fills it.
+    // `regulationApplicabilitySchema`, including the verbatim source quote
+    // behind each stated dimension (`evidence`) and the extraction's note to
+    // the admin (`notes`); null until an extraction fills it.
     applicability: jsonb("applicability"),
     // Time block (§4). What the source called its own validity is kept in
     // `source_status` verbatim; the instants are normalised for reads.
