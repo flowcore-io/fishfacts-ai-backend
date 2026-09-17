@@ -630,7 +630,9 @@ export const regulationRevisionProposedSchema = z.object({
   /** The complete resulting area set (copied from the base when untouched);
    * empty = the case has no drawable areas. */
   geometries: z.array(regulationRevisionGeometrySchema),
-  /** `admin:<username>` — stamped by the route from the auth token. */
+  /** `admin:<username>` — stamped by the route from the auth token — or
+   * `job:<job id>` when a job proposed the redraft (the applicability
+   * extraction is the first). Either way a human approves it. */
   actor: z.string().min(1),
   recordedAt: z.string().datetime(),
 });

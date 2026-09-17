@@ -3827,7 +3827,10 @@ export const openApiDocument = {
           regulationNumber: { type: "string", nullable: true },
           category: { type: "string", nullable: true },
           summary: { type: "string", nullable: true },
-          applicability: { nullable: true },
+          applicability: {
+            allOf: [{ $ref: "#/components/schemas/RegulationApplicability" }],
+            nullable: true,
+          },
           seasonalRecurrence: { type: "string", nullable: true },
           interpretationNotes: { type: "string", nullable: true },
           effectiveFrom: {
@@ -4153,6 +4156,64 @@ export const openApiDocument = {
           recordedAt: { type: "string", format: "date-time" },
         },
       },
+      RegulationApplicability: {
+        type: "object",
+        description:
+          "Who a regulation applies to (§4), as queryable structure rather than prose. Three states are distinct and all meaningful: the whole block `null` = nobody has extracted it yet; the block present with a dimension key absent = the source states no restriction on that dimension; a dimension key present = the source states that restriction. Values are quoted from the source in ITS OWN language, never translated or broadened.",
+        properties: {
+          species: { type: "array", items: { type: "string" } },
+          gear: { type: "array", items: { type: "string" } },
+          vesselType: { type: "array", items: { type: "string" } },
+          vesselLength: {
+            type: "object",
+            description: 'Bounds as printed, e.g. `{ max: "15 m" }`.',
+            properties: {
+              min: { type: "string" },
+              max: { type: "string" },
+            },
+          },
+          vesselPower: {
+            type: "object",
+            description: 'Bounds as printed, e.g. `{ max: "120 BT" }`.',
+            properties: {
+              min: { type: "string" },
+              max: { type: "string" },
+            },
+          },
+          vesselFlag: { type: "array", items: { type: "string" } },
+          fishery: { type: "array", items: { type: "string" } },
+          permits: { type: "array", items: { type: "string" } },
+          exemptions: { type: "array", items: { type: "string" } },
+          activity: {
+            type: "string",
+            enum: ["prohibited", "allowed"],
+            description:
+              "Whether the listed activity is prohibited or allowed inside the areas — some areas are seasonal PERMISSIONS, not closures.",
+          },
+          evidence: {
+            type: "object",
+            description:
+              "One VERBATIM source quote per stated dimension, keyed by dimension name. The extraction job refuses an answer whose quote is not an exact substring of the source text, so a value the admin sees always has the sentence it came from next to it.",
+            properties: {
+              species: { type: "string" },
+              gear: { type: "string" },
+              vesselType: { type: "string" },
+              vesselLength: { type: "string" },
+              vesselPower: { type: "string" },
+              vesselFlag: { type: "string" },
+              fishery: { type: "string" },
+              permits: { type: "string" },
+              exemptions: { type: "string" },
+              activity: { type: "string" },
+            },
+          },
+          notes: {
+            type: "string",
+            description:
+              "A message to the ADMIN reviewing the proposal, not part of the rule — what the source left unsaid, which article to consult. A source stating no applicability at all yields `{ notes }` and nothing else.",
+          },
+        },
+      },
       RegulationRevisionFields: {
         type: "object",
         description:
@@ -4173,7 +4234,10 @@ export const openApiDocument = {
           expiresAt: { type: "string", format: "date-time", nullable: true },
           seasonalRecurrence: { type: "string", nullable: true },
           interpretationNotes: { type: "string", nullable: true },
-          applicability: { type: "object", nullable: true },
+          applicability: {
+            allOf: [{ $ref: "#/components/schemas/RegulationApplicability" }],
+            nullable: true,
+          },
         },
       },
       RegulationRevisionProposal: {
@@ -4329,10 +4393,12 @@ export const openApiDocument = {
                 properties: {
                   sourceRef: { type: "string" },
                   applicability: {
-                    type: "object",
+                    allOf: [
+                      { $ref: "#/components/schemas/RegulationApplicability" },
+                    ],
                     nullable: true,
                     description:
-                      "Queryable §4 Applicability structure (species, gear, vessel classes, …).",
+                      "Queryable §4 Applicability structure (species, gear, vessel classes, …), with a verbatim source quote per stated dimension.",
                   },
                   sourceStatus: { type: "string" },
                   publishedAt: {
