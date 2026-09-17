@@ -645,6 +645,61 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     }
   });
 
+  /**
+   * Run the applicability extraction for ONE case — the admin-chat affordance
+   * behind "read who this applies to". Mirrors /reverdict: the job is the only
+   * thing that talks to the model, and it proposes a revision an admin still
+   * has to confirm. Naming a caseKey replaces the job's "no applicability yet"
+   * filter, so this is also the RE-extraction path.
+   */
+  app.post("/cases/:id/extract-applicability", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const id = c.req.param("id");
+    if (!CASE_ID.test(id)) return notFound(c);
+    try {
+      const caseRef = await deps.queue.getCaseRef(id.toLowerCase());
+      if (!caseRef) return notFound(c);
+      const started = await deps.jobRunner.startJob(
+        "regulation-applicability",
+        "manual",
+        {
+          caseKeys: [caseRef.caseKey],
+          limit: 1,
+        },
+      );
+      void started.promise.catch((error: unknown) => {
+        console.error("[Regulations] applicability extraction run failed", {
+          caseKey: caseRef.caseKey,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return c.json(
+        {
+          ok: true,
+          caseKey: caseRef.caseKey,
+          jobId: "regulation-applicability",
+          runId: started.runId,
+        },
+        202,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof JobAlreadyRunningError) {
+        return errorResponse(c, 409, API_ERROR.applicabilityJobRunning);
+      }
+      console.error("[Regulations] applicability extraction failed", {
+        caseId: id,
+        message,
+      });
+      return errorResponse(c, 502, API_ERROR.extractApplicabilityFailed, {
+        message,
+      });
+    }
+  });
+
   app.post("/cases/:id/reparse", async (c) => {
     const auth = c.get("auth");
     if (!isAdmin(auth.user.authorities)) {

@@ -1,7 +1,12 @@
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
+import type {
+  RegulationRevisionFields,
+  RegulationRevisionGeometry,
+} from "@/events/contracts";
 import type { RawSyncCase } from "@/regulations/raw-fragment";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { editableFieldsOfCase } from "./revision-fields";
 
 /** A case whose current revision still awaits its verdict, with everything
  * the verdict job needs to ask the question. */
@@ -16,8 +21,140 @@ export type PendingVerdictCase = {
   snapshotFragmentId: string | null;
 };
 
+/** A case awaiting an applicability, with everything the extraction job
+ * needs both to ask the question and to build a self-contained revision
+ * proposal out of the answer. */
+export type ApplicabilityCandidateCase = {
+  caseId: string;
+  caseKey: string;
+  title: string;
+  jurisdiction: string;
+  currentRevisionId: string;
+  snapshotText: string | null;
+  snapshotFragmentId: string | null;
+  /** The base revision's complete field snapshot — a revision event carries
+   * the whole resulting state, so the proposal is this with `applicability`
+   * replaced. */
+  fields: RegulationRevisionFields;
+};
+
 export class RegulationQueueRepository {
   constructor(private readonly db: Database) {}
+
+  /**
+   * Cases with no applicability yet, in the order Johann asked for: the
+   * PUBLISHED cases first (they are what the 1st mate is answering from
+   * today, so a wrong scope there is the one that reaches a fisherman),
+   * then the FAROESE cases (the home water), then the rest — oldest first
+   * inside each band, so a bounded run makes monotone progress instead of
+   * re-reading whatever sorts on top.
+   *
+   * An explicit `caseKeys` list REPLACES the filter rather than narrowing
+   * it, exactly as in `listPendingVerdicts`: naming a case is already a
+   * human decision to spend, and it is the only RE-extraction path — a case
+   * that already has an applicability is not a candidate, so ANDing the two
+   * would select nothing.
+   */
+  async listApplicabilityCandidates(options: {
+    limit: number;
+    caseKeys?: string[];
+  }): Promise<ApplicabilityCandidateCase[]> {
+    const condition =
+      options.caseKeys && options.caseKeys.length > 0
+        ? inArray(schema.regulationCases.caseKey, options.caseKeys)
+        : isNull(schema.regulationCases.applicability);
+    const rows = await this.db
+      .select({
+        caseId: schema.regulationCases.id,
+        caseKey: schema.regulationCases.caseKey,
+        jurisdiction: schema.regulationCases.jurisdiction,
+        currentRevisionId: schema.regulationCases.currentRevisionId,
+        snapshotText: schema.regulationCaseRevisions.snapshotText,
+        snapshotFragmentId: schema.regulationCaseRevisions.snapshotFragmentId,
+        title: schema.regulationCases.title,
+        authority: schema.regulationCases.authority,
+        regulationNumber: schema.regulationCases.regulationNumber,
+        category: schema.regulationCases.category,
+        summary: schema.regulationCases.summary,
+        effectiveFrom: schema.regulationCases.effectiveFrom,
+        effectiveTo: schema.regulationCases.effectiveTo,
+        expiresAt: schema.regulationCases.expiresAt,
+        seasonalRecurrence: schema.regulationCases.seasonalRecurrence,
+        interpretationNotes: schema.regulationCases.interpretationNotes,
+        applicability: schema.regulationCases.applicability,
+      })
+      .from(schema.regulationCases)
+      .innerJoin(
+        schema.regulationCaseRevisions,
+        eq(
+          schema.regulationCaseRevisions.id,
+          schema.regulationCases.currentRevisionId,
+        ),
+      )
+      .where(condition)
+      .orderBy(
+        sql`(${schema.regulationCases.publishedRevisionId} is not null) desc`,
+        sql`(${schema.regulationCases.jurisdiction} = 'FO') desc`,
+        asc(schema.regulationCases.firstSeenAt),
+      )
+      .limit(options.limit);
+
+    return rows.map((row) => ({
+      caseId: row.caseId,
+      caseKey: row.caseKey,
+      title: row.title,
+      jurisdiction: row.jurisdiction,
+      currentRevisionId: row.currentRevisionId,
+      snapshotText: row.snapshotText,
+      snapshotFragmentId: row.snapshotFragmentId,
+      fields: editableFieldsOfCase(row),
+    }));
+  }
+
+  /**
+   * The base revision's areas in the EVENT shape, so a proposal that touches
+   * no geometry still carries the complete resulting area set (revision
+   * events are snapshots, never deltas — an omitted area would read as a
+   * deleted one).
+   */
+  async listRevisionGeometries(
+    revisionId: string,
+  ): Promise<RegulationRevisionGeometry[]> {
+    const rows = await this.db
+      .select({
+        name: schema.regulationCaseGeometries.name,
+        section: schema.regulationCaseGeometries.section,
+        kind: schema.regulationCaseGeometries.kind,
+        season: schema.regulationCaseGeometries.season,
+        verticesQuoted: schema.regulationCaseGeometries.verticesQuoted,
+        points: schema.regulationCaseGeometries.points,
+        geometrySource: schema.regulationCaseGeometries.geometrySource,
+        coordinateSystem: schema.regulationCaseGeometries.coordinateSystem,
+        precision: schema.regulationCaseGeometries.precision,
+      })
+      .from(schema.regulationCaseGeometries)
+      .where(eq(schema.regulationCaseGeometries.revisionId, revisionId))
+      .orderBy(asc(schema.regulationCaseGeometries.position));
+    return rows.map((row) => ({
+      ...row,
+      kind: row.kind as RegulationRevisionGeometry["kind"],
+      verticesQuoted: row.verticesQuoted as string[] | null,
+      points: row.points as RegulationRevisionGeometry["points"],
+      geometrySource:
+        row.geometrySource as RegulationRevisionGeometry["geometrySource"],
+    }));
+  }
+
+  /** The case's current-revision pointer as it stands NOW — how a writer
+   * confirms its proposal actually landed rather than losing a race. */
+  async getCurrentRevisionId(caseId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ currentRevisionId: schema.regulationCases.currentRevisionId })
+      .from(schema.regulationCases)
+      .where(eq(schema.regulationCases.id, caseId))
+      .limit(1);
+    return row?.currentRevisionId ?? null;
+  }
 
   /**
    * Oldest first — a case that has waited longest for its verdict is served
