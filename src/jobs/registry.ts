@@ -25,6 +25,7 @@ import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
 import { createLogasavnClosuresJob } from "./logasavn-closures";
 import { createLogasavnSweepJob } from "./logasavn-sweep";
+import { createRegulationApplicabilityJob } from "./regulation-applicability";
 import { createRegulationPublishedSyncJob } from "./regulation-published-sync";
 import { createRegulationRawSyncJob } from "./regulation-raw-sync";
 import { createRegulationVerdictJob } from "./regulation-verdict";
@@ -168,6 +169,35 @@ export function createJobDefinitions(
         caseKeys: z.array(z.string()).optional(),
       }),
       execute: createRegulationVerdictJob(
+        env,
+        writer,
+        usable,
+        regulationQueueRepository,
+        (messages) => postEmbedChat(env, messages),
+      ),
+    },
+    {
+      id: "regulation-applicability",
+      name: "Regulation applicability proposals (who each rule applies to)",
+      // Manual only, same impossible-date idiom as its siblings and for the
+      // same reasons: it costs an LLM call per case, the first-run backlog is
+      // every case ever ingested, and what it proposes is who a law applies
+      // to — that earns a schedule after admins have confirmed a few rounds
+      // of it. Run via POST /api/jobs/run, or per case via
+      // POST /api/regulations/cases/:id/extract-applicability.
+      schedule: "0 0 31 2 *",
+      inputSchema: z.object({
+        // Cases per run, published → Faroese → the rest. Bounds the spend.
+        limit: z.coerce.number().int().min(1).default(25),
+        // Specific cases (case keys) — the RE-extraction path: an explicit
+        // list bypasses the "no applicability yet" filter and spends on
+        // whatever it names.
+        caseKeys: z.array(z.string()).optional(),
+        // Read, extract and verify the quotes; write nothing. The result
+        // names every case it would have proposed and every one it could not.
+        dryRun: z.coerce.boolean().default(false),
+      }),
+      execute: createRegulationApplicabilityJob(
         env,
         writer,
         usable,

@@ -2314,6 +2314,56 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/regulations/cases/{id}/extract-applicability": {
+      post: {
+        tags: ["Regulations"],
+        summary:
+          "Propose who this regulation applies to, from its text (ADMIN)",
+        description:
+          "Starts the bounded `regulation-applicability` job scoped to this case's key — also the RE-extraction path, since naming a case replaces the job's \"no applicability yet\" filter. The job reads the case's STORED source text through the ingestion embed and proposes the result as a normal revision event that changes only `fields.applicability`, with a verbatim source quote behind every stated dimension. An admin confirms or corrects it (via the ordinary revision flow) and approves; nothing here approves or publishes anything, and approval is never an agent tool. A stated value whose quote is not verbatim in the source fails that case by name in the run result rather than proposing part of it — poll `GET /api/jobs/state` for the run\u0027s outcome.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "202": {
+            description:
+              "Applicability extraction started for this case (`runId`, `jobId`, `caseKey`)",
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "409": {
+            description: "The applicability job is already running",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "502": {
+            description: "Job start failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
     "/api/regulations/cases/{id}/reparse": {
       post: {
         tags: ["Regulations"],

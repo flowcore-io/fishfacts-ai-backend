@@ -26,6 +26,8 @@ export const API_ERROR = {
   noSnapshotText: "no_snapshot_text",
   verdictJobRunning: "verdict_job_running",
   reverdictFailed: "reverdict_failed",
+  applicabilityJobRunning: "applicability_job_running",
+  extractApplicabilityFailed: "extract_applicability_failed",
 } as const;
 export type ApiErrorName = (typeof API_ERROR)[keyof typeof API_ERROR];
 

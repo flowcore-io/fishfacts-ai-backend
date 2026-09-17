@@ -27,6 +27,19 @@ export class FakeUsableServer {
   readonly fragments = new Map<string, Fragment>();
   readonly files = new Map<string, StoredFile>();
   readonly calls: Array<{ method: string; path: string; body?: unknown }> = [];
+  /**
+   * The ingestion embed chat (`POST <baseUrl>/embed-chat?token=…`), answered
+   * from a script. Ingestion never calls a model provider directly — it goes
+   * through the embed, which is the billing boundary — so this is the one
+   * seam a job's model turn can be faked at.
+   *
+   * Answers are served in the order they were queued, and the prompt of every
+   * call is recorded, so a test can assert WHICH case texts the model saw and
+   * in what order. An empty queue answers 503: a missing script is a loud
+   * transport failure, never a silently empty answer.
+   */
+  readonly embedChatPrompts: string[] = [];
+  private readonly embedChatAnswers: string[] = [];
   /** Set to make `POST /files/upload` fail, to exercise the degraded path. */
   failUploads = false;
   /** Set to make the attachment listing fail (a transient upstream 5xx). */
@@ -45,12 +58,31 @@ export class FakeUsableServer {
     this.failUploads = false;
     this.failAttachmentList = false;
     this.calls.length = 0;
+    this.embedChatPrompts.length = 0;
+    this.embedChatAnswers.length = 0;
     this.server = Bun.serve({
       port: this.port,
       hostname: "127.0.0.1",
       fetch: async (request) => {
         const url = new URL(request.url);
         const path = url.pathname.replace(/^\/api/, "");
+        if (path === "/embed-chat" && request.method === "POST") {
+          const body = (await request.json()) as {
+            messages?: Array<{ content?: string }>;
+          };
+          this.embedChatPrompts.push(body.messages?.[0]?.content ?? "");
+          this.calls.push({ method: "POST", path: url.pathname });
+          const answer = this.embedChatAnswers.shift();
+          if (answer === undefined) {
+            return Response.json(
+              { error: "no_answer_queued" },
+              { status: 503 },
+            );
+          }
+          return new Response(embedChatStream(answer), {
+            headers: { "content-type": "text/event-stream" },
+          });
+        }
         if (path === "/memory-fragments" && request.method === "GET") {
           const workspaceId = url.searchParams.get("workspaceId") ?? "";
           const key = url.searchParams.get("key") ?? undefined;
@@ -188,8 +220,32 @@ export class FakeUsableServer {
     });
   }
 
+  /** Queue one answer for the next embed chat turn, in call order. */
+  queueEmbedChatAnswer(...answers: string[]) {
+    this.embedChatAnswers.push(...answers);
+    return this;
+  }
+
   async stop(force = false) {
     await this.server?.stop(force);
     this.server = undefined;
   }
+}
+
+/**
+ * The real embed answers as SSE: `text-delta` frames carry the text,
+ * `token-usage` names the model, and `stream-end` must say `completed` or the
+ * client refuses the answer as possibly truncated. Split in two deltas on
+ * purpose — an assembler that only reads the first frame has to fail here.
+ */
+function embedChatStream(answer: string): string {
+  const half = Math.ceil(answer.length / 2);
+  const frames = [
+    { type: "intent", data: {} },
+    { type: "text-delta", data: { textDelta: answer.slice(0, half) } },
+    { type: "text-delta", data: { textDelta: answer.slice(half) } },
+    { type: "token-usage", data: { model: "fake/test-model" } },
+    { type: "stream-end", data: { status: "completed" } },
+  ];
+  return `${frames.map((frame) => `data: ${JSON.stringify(frame)}`).join("\n\n")}\n\n`;
 }

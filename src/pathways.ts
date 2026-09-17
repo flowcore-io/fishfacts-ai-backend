@@ -118,6 +118,15 @@ export interface PathwayWriter {
   writeRegulationRevisionProposed(
     data: RegulationRevisionProposed,
   ): Promise<string>;
+  /**
+   * The same write, reporting whether the projection was still in flight when
+   * the wait gave up. A caller that confirms its own proposal by reading the
+   * case pointer back needs that distinction: a pointer that has not moved
+   * YET is not a refused proposal.
+   */
+  writeRegulationRevisionProposedDetailed(
+    data: RegulationRevisionProposed,
+  ): Promise<{ eventId: string; projectionPending: boolean }>;
   writeRegulationRevisionPointerMoved(
     data: RegulationRevisionPointerMoved,
   ): Promise<string>;
@@ -189,8 +198,24 @@ export async function recoverSlowProjection(
   label: string,
   doWrite: () => Promise<string | string[]>,
 ): Promise<string | string[]> {
+  return (await recoverSlowProjectionDetailed(label, doWrite)).eventId;
+}
+
+/**
+ * The same recovery, but SAYING which path it took.
+ *
+ * `projectionPending: true` means the write is durable and the handler had
+ * not finished when the wait gave up — so a caller that reads its own
+ * projection back must not read the absence of its row as a refusal. Callers
+ * that only need the id keep using `recoverSlowProjection`; behaviour is
+ * identical either way.
+ */
+export async function recoverSlowProjectionDetailed(
+  label: string,
+  doWrite: () => Promise<string | string[]>,
+): Promise<{ eventId: string | string[]; projectionPending: boolean }> {
   try {
-    return await doWrite();
+    return { eventId: await doWrite(), projectionPending: false };
   } catch (error) {
     const pendingEventId = pendingEventIdOf(error);
     if (pendingEventId === null) throw error;
@@ -198,7 +223,7 @@ export async function recoverSlowProjection(
       "[Pathways] write recorded but projection outran the wait — returning the pending event",
       { label, eventId: pendingEventId },
     );
-    return pendingEventId;
+    return { eventId: pendingEventId, projectionPending: true };
   }
 }
 
@@ -658,26 +683,37 @@ export function createPathwayRuntime(
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeRegulationRevisionProposed(data) {
-        const eventId = await recoverSlowProjection("revision.proposed", () =>
-          (
-            pathways.write as never as (
-              path: typeof REGULATION_REVISION_PROPOSED_PATHWAY,
-              input: {
-                data: RegulationRevisionProposed;
-                metadata: Record<string, unknown>;
+        return (await this.writeRegulationRevisionProposedDetailed(data))
+          .eventId;
+      },
+      async writeRegulationRevisionProposedDetailed(data) {
+        const written = await recoverSlowProjectionDetailed(
+          "revision.proposed",
+          () =>
+            (
+              pathways.write as never as (
+                path: typeof REGULATION_REVISION_PROPOSED_PATHWAY,
+                input: {
+                  data: RegulationRevisionProposed;
+                  metadata: Record<string, unknown>;
+                },
+              ) => Promise<string | string[]>
+            )(REGULATION_REVISION_PROPOSED_PATHWAY, {
+              data,
+              metadata: {
+                source: "fishfacts-ai-backend-api",
+                caseKey: data.caseKey,
+                revisionId: data.revisionId,
+                actor: data.actor,
               },
-            ) => Promise<string | string[]>
-          )(REGULATION_REVISION_PROPOSED_PATHWAY, {
-            data,
-            metadata: {
-              source: "fishfacts-ai-backend-api",
-              caseKey: data.caseKey,
-              revisionId: data.revisionId,
-              actor: data.actor,
-            },
-          }),
+            }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return {
+          eventId: Array.isArray(written.eventId)
+            ? (written.eventId[0] as string)
+            : written.eventId,
+          projectionPending: written.projectionPending,
+        };
       },
       async writeRegulationRevisionPointerMoved(data) {
         const eventId = await recoverSlowProjection("revision.pointer", () =>

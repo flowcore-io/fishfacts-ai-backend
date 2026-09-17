@@ -40,6 +40,10 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationVerdictRecorded: async () => "unused",
       writeRegulationAdminActionRecorded: async () => "unused",
       writeRegulationRevisionProposed: async () => "unused",
+      writeRegulationRevisionProposedDetailed: async () => ({
+        eventId: "unused",
+        projectionPending: false,
+      }),
       writeRegulationRevisionPointerMoved: async () => "unused",
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
@@ -127,6 +131,10 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationVerdictRecorded: async () => "unused",
       writeRegulationAdminActionRecorded: async () => "unused",
       writeRegulationRevisionProposed: async () => "unused",
+      writeRegulationRevisionProposedDetailed: async () => ({
+        eventId: "unused",
+        projectionPending: false,
+      }),
       writeRegulationRevisionPointerMoved: async () => "unused",
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
@@ -251,6 +259,10 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationVerdictRecorded: async () => "unused",
       writeRegulationAdminActionRecorded: async () => "unused",
       writeRegulationRevisionProposed: async () => "unused",
+      writeRegulationRevisionProposedDetailed: async () => ({
+        eventId: "unused",
+        projectionPending: false,
+      }),
       writeRegulationRevisionPointerMoved: async () => "unused",
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
@@ -309,6 +321,10 @@ function stubWriter(): PathwayWriter {
     writeRegulationVerdictRecorded: async () => "unused",
     writeRegulationAdminActionRecorded: async () => "unused",
     writeRegulationRevisionProposed: async () => "unused",
+    writeRegulationRevisionProposedDetailed: async () => ({
+      eventId: "unused",
+      projectionPending: false,
+    }),
     writeRegulationRevisionPointerMoved: async () => "unused",
     writeRegulationValidationRecorded: async () => "unused",
     writeRegulationApprovalRecorded: async () => "unused",
