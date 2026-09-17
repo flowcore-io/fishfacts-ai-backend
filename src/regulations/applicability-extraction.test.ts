@@ -151,6 +151,30 @@ describe("parseApplicabilityAnswer", () => {
     expect(ok.kind).toBe("proposal");
   });
 
+  test("a compound the source prints whole is the value, and it passes", () => {
+    const compoundSource = "Reketrålfiske er forbudt i området hele året.";
+    const extraction = parseApplicabilityAnswer(
+      JSON.stringify({
+        gear: ["Reketrålfiske"],
+        evidence: { gear: "Reketrålfiske er forbudt" },
+      }),
+      compoundSource,
+    );
+    expect(extraction.kind).toBe("proposal");
+
+    // …while the term cut out of the middle of that compound is not.
+    const cutOut = parseApplicabilityAnswer(
+      JSON.stringify({
+        gear: ["Reketrål"],
+        evidence: { gear: "Reketrålfiske er forbudt" },
+      }),
+      compoundSource,
+    );
+    expect(cutOut.kind).toBe("failed");
+    if (cutOut.kind !== "failed") return;
+    expect(cutOut.reason).toBe("value_not_in_source");
+  });
+
   test("an exemption assembled across the text is accepted on its quote", () => {
     const extraction = parseApplicabilityAnswer(
       JSON.stringify({
@@ -270,5 +294,6 @@ describe("buildApplicabilityMessages", () => {
   test("the prompt spells out the two rules the spike turned on", () => {
     expect(APPLICABILITY_INSTRUCTIONS).toContain("OMIT any key");
     expect(APPLICABILITY_INSTRUCTIONS).toContain("CHARACTER-FOR-CHARACTER");
+    expect(APPLICABILITY_INSTRUCTIONS).toContain("EXACT TOKEN");
   });
 });

@@ -70,9 +70,10 @@ Return a single JSON object, no other text. Every key is optional:
 Rules, in order of importance:
 1. OMIT any key the text does not state. An omitted key means "this regulation puts no restriction on that dimension" — which is a real and common answer. Never guess, never infer from the title, never fill a key from general knowledge of the fishery.
 2. Copy values in the SOURCE'S OWN LANGUAGE, exactly as printed. Do not translate, do not normalise, do not generalise: if the text says "torsketrål", the value is "torsketrål" — never "trål" and never "trawl".
-3. Every key you state MUST have an entry in "evidence" holding a quote COPIED CHARACTER-FOR-CHARACTER out of the text above, long enough to contain the value. An answer whose quote cannot be found in the text verbatim is discarded in full.
-4. Put whole conditions into "exemptions" as they read ("fartøy under 15 meter som fisker med garn"), rather than splitting one condition across several keys where it becomes a different rule.
-5. Use "notes" to tell the reviewer what you could not determine and why, or which other regulation they have to consult. If the text states no applicability at all, return {"notes": "..."} and nothing else.`;
+3. Use the EXACT TOKEN the text uses, whole. When the term only ever appears inside a longer compound word, the value is that whole compound as printed: if the text only says "reketrålfiske", the value is "reketrålfiske", not "reketrål" — and quote it the same way. A value cut out of the middle of a word is discarded.
+4. Every key you state MUST have an entry in "evidence" holding a quote COPIED CHARACTER-FOR-CHARACTER out of the text above, long enough to contain the value. An answer whose quote cannot be found in the text verbatim is discarded in full.
+5. Put whole conditions into "exemptions" as they read ("fartøy under 15 meter som fisker med garn"), rather than splitting one condition across several keys where it becomes a different rule.
+6. Use "notes" to tell the reviewer what you could not determine and why, or which other regulation they have to consult. If the text states no applicability at all, return {"notes": "..."} and nothing else.`;
 
 export function buildApplicabilityMessages(input: {
   title: string;
