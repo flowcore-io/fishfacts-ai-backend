@@ -90,12 +90,12 @@ function harness(options: {
     listApplicabilityCandidates: async () => options.cases,
     listRevisionGeometries: async () => [],
     getCurrentRevisionId: async (caseId: string) => {
+      pointerReads += 1;
       const base =
         options.cases.find((entry) => entry.caseId === caseId)
           ?.currentRevisionId ?? null;
       if (options.pointerStaysPut) return base;
       // The projection lands after N reads — the slow-but-successful case.
-      pointerReads += 1;
       if (pointerReads <= (options.pointerLandsAfterReads ?? 0)) return base;
       return (
         written.find((event) => event.caseId === caseId)?.revisionId ?? null
@@ -123,7 +123,7 @@ function harness(options: {
     isStopRequested: () => false,
     reportProgress: () => {},
   };
-  return { written, prompts, run, context };
+  return { written, prompts, run, context, reads: () => pointerReads };
 }
 
 const resultOf = (message: string) =>
@@ -200,7 +200,7 @@ describe("regulation-applicability job", () => {
   });
 
   test("a proposal the projection is still catching up on is not a refusal", async () => {
-    const { written, run, context } = harness({
+    const { written, run, context, reads } = harness({
       cases: [candidate()],
       // The pathways wait gave up; the event is durable and lands a beat later.
       projectionPending: true,
@@ -212,10 +212,12 @@ describe("regulation-applicability job", () => {
     expect(result.proposed[0]?.revisionId).toBe(
       written[0]?.revisionId as string,
     );
+    // It had to look more than once — that is the whole point of the poll.
+    expect(reads()).toBeGreaterThan(1);
   });
 
   test("a durable write that never lands is projection_pending, naming the revision", async () => {
-    const { written, run, context } = harness({
+    const { written, run, context, reads } = harness({
       cases: [candidate()],
       projectionPending: true,
       pointerStaysPut: true,
@@ -226,6 +228,7 @@ describe("regulation-applicability job", () => {
     expect(result.failed[0]?.detail).toContain(
       written[0]?.revisionId as string,
     );
+    expect(reads()).toBeGreaterThan(1);
   });
 
   test("a gone fragment is durable (no_source_text), an unreadable one transient", async () => {
@@ -274,8 +277,8 @@ describe("regulation-applicability job", () => {
     expect(result.failed[0]?.reason).toBe("unparseable");
   });
 
-  test("a proposal the projector refused is reported as stale_base", async () => {
-    const { written, run, context } = harness({
+  test("a proposal the projector refused is stale_base, settled in ONE read", async () => {
+    const { written, run, context, reads } = harness({
       cases: [candidate()],
       pointerStaysPut: true,
     });
@@ -283,6 +286,9 @@ describe("regulation-applicability job", () => {
     expect(written).toHaveLength(1);
     expect(result.proposed).toEqual([]);
     expect(result.failed[0]?.reason).toBe("stale_base");
+    // The await already waited for the handler on this path, so there is
+    // nothing to wait for — a bounded run must not spend its clock here.
+    expect(reads()).toBe(1);
   });
 
   test("a dry run extracts and verifies but writes nothing", async () => {

@@ -139,11 +139,12 @@ export function createRegulationApplicabilityJob(
   /**
    * Wait for the case pointer to reach the revision we just proposed.
    *
-   * A single read would be a race the job usually wins and occasionally
-   * loses: `recoverSlowProjection` returns the moment the pathways wait gives
-   * up, with the event durably written and the handler still running, so an
-   * immediate read shows the OLD pointer for a proposal that lands seconds
-   * later. Polling turns that into the non-event it is.
+   * Only for the SLOW path: `recoverSlowProjection` returns the moment the
+   * pathways wait gives up, with the event durably written and the handler
+   * still running, so an immediate read there shows the OLD pointer for a
+   * proposal that lands seconds later. Polling turns that into the non-event
+   * it is. On the fast path the wait already confirmed the projection, and
+   * one read settles it.
    */
   async function pointerReaches(
     caseId: string,
@@ -275,7 +276,17 @@ export function createRegulationApplicabilityJob(
         // because an event is a fact that must not throw on replay. Reading
         // the pointer back is how this job learns its proposal was refused,
         // instead of reporting a revision that does not exist.
-        if (!(await pointerReaches(candidate.caseId, revisionId))) {
+        //
+        // How hard to look depends on which way the write came back. The
+        // await already waited for the handler, so on the fast path one read
+        // is the whole answer and a pointer that did not move IS a refusal —
+        // waiting 10 s to be told so again would cost a bounded run its
+        // remaining cases. Only the slow-recovery path leaves the projection
+        // genuinely in flight, and only there is it worth polling for.
+        const landed = written.projectionPending
+          ? await pointerReaches(candidate.caseId, revisionId)
+          : (await queue.getCurrentRevisionId(candidate.caseId)) === revisionId;
+        if (!landed) {
           // A pointer that has not moved is only a REFUSAL if the projection
           // finished. When the write came back through the slow-recovery path
           // the event is durable and its handler was still running, so the
