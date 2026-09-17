@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.11.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.10.1...v2.11.0) (2026-09-17)
+
+
+### Features
+
+* **regulations:** applicability evidence, notes and the extraction reader ([#186](https://github.com/flowcore-io/fishfacts-ai-backend/issues/186)) ([85511cf](https://github.com/flowcore-io/fishfacts-ai-backend/commit/85511cf5aa7744bc3e7d04a86dea3dec6b01fc4d))
+* **regulations:** applicability extraction job, backfill order and trigger route ([#187](https://github.com/flowcore-io/fishfacts-ai-backend/issues/187)) ([100742b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/100742b7af27c15474c8f0283e5ce50cf196f6e7))
+
 ## [2.10.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.10.0...v2.10.1) (2026-09-10)
 
 
