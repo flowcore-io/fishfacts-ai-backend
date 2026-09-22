@@ -707,3 +707,36 @@ export const regulationApprovalRecordedSchema = z.object({
 export type RegulationApprovalRecorded = z.infer<
   typeof regulationApprovalRecordedSchema
 >;
+
+export const REGULATION_CASE_NOTE_RECORDED_EVENT_TYPE =
+  "regulation.case.note.recorded.0" as const;
+export const REGULATION_CASE_NOTE_RECORDED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_CASE_NOTE_RECORDED_EVENT_TYPE}` as const;
+
+/**
+ * A private working note an administrator left on a queue case ("check with
+ * Vørn about §3"). Deliberately NOT an admin action: it decides nothing, so
+ * it must not land in the audit trail the case's state is read from, and it
+ * never enters a revision's `fields` — which is what keeps it out of the
+ * published read, the corpus fragment and the 1st mate by construction
+ * rather than by a filter someone has to remember.
+ *
+ * Append-only, like every event: a correction is a second note. `actor` and
+ * `recordedAt` are stamped server-side from the auth token and clock.
+ */
+export const regulationCaseNoteRecordedSchema = z.object({
+  noteId: z.string().uuid(),
+  caseId: z.string().uuid(),
+  /** The source's own identity for the case — carried on every event so the
+   * stream stays greppable without the projection. */
+  caseKey: z.string().min(1),
+  /** The note itself. Bounded well under the 64 000-byte event limit the
+   * pathways chunk store would otherwise be needed for. */
+  text: z.string().trim().min(1).max(4000),
+  /** `admin:<username>`. */
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationCaseNoteRecorded = z.infer<
+  typeof regulationCaseNoteRecordedSchema
+>;

@@ -47,6 +47,8 @@ import {
   REGULATION_ADMIN_ACTION_RECORDED_PATHWAY,
   REGULATION_APPROVAL_RECORDED_EVENT_TYPE,
   REGULATION_APPROVAL_RECORDED_PATHWAY,
+  REGULATION_CASE_NOTE_RECORDED_EVENT_TYPE,
+  REGULATION_CASE_NOTE_RECORDED_PATHWAY,
   REGULATION_FLOW_TYPE,
   REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE,
   REGULATION_REVISION_POINTER_MOVED_PATHWAY,
@@ -58,6 +60,7 @@ import {
   REGULATION_VERDICT_RECORDED_PATHWAY,
   type RegulationAdminActionRecorded,
   type RegulationApprovalRecorded,
+  type RegulationCaseNoteRecorded,
   type RegulationRevisionPointerMoved,
   type RegulationRevisionProposed,
   type RegulationValidationRecorded,
@@ -77,6 +80,7 @@ import {
   poiCreatedSchema,
   regulationAdminActionRecordedSchema,
   regulationApprovalRecordedSchema,
+  regulationCaseNoteRecordedSchema,
   regulationRevisionPointerMovedSchema,
   regulationRevisionProposedSchema,
   regulationValidationRecordedSchema,
@@ -91,6 +95,7 @@ import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import type { PublishedSyncTrigger } from "./jobs/published-sync-trigger";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { RegulationCaseActionProjector } from "./regulations/action-projector";
+import type { RegulationCaseNoteProjector } from "./regulations/note-projector";
 import type { RegulationRevisionProjector } from "./regulations/revision-projector";
 import type { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import type { SildelagetCatchProjector } from "./sildelaget/projector";
@@ -135,6 +140,9 @@ export interface PathwayWriter {
   ): Promise<string>;
   writeRegulationApprovalRecorded(
     data: RegulationApprovalRecorded,
+  ): Promise<string>;
+  writeRegulationCaseNoteRecorded(
+    data: RegulationCaseNoteRecorded,
   ): Promise<string>;
   /**
    * Emit one AIS position fix. `opts.eventTime` is set by the BACKFILL job
@@ -239,6 +247,7 @@ export function createPathwayRuntime(
   poiFragmentProjector: PoiFragmentProjector,
   regulationVerdictProjector: RegulationVerdictProjector,
   regulationCaseActionProjector: RegulationCaseActionProjector,
+  regulationCaseNoteProjector: RegulationCaseNoteProjector,
   regulationRevisionProjector: RegulationRevisionProjector,
   publishedSyncTrigger: PublishedSyncTrigger,
 ): PathwayRuntime {
@@ -403,6 +412,24 @@ export function createPathwayRuntime(
       ) {
         publishedSyncTrigger.schedule(`decline:${parsed.action.kind}`);
       }
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_CASE_NOTE_RECORDED_EVENT_TYPE,
+      schema: regulationCaseNoteRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "Private admin working note on a regulation case; never published",
+    })
+    .handle(REGULATION_CASE_NOTE_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationCaseNoteRecordedSchema.parse(envelope.payload);
+      await regulationCaseNoteProjector.handleRecorded(parsed);
+      // Deliberately no publishedSyncTrigger.schedule: a note changes
+      // nothing a reader can see, so the corpus has nothing to catch up on.
     });
 
   pathways
@@ -798,6 +825,27 @@ export function createPathwayRuntime(
               source: "fishfacts-ai-backend-api",
               caseKey: data.caseKey,
               kind: data.action.kind,
+              actor: data.actor,
+            },
+          }),
+        );
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationCaseNoteRecorded(data) {
+        const eventId = await recoverSlowProjection("case-note", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_CASE_NOTE_RECORDED_PATHWAY,
+              input: {
+                data: RegulationCaseNoteRecorded;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_CASE_NOTE_RECORDED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              caseKey: data.caseKey,
               actor: data.actor,
             },
           }),

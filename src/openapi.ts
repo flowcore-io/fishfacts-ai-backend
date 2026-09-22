@@ -1778,7 +1778,7 @@ export const openApiDocument = {
         tags: ["Regulations"],
         summary: "Fetch one case in full (ADMIN authority required)",
         description:
-          "The case record with its complete revision history (each revision carrying its verdict, snapshot references and per-area geometries), attached sources and replacement links. The revision list is the audit trail the detail screen renders.",
+          "The case record with its complete revision history (each revision carrying its verdict, snapshot references and per-area geometries), attached sources, replacement links and the private admin notes (newest first). The revision list is the audit trail the detail screen renders.",
         security: [{ FishfactsAuthToken: [] }],
         parameters: [
           {
@@ -1857,6 +1857,115 @@ export const openApiDocument = {
           "400": {
             description:
               "Invalid action payload, `duplicate_of_self`, `duplicate_target_not_found`, or `snooze_until_in_past`",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown case id" },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "503": {
+            description: "Queue database unavailable",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/cases/{id}/notes": {
+      post: {
+        tags: ["Regulations"],
+        summary:
+          "Add a private admin note to a case (ADMIN authority required)",
+        description:
+          "Emits `regulation.case.note.recorded.0`; the projector is the only writer of `regulation_case_notes`. A note is a private working aide — it never enters a revision's fields, so it cannot reach the published read model, the Usable corpus fragment or the 1st mate. `actor` (`admin:<username>`) and `recordedAt` are stamped server-side. The handler runs in this service, so the awaited write is already projected and the route answers 201 with the stored row; the 202 is the rare case where the projection outran the wait. Notes are append-only: there is deliberately no update or delete verb, and a correction is a second note.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+            description: "Case id from the queue list.",
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["text"],
+                properties: {
+                  text: {
+                    type: "string",
+                    minLength: 1,
+                    maxLength: 4000,
+                    description:
+                      "The note, trimmed. Whitespace-only is rejected.",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "The stored note",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["note"],
+                  properties: {
+                    note: {
+                      $ref: "#/components/schemas/RegulationCaseNote",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "202": {
+            description:
+              "The note event is durable, but its projection had not landed when the wait gave up",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["noteId", "eventId", "recordedAt"],
+                  properties: {
+                    noteId: { type: "string", format: "uuid" },
+                    eventId: { type: "string" },
+                    recordedAt: { type: "string", format: "date-time" },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description:
+              "`note_text_required` — empty, whitespace-only or over 4000 characters",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ValidationError" },
@@ -4206,6 +4315,28 @@ export const openApiDocument = {
           recordedAt: { type: "string", format: "date-time" },
         },
       },
+      RegulationCaseNote: {
+        type: "object",
+        description:
+          "One private admin working note. Never leaves the admin surface.",
+        required: [
+          "noteId",
+          "caseId",
+          "caseKey",
+          "text",
+          "actor",
+          "recordedAt",
+        ],
+        properties: {
+          noteId: { type: "string", format: "uuid" },
+          caseId: { type: "string", format: "uuid" },
+          caseKey: { type: "string" },
+          text: { type: "string" },
+          actor: { type: "string", description: "`admin:<username>`" },
+          recordedAt: { type: "string", format: "date-time" },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
       RegulationApplicability: {
         type: "object",
         description:
@@ -4431,6 +4562,7 @@ export const openApiDocument = {
           "actions",
           "validations",
           "approvals",
+          "notes",
         ],
         properties: {
           case: {
@@ -4518,6 +4650,12 @@ export const openApiDocument = {
           approvals: {
             type: "array",
             items: { $ref: "#/components/schemas/RegulationCaseApproval" },
+          },
+          notes: {
+            type: "array",
+            description:
+              "Private admin working notes, NEWEST first — the only list here that is not oldest-first. Admin-only: they are absent from every published surface.",
+            items: { $ref: "#/components/schemas/RegulationCaseNote" },
           },
           links: {
             type: "array",
