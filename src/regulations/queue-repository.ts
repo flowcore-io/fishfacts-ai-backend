@@ -6,7 +6,7 @@ import type {
 } from "@/events/contracts";
 import type { RawSyncCase } from "@/regulations/raw-fragment";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { editableFieldsOfCase } from "./revision-fields";
+import { editableFieldsOfCase, snapshotOnlyFieldsOf } from "./revision-fields";
 
 /** A case whose current revision still awaits its verdict, with everything
  * the verdict job needs to ask the question. */
@@ -77,6 +77,9 @@ export class RegulationQueueRepository {
         currentRevisionId: schema.regulationCases.currentRevisionId,
         snapshotText: schema.regulationCaseRevisions.snapshotText,
         snapshotFragmentId: schema.regulationCaseRevisions.snapshotFragmentId,
+        // The snapshot-only fields (`displayName`) live nowhere else, and
+        // the proposal built from this row carries the WHOLE field set.
+        revisionFields: schema.regulationCaseRevisions.fields,
         title: schema.regulationCases.title,
         authority: schema.regulationCases.authority,
         regulationNumber: schema.regulationCases.regulationNumber,
@@ -113,7 +116,10 @@ export class RegulationQueueRepository {
       currentRevisionId: row.currentRevisionId,
       snapshotText: row.snapshotText,
       snapshotFragmentId: row.snapshotFragmentId,
-      fields: editableFieldsOfCase(row),
+      fields: editableFieldsOfCase(
+        row,
+        snapshotOnlyFieldsOf(row.revisionFields),
+      ),
     }));
   }
 

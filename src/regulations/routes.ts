@@ -25,7 +25,11 @@ import type { PoiRepository } from "@/poi/repository";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { RegulationQueueReadRepository } from "./read-repository";
-import { editableFieldsOfCase, fieldValueEquals } from "./revision-fields";
+import {
+  editableFieldsOfCase,
+  fieldValueEquals,
+  snapshotOnlyFieldsOf,
+} from "./revision-fields";
 import { ADMIN_STATUSES } from "./status";
 
 /** Case ids are deterministic UUIDs (`ids.ts`); anything else is a miss
@@ -311,8 +315,16 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
 
       // Derive the change list server-side: the client sends the full draft,
       // the diff against the live case decides what changed, and every
-      // change must arrive with its justification (§12).
-      const baseFields = editableFieldsOfCase(caseRow);
+      // change must arrive with its justification (§12). Snapshot-only
+      // fields (`displayName`) have no case column, so the base for those
+      // comes from the current revision's own snapshot.
+      const currentRevision = await deps.queue.getRevision(
+        caseRow.currentRevisionId,
+      );
+      const baseFields = editableFieldsOfCase(
+        caseRow,
+        snapshotOnlyFieldsOf(currentRevision?.fields),
+      );
       const changedFields = (
         Object.keys(baseFields) as Array<keyof typeof baseFields>
       ).filter(
@@ -755,6 +767,12 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         });
       }
 
+      // A geometry-only re-parse still writes a FULL field snapshot, so it
+      // has to carry the current revision's snapshot-only fields forward or
+      // it would quietly drop the admin's display name.
+      const currentRevision = await deps.queue.getRevision(
+        caseRow.currentRevisionId,
+      );
       const revisionId = randomUUID();
       const recordedAt = new Date().toISOString();
       const eventId = await deps.writer.writeRegulationRevisionProposed({
@@ -769,7 +787,10 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
               "Deterministic re-parse of the stored source snapshot (parser/POI fix rollout path, decision 6).",
           },
         ],
-        fields: editableFieldsOfCase(caseRow),
+        fields: editableFieldsOfCase(
+          caseRow,
+          snapshotOnlyFieldsOf(currentRevision?.fields),
+        ),
         geometries: proposedGeometries,
         actor: `admin:${auth.user.username}`,
         recordedAt,

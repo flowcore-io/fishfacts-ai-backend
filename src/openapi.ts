@@ -3873,6 +3873,12 @@ export const openApiDocument = {
           sourceType: { type: "string" },
           sourceUrl: { type: "string" },
           title: { type: "string" },
+          displayName: {
+            type: "string",
+            nullable: true,
+            description:
+              "The short name an admin gave this regulation, from the PINNED revision — an addition to `title`, never a replacement. Null when none was set. Show it as the heading with a mark that it was shortened, and keep `title` and `regulationNumber` as the legal reference.",
+          },
           authority: { type: "string", nullable: true },
           regulationNumber: { type: "string", nullable: true },
           category: { type: "string", nullable: true },
@@ -4271,6 +4277,13 @@ export const openApiDocument = {
         required: ["title"],
         properties: {
           title: { type: "string" },
+          displayName: {
+            type: "string",
+            nullable: true,
+            maxLength: 120,
+            description:
+              "A short admin-set name for a statute whose official title is unreadably long. Additive: `title` stays the official title. Omitted or null means none; changing it needs a `displayName` justification like any other field.",
+          },
           authority: { type: "string", nullable: true },
           regulationNumber: { type: "string", nullable: true },
           category: { type: "string", nullable: true },

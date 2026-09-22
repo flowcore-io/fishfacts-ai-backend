@@ -421,7 +421,9 @@ export class RegulationRevisionProjector {
       if (pinnedRevision && pinnedRevision.fields === null) {
         await tx
           .update(schema.regulationCaseRevisions)
-          .set({ fields: editableFieldsOfCase(caseRow) })
+          // A snapshot-less revision predates every snapshot-only field, so
+          // there is nothing of that kind to recover for it.
+          .set({ fields: editableFieldsOfCase(caseRow, { displayName: null }) })
           .where(eq(schema.regulationCaseRevisions.id, payload.revisionId));
       }
 

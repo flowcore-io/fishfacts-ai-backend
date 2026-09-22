@@ -41,6 +41,12 @@ export type PublishedRegulation = {
   sourceType: string;
   sourceUrl: string;
   title: string;
+  /** The short name an admin gave this regulation, when they gave one. An
+   * ADDITION to `title`, never a replacement — the official title stays the
+   * legal reference and the thing every citation names. Lives only in the
+   * pinned revision's snapshot, so a pending rename is invisible here until
+   * an approval moves the pin. */
+  displayName: string | null;
   authority: string | null;
   regulationNumber: string | null;
   category: string | null;
@@ -226,6 +232,9 @@ export class RegulationPublishedReadRepository {
         sourceType: caseRow.sourceType,
         sourceUrl: caseRow.sourceUrl,
         title: fields ? fields.title : caseRow.title,
+        // No case-column fallback exists (or should): a snapshot-less pin
+        // predates the field entirely.
+        displayName: fields ? (fields.displayName ?? null) : null,
         authority: fields ? fields.authority : caseRow.authority,
         regulationNumber: fields
           ? fields.regulationNumber

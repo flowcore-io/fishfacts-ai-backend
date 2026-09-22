@@ -42,6 +42,7 @@ import { jmeldingFragmentKey } from "@/jobs/jmelding-fragments";
 import { and, eq, sql } from "drizzle-orm";
 import type { RegulationApplicability } from "./applicability";
 import { caseIdFor, geometryIdFor, revisionIdFor } from "./ids";
+import { snapshotOnlyFieldsOf } from "./revision-fields";
 
 /**
  * Recorded on every revision as `parser_version`. Bump when the projection's
@@ -169,6 +170,7 @@ export class RegulationCaseProjector {
         .select({
           id: schema.regulationCases.id,
           firstSeenAt: schema.regulationCases.firstSeenAt,
+          currentRevisionId: schema.regulationCases.currentRevisionId,
           // The admin-owned editable fields the collector does not carry —
           // they ride into this revision's `fields` snapshot so a pointer
           // move back to it restores the full field state.
@@ -183,8 +185,26 @@ export class RegulationCaseProjector {
         .where(eq(schema.regulationCases.id, caseId));
       const isNewCase = existingCase.length === 0;
       const carried = existingCase[0];
+      // The snapshot-only admin fields have no case column to carry them —
+      // the revision `fields` snapshot is their only home — so they are read
+      // back from the current revision inside this same transaction.
+      const carriedSnapshot = carried?.currentRevisionId
+        ? (
+            await tx
+              .select({ fields: schema.regulationCaseRevisions.fields })
+              .from(schema.regulationCaseRevisions)
+              .where(
+                eq(
+                  schema.regulationCaseRevisions.id,
+                  carried.currentRevisionId,
+                ),
+              )
+              .limit(1)
+          )[0]?.fields
+        : null;
       const fieldsSnapshot: RegulationRevisionFields = {
         title: item.title,
+        displayName: snapshotOnlyFieldsOf(carriedSnapshot).displayName,
         authority: carried?.authority ?? null,
         regulationNumber: carried?.regulationNumber ?? null,
         category: item.category ?? null,

@@ -28,6 +28,7 @@ function publishedItem(
     sourceType: "vorn-veidibann",
     sourceUrl: "https://www.vorn.fo/veidibann-nr-14-2026",
     title: "Veiðibann nr. 14/2026",
+    displayName: null,
     authority: "Vørn",
     regulationNumber: "14/2026",
     category: null,
