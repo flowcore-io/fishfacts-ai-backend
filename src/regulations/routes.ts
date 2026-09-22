@@ -254,10 +254,11 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       });
       return serviceUnavailable(c, API_ERROR.queueUnavailable);
     }
+    const noteId = randomUUID();
+    const recordedAt = new Date().toISOString();
+    let eventId: string;
     try {
-      const noteId = randomUUID();
-      const recordedAt = new Date().toISOString();
-      const eventId = await deps.writer.writeRegulationCaseNoteRecorded({
+      eventId = await deps.writer.writeRegulationCaseNoteRecorded({
         noteId,
         caseId: caseRef.id,
         caseKey: caseRef.caseKey,
@@ -267,16 +268,6 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         actor: `admin:${auth.user.username}`,
         recordedAt,
       });
-      // The note handler runs in THIS service, so the awaited write above
-      // has already been projected: answer with the real row, not an
-      // optimistic echo of the request.
-      const note = await deps.queue.getCaseNote(noteId);
-      if (!note) {
-        // The event is durable and the projection merely outran the wait —
-        // reported as such rather than dressed up as a created resource.
-        return c.json({ noteId, eventId, recordedAt }, 202);
-      }
-      return c.json({ note }, 201);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Regulations] note write failed", {
@@ -285,6 +276,30 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       });
       return flowcoreWriteFailed(c, message);
     }
+    // Past this line the note IS recorded, so nothing below may answer with
+    // a failure: `noteId` is minted per request, so a client that retries a
+    // 502 would write the note twice. The read-back is a courtesy — it turns
+    // the response into the real resource — and its own failure mode is the
+    // same as a projection that has not landed yet.
+    try {
+      // The note handler runs in THIS service, so the awaited write above
+      // has already been projected: answer with the real row, not an
+      // optimistic echo of the request.
+      const note = await deps.queue.getCaseNote(noteId);
+      if (note) return c.json({ note }, 201);
+    } catch (error) {
+      console.error(
+        "[Regulations] note read-back failed after a durable write",
+        {
+          caseId: id,
+          noteId,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+    // The event is durable and only its projection is unconfirmed — reported
+    // as such rather than dressed up as a created resource or as a failure.
+    return c.json({ noteId, eventId, recordedAt }, 202);
   });
 
   // ---------------------------------------------------------------------

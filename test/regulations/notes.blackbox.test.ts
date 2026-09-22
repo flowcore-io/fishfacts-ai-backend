@@ -343,11 +343,18 @@ describe("regulation case notes black-box", () => {
   test("two authors, newest first, and nothing can change a note", async () => {
     const caseId = await caseIdOf(CASES.shared.jmNumber);
     const first = await addNote(adminFetch, caseId, "Gilli says this expired");
+    // `recordedAt` is a server-clock millisecond, so two posts in the same
+    // millisecond would fall to the noteId tie-break and their order would
+    // be arbitrary — which is not what this test is about. A short wait
+    // makes the two instants genuinely distinct, so "newest first" means
+    // what it says.
+    await Bun.sleep(5);
     const second = await addNote(
       secondAdminFetch,
       caseId,
       "Asked Vørn, awaiting an answer",
     );
+    expect(second.recordedAt > first.recordedAt).toBe(true);
 
     const detail = await caseDetail(caseId);
     expect(detail.notes.map((note) => note.noteId)).toEqual([
@@ -358,6 +365,9 @@ describe("regulation case notes black-box", () => {
       `admin:${SECOND_ADMIN_USERNAME}`,
       `admin:${ADMIN_USERNAME}`,
     ]);
+    // Whatever the instants, the list is never out of order.
+    const recorded = detail.notes.map((note) => Date.parse(note.recordedAt));
+    expect(recorded).toEqual([...recorded].sort((a, b) => b - a));
 
     // Append-only is enforced by the ABSENCE of the verb, so the proof is
     // that no mutation route exists at all.
