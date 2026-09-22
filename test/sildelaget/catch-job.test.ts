@@ -47,6 +47,7 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationRevisionPointerMoved: async () => "unused",
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
+      writeRegulationCaseNoteRecorded: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -138,6 +139,7 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationRevisionPointerMoved: async () => "unused",
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
+      writeRegulationCaseNoteRecorded: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -266,6 +268,7 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationRevisionPointerMoved: async () => "unused",
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
+      writeRegulationCaseNoteRecorded: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -328,6 +331,7 @@ function stubWriter(): PathwayWriter {
     writeRegulationRevisionPointerMoved: async () => "unused",
     writeRegulationValidationRecorded: async () => "unused",
     writeRegulationApprovalRecorded: async () => "unused",
+    writeRegulationCaseNoteRecorded: async () => "unused",
     writeAisPositionFixObserved: async () => "unused",
     writeAisPositionFixBatch: async () => [],
   } satisfies PathwayWriter;

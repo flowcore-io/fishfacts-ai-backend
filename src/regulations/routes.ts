@@ -219,6 +219,93 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     }
   });
 
+  /**
+   * A private admin working note on a case. Deliberately NOT an admin
+   * action: a note decides nothing, so it must not appear in the audit
+   * trail the case's state is read from, and it never enters a revision's
+   * `fields` — which is what keeps it out of the published read, the corpus
+   * fragment and the 1st mate by construction rather than by a filter.
+   *
+   * Append-only: there is no update or delete verb here, and that absence
+   * IS the guarantee. A correction is a second note.
+   */
+  const caseNoteSchema = z.object({
+    text: z.string().trim().min(1).max(4000),
+  });
+
+  app.post("/cases/:id/notes", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const id = c.req.param("id");
+    if (!CASE_ID.test(id)) return notFound(c);
+    const body = await c.req.json().catch(() => null);
+    const parsed = caseNoteSchema.safeParse(body);
+    if (!parsed.success) {
+      return invalidPayload(c, { reason: API_REASON.noteTextRequired });
+    }
+    let caseRef: Awaited<
+      ReturnType<RegulationQueueReadRepository["getCaseRef"]>
+    >;
+    try {
+      caseRef = await deps.queue.getCaseRef(id.toLowerCase());
+      if (!caseRef) return notFound(c);
+    } catch (error) {
+      console.error("[Regulations] note case lookup failed", {
+        caseId: id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    }
+    const noteId = randomUUID();
+    const recordedAt = new Date().toISOString();
+    let eventId: string;
+    try {
+      eventId = await deps.writer.writeRegulationCaseNoteRecorded({
+        noteId,
+        caseId: caseRef.id,
+        caseKey: caseRef.caseKey,
+        text: parsed.data.text,
+        // Stamped from the authenticated admin + server clock, never from
+        // the caller — the same posture as every other write here.
+        actor: `admin:${auth.user.username}`,
+        recordedAt,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Regulations] note write failed", {
+        caseId: id,
+        message,
+      });
+      return flowcoreWriteFailed(c, message);
+    }
+    // Past this line the note IS recorded, so nothing below may answer with
+    // a failure: `noteId` is minted per request, so a client that retries a
+    // 502 would write the note twice. The read-back is a courtesy — it turns
+    // the response into the real resource — and its own failure mode is the
+    // same as a projection that has not landed yet.
+    try {
+      // The note handler runs in THIS service, so the awaited write above
+      // has already been projected: answer with the real row, not an
+      // optimistic echo of the request.
+      const note = await deps.queue.getCaseNote(noteId);
+      if (note) return c.json({ note }, 201);
+    } catch (error) {
+      console.error(
+        "[Regulations] note read-back failed after a durable write",
+        {
+          caseId: id,
+          noteId,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+    // The event is durable and only its projection is unconfirmed — reported
+    // as such rather than dressed up as a created resource or as a failure.
+    return c.json({ noteId, eventId, recordedAt }, 202);
+  });
+
   // ---------------------------------------------------------------------
   // B3 — the revision loop. Same posture as the actions route: these
   // handlers stamp and emit events; the projector is the only writer.

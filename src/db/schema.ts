@@ -875,3 +875,32 @@ export const regulationCaseApprovals = pgTable(
     ),
   }),
 );
+
+// Append-only projection of `regulation.case.note.recorded.0` — the private
+// working notes admins leave on a case. Keyed on the event's noteId, so a
+// replay re-lands the same rows instead of doubling them. Separate from
+// `regulation_case_actions` on purpose: a note decides nothing, so it must
+// never be read as part of the case's audit trail, and it is stored on the
+// CASE rather than on a revision — which is what makes it survive a
+// collector amendment and keeps it out of every published surface.
+export const regulationCaseNotes = pgTable(
+  "regulation_case_notes",
+  {
+    noteId: text("note_id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    caseKey: text("case_key").notNull(),
+    text: text("text").notNull(),
+    // `admin:<username>` — stamped by the route from the auth token.
+    actor: text("actor").notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    caseIdx: index("regulation_case_notes_case_idx").on(
+      table.caseId,
+      table.recordedAt,
+    ),
+  }),
+);

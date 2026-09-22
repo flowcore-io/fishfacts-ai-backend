@@ -1,6 +1,6 @@
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 /**
  * Read side of the regulations approval queue (stage ② B1) — what the admin
@@ -185,6 +185,17 @@ export class RegulationQueueReadRepository {
     return row ?? null;
   }
 
+  /** One private note, read back by the write route so it answers with the
+   * projected row rather than an optimistic echo of what it just sent. */
+  async getCaseNote(noteId: string) {
+    const [row] = await this.db
+      .select()
+      .from(schema.regulationCaseNotes)
+      .where(eq(schema.regulationCaseNotes.noteId, noteId))
+      .limit(1);
+    return row ?? null;
+  }
+
   /** The full case row — the write routes read it for the current pointer,
    * validation flags and editable-field base. */
   async getCaseRow(caseId: string) {
@@ -271,6 +282,7 @@ export class RegulationQueueReadRepository {
       actions,
       validations,
       approvals,
+      notes,
     ] = await Promise.all([
       this.db
         .select()
@@ -322,6 +334,19 @@ export class RegulationQueueReadRepository {
         .from(schema.regulationCaseApprovals)
         .where(eq(schema.regulationCaseApprovals.caseId, caseId))
         .orderBy(asc(schema.regulationCaseApprovals.recordedAt)),
+      // Private admin notes, NEWEST first — the only list in this payload
+      // that is not oldest-first. These are a working surface, not an audit
+      // trail: the admin wants the latest reminder at the top. The noteId
+      // tie-break keeps two notes recorded in the same millisecond from
+      // swapping places between reads.
+      this.db
+        .select()
+        .from(schema.regulationCaseNotes)
+        .where(eq(schema.regulationCaseNotes.caseId, caseId))
+        .orderBy(
+          desc(schema.regulationCaseNotes.recordedAt),
+          asc(schema.regulationCaseNotes.noteId),
+        ),
     ]);
     const geometriesByRevision = new Map<string, typeof geometries>();
     for (const geometry of geometries) {
@@ -341,6 +366,7 @@ export class RegulationQueueReadRepository {
       actions,
       validations,
       approvals,
+      notes,
     };
   }
 }

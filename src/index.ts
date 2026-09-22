@@ -38,6 +38,7 @@ import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { RegulationCaseActionProjector } from "./regulations/action-projector";
 import { RegulationCaseProjector } from "./regulations/case-projector";
+import { RegulationCaseNoteProjector } from "./regulations/note-projector";
 import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import {
   RegulationQueueRepository,
@@ -101,6 +102,7 @@ const regulationPublishedReadRepository = new RegulationPublishedReadRepository(
   db,
 );
 const regulationCaseActionProjector = new RegulationCaseActionProjector(db);
+const regulationCaseNoteProjector = new RegulationCaseNoteProjector(db);
 const regulationRevisionProjector = new RegulationRevisionProjector(db);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
@@ -146,6 +148,7 @@ const pathways = createPathwayRuntime(
   poiFragmentProjector,
   regulationVerdictProjector,
   regulationCaseActionProjector,
+  regulationCaseNoteProjector,
   regulationRevisionProjector,
   publishedSyncTrigger,
 );

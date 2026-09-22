@@ -43,6 +43,7 @@ export const API_REASON = {
   justificationForUnchangedField: "justification_for_unchanged_field",
   revisionNotOfCase: "revision_not_of_case",
   geometryNotOfRevision: "geometry_not_of_revision",
+  noteTextRequired: "note_text_required",
 } as const;
 export type ApiReason = (typeof API_REASON)[keyof typeof API_REASON];
 
