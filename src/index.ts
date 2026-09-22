@@ -38,6 +38,8 @@ import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { RegulationCaseActionProjector } from "./regulations/action-projector";
 import { RegulationCaseProjector } from "./regulations/case-projector";
+import { RegulationGroupProjector } from "./regulations/group-projector";
+import { RegulationGroupRepository } from "./regulations/group-repository";
 import { RegulationCaseNoteProjector } from "./regulations/note-projector";
 import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import {
@@ -104,6 +106,8 @@ const regulationPublishedReadRepository = new RegulationPublishedReadRepository(
 const regulationCaseActionProjector = new RegulationCaseActionProjector(db);
 const regulationCaseNoteProjector = new RegulationCaseNoteProjector(db);
 const regulationRevisionProjector = new RegulationRevisionProjector(db);
+const regulationGroupProjector = new RegulationGroupProjector(db);
+const regulationGroupRepository = new RegulationGroupRepository(db);
 const chunkAssembler = new JMeldingChunkAssembler(
   db,
   jmeldingProjector,
@@ -150,6 +154,7 @@ const pathways = createPathwayRuntime(
   regulationCaseActionProjector,
   regulationCaseNoteProjector,
   regulationRevisionProjector,
+  regulationGroupProjector,
   publishedSyncTrigger,
 );
 const jobs = createJobDefinitions(
@@ -213,6 +218,7 @@ const app = createApp({
   reportsClient,
   regulationQueueReadRepository,
   regulationPublishedReadRepository,
+  regulationGroupRepository,
   db,
 });
 

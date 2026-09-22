@@ -565,6 +565,16 @@ export const regulationRevisionFieldsSchema = z.object({
    * still parses; absent reads as null.
    */
   displayName: z.string().trim().min(1).max(120).nullable().optional(),
+  /**
+   * The admin-defined group this regulation is navigated under, or null for
+   * its country's default group. Membership is what USERS see, so it lives
+   * on the revision and reaches them only when an approval moves the pin —
+   * unlike the group's own name and order, which are navigation and take
+   * effect at once. A logical reference: no foreign key, and a group that
+   * has since been retired (or never projected) reads back as the default.
+   * Optional so every snapshot written before this field existed parses.
+   */
+  groupId: z.string().uuid().nullable().optional(),
   authority: z.string().max(200).nullable(),
   regulationNumber: z.string().max(100).nullable(),
   category: z.string().max(200).nullable(),
@@ -748,4 +758,102 @@ export const regulationCaseNoteRecordedSchema = z.object({
 });
 export type RegulationCaseNoteRecorded = z.infer<
   typeof regulationCaseNoteRecordedSchema
+>;
+
+// ---------------------------------------------------------------------
+// Admin-defined regulation groups — the navigation layer skippers read.
+//
+// A group is its OWN entity, not a field on a case: several cases point at
+// one, and renaming or reordering it must not touch a single case. The four
+// events below are the whole write surface, all under the existing
+// regulation flow type (a new flow type is a new chance at the duplicate
+// auto-provisioning failure documented on REGULATION_FLOW_TYPE).
+//
+// Membership deliberately is NOT here: which group a regulation belongs to
+// is what USERS see, so it rides the revision snapshot (`groupId` below) and
+// goes through propose → approve like any other edit. A group's NAME and
+// ORDER are navigation labels, so they take effect at once.
+// ---------------------------------------------------------------------
+
+export const REGULATION_GROUP_CREATED_EVENT_TYPE =
+  "regulation.group.created.0" as const;
+export const REGULATION_GROUP_CREATED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_GROUP_CREATED_EVENT_TYPE}` as const;
+export const REGULATION_GROUP_RENAMED_EVENT_TYPE =
+  "regulation.group.renamed.0" as const;
+export const REGULATION_GROUP_RENAMED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_GROUP_RENAMED_EVENT_TYPE}` as const;
+export const REGULATION_GROUP_REORDERED_EVENT_TYPE =
+  "regulation.group.reordered.0" as const;
+export const REGULATION_GROUP_REORDERED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_GROUP_REORDERED_EVENT_TYPE}` as const;
+export const REGULATION_GROUP_RETIRED_EVENT_TYPE =
+  "regulation.group.retired.0" as const;
+export const REGULATION_GROUP_RETIRED_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${REGULATION_GROUP_RETIRED_EVENT_TYPE}` as const;
+
+/** A group name is a heading in a dropdown, so it is short and never blank;
+ * trimmed on the way in so " Closures " and "Closures" are one name. */
+export const regulationGroupNameSchema = z.string().trim().min(1).max(80);
+
+/**
+ * An admin named a new group under one country. `sortOrder` is decided by
+ * the route (last among that country's active groups) and carried on the
+ * event so a replay rebuilds the same order without re-deriving it.
+ */
+export const regulationGroupCreatedSchema = z.object({
+  groupId: z.string().uuid(),
+  /** The case `jurisdiction` this group belongs to, e.g. `FO`. A group
+   * belongs to exactly one country. */
+  jurisdiction: z.string().min(1).max(50),
+  name: regulationGroupNameSchema,
+  sortOrder: z.number().int().min(0),
+  /** `admin:<username>`. */
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationGroupCreated = z.infer<
+  typeof regulationGroupCreatedSchema
+>;
+
+/** A navigation label changed — no case is touched and nothing needs
+ * re-approving, which is the whole point of holding the name on the group
+ * rather than on every member. */
+export const regulationGroupRenamedSchema = z.object({
+  groupId: z.string().uuid(),
+  name: regulationGroupNameSchema,
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationGroupRenamed = z.infer<
+  typeof regulationGroupRenamedSchema
+>;
+
+/**
+ * The country's groups in their new order, carried in FULL rather than as a
+ * moved-from/moved-to pair: the resulting order is then self-contained under
+ * replay, exactly like a revision carrying its whole field snapshot.
+ */
+export const regulationGroupReorderedSchema = z.object({
+  jurisdiction: z.string().min(1).max(50),
+  groupIds: z.array(z.string().uuid()).min(1),
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationGroupReordered = z.infer<
+  typeof regulationGroupReorderedSchema
+>;
+
+/**
+ * A group an admin no longer wants. Retirement, never deletion: members
+ * keep pointing at it and simply fall back to their country's default
+ * group in the published read, so no approved case is disturbed.
+ */
+export const regulationGroupRetiredSchema = z.object({
+  groupId: z.string().uuid(),
+  actor: z.string().min(1),
+  recordedAt: z.string().datetime(),
+});
+export type RegulationGroupRetired = z.infer<
+  typeof regulationGroupRetiredSchema
 >;

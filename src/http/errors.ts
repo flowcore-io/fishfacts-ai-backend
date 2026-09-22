@@ -28,6 +28,8 @@ export const API_ERROR = {
   reverdictFailed: "reverdict_failed",
   applicabilityJobRunning: "applicability_job_running",
   extractApplicabilityFailed: "extract_applicability_failed",
+  groupNameTaken: "group_name_taken",
+  groupProjectionPending: "group_projection_pending",
 } as const;
 export type ApiErrorName = (typeof API_ERROR)[keyof typeof API_ERROR];
 
@@ -44,6 +46,14 @@ export const API_REASON = {
   revisionNotOfCase: "revision_not_of_case",
   geometryNotOfRevision: "geometry_not_of_revision",
   noteTextRequired: "note_text_required",
+  /** A reorder must name a country's active groups exactly once each. */
+  groupOrderMismatch: "group_order_mismatch",
+  /** The proposed `groupId` is not a group of this case's country. */
+  groupNotOfJurisdiction: "group_not_of_jurisdiction",
+  /** The proposed `groupId` names a retired group. */
+  groupRetired: "group_retired",
+  /** The proposed `groupId` names no group at all. */
+  groupNotFound: "group_not_found",
 } as const;
 export type ApiReason = (typeof API_REASON)[keyof typeof API_REASON];
 
@@ -82,6 +92,10 @@ export const serviceUnavailable = (
     | typeof API_ERROR.publishedUnavailable
     | typeof API_ERROR.poiUnavailable,
 ) => errorResponse(c, 503, error);
+
+/** 409: an ACTIVE group of this country already carries that name. */
+export const groupNameTaken = (c: Context, groupId: string) =>
+  errorResponse(c, 409, API_ERROR.groupNameTaken, { groupId });
 
 export const flowcoreWriteFailed = (c: Context, message: string) =>
   errorResponse(c, 502, API_ERROR.flowcoreWriteFailed, { message });

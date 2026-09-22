@@ -202,9 +202,13 @@ export class RegulationCaseProjector {
               .limit(1)
           )[0]?.fields
         : null;
+      // The admin's short name and their chosen group both ride forward
+      // across a collector amendment.
+      const carriedSnapshotOnly = snapshotOnlyFieldsOf(carriedSnapshot);
       const fieldsSnapshot: RegulationRevisionFields = {
         title: item.title,
-        displayName: snapshotOnlyFieldsOf(carriedSnapshot).displayName,
+        displayName: carriedSnapshotOnly.displayName,
+        groupId: carriedSnapshotOnly.groupId,
         authority: carried?.authority ?? null,
         regulationNumber: carried?.regulationNumber ?? null,
         category: item.category ?? null,

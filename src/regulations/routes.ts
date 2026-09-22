@@ -3,6 +3,7 @@ import { isAdmin, requireAdmin } from "@/auth/admin";
 import {
   type RegulationRevisionChange,
   regulationAdminActionSchema,
+  regulationGroupNameSchema,
   regulationRevisionFieldsSchema,
   regulationRevisionGeometrySchema,
 } from "@/events/contracts";
@@ -13,6 +14,7 @@ import {
   errorResponse,
   flowcoreWriteFailed,
   forbiddenAdminRequired,
+  groupNameTaken,
   invalidPayload,
   invalidQuery,
   notFound,
@@ -24,6 +26,7 @@ import type { PathwayWriter } from "@/pathways";
 import type { PoiRepository } from "@/poi/repository";
 import { Hono } from "hono";
 import { z } from "zod";
+import { type RegulationGroupRepository, groupDto } from "./group-repository";
 import type { RegulationQueueReadRepository } from "./read-repository";
 import {
   editableFieldsOfCase,
@@ -71,6 +74,9 @@ const queueQuerySchema = z.object({
 
 export type RegulationsRouterDeps = {
   queue: RegulationQueueReadRepository;
+  /** The admin-defined navigation groups — read side only; the group
+   * projector is the sole writer. */
+  groups: RegulationGroupRepository;
   writer: PathwayWriter;
   /** B4 agent-tool deps: the POI gazetteer behind resolve_landmark and the
    * job runner behind verdict recompute. */
@@ -443,6 +449,29 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
           reason: API_REASON.justificationForUnchangedField,
           fields: unexplained,
         });
+      }
+
+      // A group is a real entity, so a proposal naming one must name a
+      // usable one: the published read falls back to the country default
+      // for a group that does not exist or has been retired, and an admin
+      // who picked a group deserves to be told rather than to discover the
+      // fallback after approval. Checked only when the group actually
+      // moved, so a redraft of an unrelated field never fails on a group
+      // retired since.
+      const proposedGroupId = parsed.data.fields.groupId ?? null;
+      if (proposedGroupId !== null && changedFields.includes("groupId")) {
+        const group = await deps.groups.getById(proposedGroupId.toLowerCase());
+        if (!group) {
+          return invalidPayload(c, { reason: API_REASON.groupNotFound });
+        }
+        if (group.jurisdiction !== caseRow.jurisdiction) {
+          return invalidPayload(c, {
+            reason: API_REASON.groupNotOfJurisdiction,
+          });
+        }
+        if (group.retiredAt) {
+          return invalidPayload(c, { reason: API_REASON.groupRetired });
+        }
       }
 
       // Materialize the full resulting area set so the event is
@@ -896,6 +925,239 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Regulations] reparse failed", { caseId: id, message });
+      return flowcoreWriteFailed(c, message);
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // Admin-defined groups — the navigation layer under each country.
+  //
+  // Same posture as every other write here: the handler stamps and emits,
+  // the projector is the only writer of `regulation_groups`. These five
+  // differ from the case routes in one way only: the handler is local, so
+  // the write is AWAITED and the projected row is read back and returned
+  // (PATHWAYS-C3 mode 1) — an admin renaming a group in a manager needs the
+  // resulting list, not an event id.
+  //
+  // A group's NAME and ORDER take effect at once because they are
+  // navigation. Which group a regulation belongs to is what users see, so
+  // that rides a proposed revision instead (`groupId` below).
+  // ---------------------------------------------------------------------
+
+  const groupJurisdictionSchema = z.string().trim().min(1).max(50);
+
+  const groupListQuerySchema = z.object({
+    jurisdiction: groupJurisdictionSchema,
+  });
+  const groupCreateSchema = z.object({
+    jurisdiction: groupJurisdictionSchema,
+    name: regulationGroupNameSchema,
+  });
+  const groupRenameSchema = z.object({ name: regulationGroupNameSchema });
+  const groupReorderSchema = z.object({
+    jurisdiction: groupJurisdictionSchema,
+    groupIds: z.array(z.string().uuid()).min(1),
+  });
+
+  /**
+   * Read the projected row back after an awaited write. The wait resolves on
+   * handler completion, so one read normally suffices; the short retry
+   * covers the pathways library's slow-projection recovery, where the event
+   * is durable but the handler had not finished when the wait gave up.
+   */
+  async function readBackGroup(groupId: string) {
+    const deadline = Date.now() + 1000;
+    for (;;) {
+      const group = await deps.groups.getById(groupId);
+      if (group) return group;
+      if (Date.now() >= deadline) return null;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  /** 503, not 502: the event IS durable and the row is moments away — the
+   * caller should re-read, not retry the write. */
+  const groupProjectionPending = (
+    c: Parameters<typeof notFound>[0],
+    groupId: string,
+    eventId: string,
+  ) =>
+    errorResponse(c, 503, API_ERROR.groupProjectionPending, {
+      groupId,
+      eventId,
+    });
+
+  app.get("/groups", async (c) => {
+    const parsed = groupListQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) {
+      return invalidQuery(c, { issues: parsed.error.issues });
+    }
+    try {
+      const groups = await deps.groups.listByJurisdiction(
+        parsed.data.jurisdiction,
+      );
+      return c.json({ groups: groups.map(groupDto) });
+    } catch (error) {
+      console.error("[Regulations] group list failed", {
+        jurisdiction: parsed.data.jurisdiction,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    }
+  });
+
+  app.post("/groups", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const body = await c.req.json().catch(() => null);
+    const parsed = groupCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return invalidPayload(c, { issues: parsed.error.issues });
+    }
+    const { jurisdiction, name } = parsed.data;
+    try {
+      const clash = await deps.groups.findActiveByName(jurisdiction, name);
+      if (clash) return groupNameTaken(c, clash.groupId);
+      // Appended last among the country's ACTIVE groups. Carried on the
+      // event so a replay rebuilds the same order without re-deriving it.
+      const active = await deps.groups.listActive(jurisdiction);
+      const sortOrder = active.reduce(
+        (highest, group) => Math.max(highest, group.sortOrder + 1),
+        0,
+      );
+      const groupId = randomUUID();
+      const eventId = await deps.writer.writeRegulationGroupCreated({
+        groupId,
+        jurisdiction,
+        name,
+        sortOrder,
+        actor: `admin:${auth.user.username}`,
+        recordedAt: new Date().toISOString(),
+      });
+      const group = await readBackGroup(groupId);
+      if (!group) return groupProjectionPending(c, groupId, eventId);
+      return c.json({ group: groupDto(group) }, 201);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Regulations] group create failed", {
+        jurisdiction,
+        message,
+      });
+      return flowcoreWriteFailed(c, message);
+    }
+  });
+
+  app.post("/groups/reorder", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const body = await c.req.json().catch(() => null);
+    const parsed = groupReorderSchema.safeParse(body);
+    if (!parsed.success) {
+      return invalidPayload(c, { issues: parsed.error.issues });
+    }
+    const { jurisdiction, groupIds } = parsed.data;
+    try {
+      // The event carries the FULL resulting order, so the request has to
+      // name the country's active groups exactly once each — a partial list
+      // would leave the unnamed groups at stale positions that no replay
+      // would reproduce.
+      const active = await deps.groups.listActive(jurisdiction);
+      const named = new Set(groupIds);
+      const complete =
+        named.size === groupIds.length &&
+        named.size === active.length &&
+        active.every((group) => named.has(group.groupId));
+      if (!complete) {
+        return invalidPayload(c, { reason: API_REASON.groupOrderMismatch });
+      }
+      const eventId = await deps.writer.writeRegulationGroupReordered({
+        jurisdiction,
+        groupIds,
+        actor: `admin:${auth.user.username}`,
+        recordedAt: new Date().toISOString(),
+      });
+      const first = groupIds[0] as string;
+      const reordered = await readBackGroup(first);
+      if (!reordered) return groupProjectionPending(c, first, eventId);
+      const groups = await deps.groups.listByJurisdiction(jurisdiction);
+      return c.json({ groups: groups.map(groupDto) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Regulations] group reorder failed", {
+        jurisdiction,
+        message,
+      });
+      return flowcoreWriteFailed(c, message);
+    }
+  });
+
+  app.post("/groups/:id/rename", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const groupId = c.req.param("id");
+    if (!CASE_ID.test(groupId)) return notFound(c);
+    const body = await c.req.json().catch(() => null);
+    const parsed = groupRenameSchema.safeParse(body);
+    if (!parsed.success) {
+      return invalidPayload(c, { issues: parsed.error.issues });
+    }
+    try {
+      const existing = await deps.groups.getById(groupId.toLowerCase());
+      if (!existing) return notFound(c);
+      const clash = await deps.groups.findActiveByName(
+        existing.jurisdiction,
+        parsed.data.name,
+      );
+      // Renaming a group to what it already is is a no-op, not a clash.
+      if (clash && clash.groupId !== existing.groupId) {
+        return groupNameTaken(c, clash.groupId);
+      }
+      const eventId = await deps.writer.writeRegulationGroupRenamed({
+        groupId: existing.groupId,
+        name: parsed.data.name,
+        actor: `admin:${auth.user.username}`,
+        recordedAt: new Date().toISOString(),
+      });
+      const group = await readBackGroup(existing.groupId);
+      if (!group) return groupProjectionPending(c, existing.groupId, eventId);
+      return c.json({ group: groupDto(group) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Regulations] group rename failed", { groupId, message });
+      return flowcoreWriteFailed(c, message);
+    }
+  });
+
+  app.post("/groups/:id/retire", async (c) => {
+    const auth = c.get("auth");
+    if (!isAdmin(auth.user.authorities)) {
+      return forbiddenAdminRequired(c);
+    }
+    const groupId = c.req.param("id");
+    if (!CASE_ID.test(groupId)) return notFound(c);
+    try {
+      const existing = await deps.groups.getById(groupId.toLowerCase());
+      if (!existing) return notFound(c);
+      // Already retired: nothing to record, and re-recording would move the
+      // timestamp that says when the admin actually retired it.
+      if (existing.retiredAt) return c.json({ group: groupDto(existing) });
+      const eventId = await deps.writer.writeRegulationGroupRetired({
+        groupId: existing.groupId,
+        actor: `admin:${auth.user.username}`,
+        recordedAt: new Date().toISOString(),
+      });
+      const group = await readBackGroup(existing.groupId);
+      if (!group) return groupProjectionPending(c, existing.groupId, eventId);
+      return c.json({ group: groupDto(group) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Regulations] group retire failed", { groupId, message });
       return flowcoreWriteFailed(c, message);
     }
   });

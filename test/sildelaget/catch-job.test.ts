@@ -48,6 +48,10 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
       writeRegulationCaseNoteRecorded: async () => "unused",
+      writeRegulationGroupCreated: async () => "unused",
+      writeRegulationGroupRenamed: async () => "unused",
+      writeRegulationGroupReordered: async () => "unused",
+      writeRegulationGroupRetired: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -140,6 +144,10 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
       writeRegulationCaseNoteRecorded: async () => "unused",
+      writeRegulationGroupCreated: async () => "unused",
+      writeRegulationGroupRenamed: async () => "unused",
+      writeRegulationGroupReordered: async () => "unused",
+      writeRegulationGroupRetired: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -269,6 +277,10 @@ describe("sildelaget-catchjournal job", () => {
       writeRegulationValidationRecorded: async () => "unused",
       writeRegulationApprovalRecorded: async () => "unused",
       writeRegulationCaseNoteRecorded: async () => "unused",
+      writeRegulationGroupCreated: async () => "unused",
+      writeRegulationGroupRenamed: async () => "unused",
+      writeRegulationGroupReordered: async () => "unused",
+      writeRegulationGroupRetired: async () => "unused",
       writeAisPositionFixObserved: async () => "unused",
       writeAisPositionFixBatch: async () => [],
     } satisfies PathwayWriter;
@@ -332,6 +344,10 @@ function stubWriter(): PathwayWriter {
     writeRegulationValidationRecorded: async () => "unused",
     writeRegulationApprovalRecorded: async () => "unused",
     writeRegulationCaseNoteRecorded: async () => "unused",
+    writeRegulationGroupCreated: async () => "unused",
+    writeRegulationGroupRenamed: async () => "unused",
+    writeRegulationGroupReordered: async () => "unused",
+    writeRegulationGroupRetired: async () => "unused",
     writeAisPositionFixObserved: async () => "unused",
     writeAisPositionFixBatch: async () => [],
   } satisfies PathwayWriter;

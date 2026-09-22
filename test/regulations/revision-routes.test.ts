@@ -148,6 +148,7 @@ function makeApp(caseOverrides: Partial<typeof CASE_ROW> = {}) {
     createRegulationsRouter({
       queue,
       writer,
+      groups: { getById: async () => null } as never,
       poi: { list: async () => [] } as never,
       jobRunner: {
         startJob: async () => ({ promise: Promise.resolve() }),

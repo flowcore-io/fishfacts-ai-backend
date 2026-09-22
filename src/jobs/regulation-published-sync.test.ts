@@ -29,6 +29,12 @@ function publishedItem(
     sourceUrl: "https://www.vorn.fo/veidibann-nr-14-2026",
     title: "Veiðibann nr. 14/2026",
     displayName: null,
+    group: {
+      id: "default:FO:vorn-veidibann",
+      name: "Veiðibann",
+      sortOrder: 1003,
+      isDefault: true,
+    },
     authority: "Vørn",
     regulationNumber: "14/2026",
     category: null,

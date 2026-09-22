@@ -2,6 +2,7 @@ import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import type { RegulationRevisionFields } from "@/events/contracts";
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { RegulationGroupRepository } from "./group-repository";
 
 /**
  * Read side of the PUBLISHED lane (stage ③) — what the user-facing 1st mate
@@ -19,6 +20,70 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
  * publishes may take: without a snapshot, a redraft's column writes would
  * leak straight into the published view.
  */
+
+/**
+ * The navigation group a regulation is listed under.
+ *
+ * Every published regulation has one: when the pinned revision names an
+ * admin group that still exists and is active, that group; otherwise the
+ * country's DEFAULT group, synthesised from the source type so day one
+ * looks exactly like the source-based rows users had before groups existed.
+ *
+ * Groups are only ever reached THROUGH a member, which is what makes an
+ * empty group and a retired group structurally invisible here rather than
+ * filtered out by a rule someone could forget.
+ */
+export type PublishedRegulationGroup = {
+  /** An admin group's uuid, or `default:<jurisdiction>:<sourceType>`. */
+  id: string;
+  name: string;
+  /** Ascending. Admin groups come first; defaults sort after all of them. */
+  sortOrder: number;
+  isDefault: boolean;
+};
+
+/**
+ * The default group names, byte-identical to the FE's `SOURCE_TYPE_LABELS`
+ * (`src/other/regulations/publishedRegulations.ts`) — these ARE the rows the
+ * map's Regulations dropdown shows today, so day one under groups has to
+ * read the same. Copied rather than imported: different repositories.
+ * An unmapped source type falls through to its own name, exactly as
+ * `publishedSourceLabel` does.
+ */
+const DEFAULT_GROUP_LABELS: Record<string, string> = {
+  "fiskeridir-jmelding": "J-melding closures",
+  "fiskistofa-wfs": "Closures",
+  logasavn: "Statutory closures",
+  "vorn-veidibann": "Veiðibann",
+};
+
+/**
+ * Default groups sort after every admin group. The floor is far above any
+ * plausible admin count — a country's groups are named by hand, and a
+ * reorder assigns positions from an array index — so an admin group can
+ * never sort below a default.
+ */
+const DEFAULT_GROUP_SORT_FLOOR = 1000;
+
+/** Their order among themselves, so the default rows keep a stable
+ * sequence whatever mix of sources a read returns. Unmapped source types
+ * sort last, among themselves by name. */
+const DEFAULT_GROUP_ORDER = Object.keys(DEFAULT_GROUP_LABELS);
+
+function defaultGroupOf(
+  jurisdiction: string,
+  sourceType: string,
+): PublishedRegulationGroup {
+  const known = DEFAULT_GROUP_ORDER.indexOf(sourceType);
+  return {
+    id: `default:${jurisdiction}:${sourceType}`,
+    name: DEFAULT_GROUP_LABELS[sourceType] ?? sourceType,
+    sortOrder:
+      DEFAULT_GROUP_SORT_FLOOR +
+      (known === -1 ? DEFAULT_GROUP_ORDER.length : known),
+    isDefault: true,
+  };
+}
 
 export type PublishedRegulationGeometry = {
   id: string;
@@ -47,6 +112,9 @@ export type PublishedRegulation = {
    * pinned revision's snapshot, so a pending rename is invisible here until
    * an approval moves the pin. */
   displayName: string | null;
+  /** The navigation group this regulation is listed under — an admin group
+   * from the PINNED revision, or the country's default. Never null. */
+  group: PublishedRegulationGroup;
   authority: string | null;
   regulationNumber: string | null;
   category: string | null;
@@ -80,7 +148,11 @@ export type PublishedListFilters = {
 };
 
 export class RegulationPublishedReadRepository {
-  constructor(private readonly db: Database) {}
+  private readonly groups: RegulationGroupRepository;
+
+  constructor(private readonly db: Database) {
+    this.groups = new RegulationGroupRepository(db);
+  }
 
   /**
    * The published set is small by construction (each entry cost a human
@@ -163,7 +235,11 @@ export class RegulationPublishedReadRepository {
     const revisionIds = cases.map(
       (row) => row.publishedRevisionId as string, // isNotNull-filtered above
     );
-    const [revisions, geometries] = await Promise.all([
+    // Active groups of only the countries in this read: the published set
+    // is always read per jurisdiction, and a retired group is deliberately
+    // not fetched — its members fall back to their country default.
+    const jurisdictions = [...new Set(cases.map((row) => row.jurisdiction))];
+    const [revisions, geometries, activeGroups] = await Promise.all([
       this.db
         .select({
           id: schema.regulationCaseRevisions.id,
@@ -188,7 +264,11 @@ export class RegulationPublishedReadRepository {
         .from(schema.regulationCaseGeometries)
         .where(inArray(schema.regulationCaseGeometries.revisionId, revisionIds))
         .orderBy(asc(schema.regulationCaseGeometries.position)),
+      this.groups.listActiveForJurisdictions(jurisdictions),
     ]);
+    const groupsById = new Map(
+      activeGroups.map((group) => [group.groupId, group]),
+    );
     const fieldsByRevision = new Map(
       revisions.map((revision) => [revision.id, revision.fields]),
     );
@@ -205,6 +285,27 @@ export class RegulationPublishedReadRepository {
       });
       geometriesByRevision.set(revisionId, list);
     }
+    /** The pinned snapshot's group when it is still an ACTIVE group of this
+     * regulation's own country, else the country default. The jurisdiction
+     * re-check matters: a case can be re-ingested under a different region,
+     * and a group belongs to exactly one country. */
+    const groupOf = (
+      caseRow: typeof schema.regulationCases.$inferSelect,
+      fields: RegulationRevisionFields | null | undefined,
+    ): PublishedRegulationGroup => {
+      const groupId = fields?.groupId ?? null;
+      const group = groupId ? groupsById.get(groupId) : undefined;
+      if (!group || group.jurisdiction !== caseRow.jurisdiction) {
+        return defaultGroupOf(caseRow.jurisdiction, caseRow.sourceType);
+      }
+      return {
+        id: group.groupId,
+        name: group.name,
+        sortOrder: group.sortOrder,
+        isDefault: false,
+      };
+    };
+
     return cases.map((caseRow) => {
       const revisionId = caseRow.publishedRevisionId as string;
       const fields = fieldsByRevision.get(revisionId) as
@@ -235,6 +336,7 @@ export class RegulationPublishedReadRepository {
         // No case-column fallback exists (or should): a snapshot-less pin
         // predates the field entirely.
         displayName: fields ? (fields.displayName ?? null) : null,
+        group: groupOf(caseRow, fields),
         authority: fields ? fields.authority : caseRow.authority,
         regulationNumber: fields
           ? fields.regulationNumber

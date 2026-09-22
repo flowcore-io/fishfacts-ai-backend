@@ -904,3 +904,48 @@ export const regulationCaseNotes = pgTable(
     ),
   }),
 );
+
+/**
+ * Projection of the four `regulation.group.*` events — the admin-defined
+ * navigation layer under each country. A group is an entity of its own, so
+ * renaming or reordering one is a single row write and disturbs no case.
+ *
+ * No foreign keys, in either direction: a revision snapshot's `groupId` is a
+ * logical reference (DRIZZLE-C1), so a revision naming a group whose
+ * `created` event has not projected yet still lands and simply reads back
+ * under its country's default group.
+ *
+ * Retirement is a timestamp, never a delete — members keep pointing at the
+ * row and the published read decides what a retired group means.
+ */
+export const regulationGroups = pgTable(
+  "regulation_groups",
+  {
+    // `group` is a reserved word in Postgres; the table and every column
+    // carry the `group_` prefix or the plural so no bare identifier is ever
+    // emitted. `group` appears only as a JSON key in the published payload.
+    groupId: text("group_id").primaryKey(),
+    // The case `jurisdiction` this group belongs to. A group belongs to
+    // exactly one country — there are no cross-country groups.
+    jurisdiction: text("jurisdiction").notNull(),
+    name: text("name").notNull(),
+    // Position among that country's groups, ascending. Written from the
+    // reorder event's array index, so the order is rebuildable.
+    sortOrder: integer("sort_order").notNull().default(0),
+    // Non-null = retired. Kept out of every user-facing read, still listed
+    // for admins so they can see what happened to a name they remember.
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    jurisdictionIdx: index("regulation_groups_jurisdiction_idx").on(
+      table.jurisdiction,
+      table.sortOrder,
+    ),
+  }),
+);

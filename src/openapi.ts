@@ -2041,7 +2041,7 @@ export const openApiDocument = {
           },
           "400": {
             description:
-              "Invalid draft: `no_changes`, `missing_justification`, `justification_for_unchanged_field`, or schema violation",
+              "Invalid draft: `no_changes`, `missing_justification`, `justification_for_unchanged_field`, `group_not_found`, `group_not_of_jurisdiction`, `group_retired`, or schema violation",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ValidationError" },
@@ -2515,6 +2515,344 @@ export const openApiDocument = {
               },
             },
           },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/groups": {
+      get: {
+        tags: ["Regulations"],
+        summary:
+          "List one country's regulation groups (ADMIN authority required)",
+        description:
+          "The admin-defined navigation groups of a single country, ordered as the group manager lists them. Retired groups are INCLUDED, with `retiredAt` set, so an admin can see what became of a name they remember; the published read never shows them.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "jurisdiction",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Case jurisdiction, e.g. `FO`.",
+          },
+        ],
+        responses: {
+          "200": {
+            description: "The country's groups, ascending by sort order",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["groups"],
+                  properties: {
+                    groups: {
+                      type: "array",
+                      items: {
+                        $ref: "#/components/schemas/RegulationGroup",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Missing or invalid `jurisdiction`",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        tags: ["Regulations"],
+        summary: "Create a regulation group (ADMIN authority required)",
+        description:
+          "Emits `regulation.group.created.0` and returns the PROJECTED group. The new group is appended last among the country's active groups. Creating a group changes nothing for users until a regulation is placed in it and that placement is approved.",
+        security: [{ FishfactsAuthToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["jurisdiction", "name"],
+                properties: {
+                  jurisdiction: { type: "string" },
+                  name: { type: "string", minLength: 1, maxLength: 80 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "The created group",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["group"],
+                  properties: {
+                    group: { $ref: "#/components/schemas/RegulationGroup" },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Blank or over-long name, or missing jurisdiction",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "409": {
+            description:
+              "`group_name_taken` — an active group of that country already carries the name (case-insensitive); the body names its `groupId`",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/groups/reorder": {
+      post: {
+        tags: ["Regulations"],
+        summary:
+          "Reorder a country's regulation groups (ADMIN authority required)",
+        description:
+          "Emits `regulation.group.reordered.0` carrying the FULL resulting order, so `groupIds` must name that country's ACTIVE groups exactly once each. Order is navigation, so it reaches users at once — no case leaves the approved state.",
+        security: [{ FishfactsAuthToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["jurisdiction", "groupIds"],
+                properties: {
+                  jurisdiction: { type: "string" },
+                  groupIds: {
+                    type: "array",
+                    items: { type: "string", format: "uuid" },
+                    minItems: 1,
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "The country's groups in their new order",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["groups"],
+                  properties: {
+                    groups: {
+                      type: "array",
+                      items: {
+                        $ref: "#/components/schemas/RegulationGroup",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description:
+              "`group_order_mismatch` — `groupIds` is not exactly the country's active groups",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/groups/{id}/rename": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Rename a regulation group (ADMIN authority required)",
+        description:
+          "Emits `regulation.group.renamed.0`. A group name is a navigation label, so it reaches users immediately and no member case is touched or needs re-approving.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["name"],
+                properties: {
+                  name: { type: "string", minLength: 1, maxLength: 80 },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "The renamed group",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["group"],
+                  properties: {
+                    group: { $ref: "#/components/schemas/RegulationGroup" },
+                  },
+                },
+              },
+            },
+          },
+          "400": {
+            description: "Blank or over-long name",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ValidationError" },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown group id" },
+          "409": {
+            description:
+              "`group_name_taken` — another active group of that country already carries the name",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+          "502": {
+            description: "Flowcore event write failed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
+      },
+    },
+    "/api/regulations/groups/{id}/retire": {
+      post: {
+        tags: ["Regulations"],
+        summary: "Retire a regulation group (ADMIN authority required)",
+        description:
+          "Emits `regulation.group.retired.0`. Retirement, never deletion: members keep their `groupId` and simply read back under their country's default group, so no approved case is disturbed. Retiring an already-retired group is a no-op that returns it unchanged.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string", format: "uuid" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "The retired group, with `retiredAt` set",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["group"],
+                  properties: {
+                    group: { $ref: "#/components/schemas/RegulationGroup" },
+                  },
+                },
+              },
+            },
+          },
+          "401": { description: "Missing or invalid x-auth-token" },
+          "403": {
+            description: "Caller lacks the ADMIN authority",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ForbiddenError" },
+              },
+            },
+          },
+          "404": { description: "Unknown group id" },
           "502": {
             description: "Flowcore event write failed",
             content: {
@@ -3854,6 +4192,28 @@ export const openApiDocument = {
           },
         ],
       },
+      RegulationGroup: {
+        type: "object",
+        description:
+          "An admin-defined navigation group under one country. Its name and order are navigation, so they take effect at once; which regulations belong to it rides the approval pin.",
+        required: ["groupId", "jurisdiction", "name", "sortOrder", "retiredAt"],
+        properties: {
+          groupId: { type: "string", format: "uuid" },
+          jurisdiction: { type: "string" },
+          name: { type: "string", maxLength: 80 },
+          sortOrder: {
+            type: "integer",
+            description: "Ascending position among that country's groups.",
+          },
+          retiredAt: {
+            type: "string",
+            format: "date-time",
+            nullable: true,
+            description:
+              "Non-null = retired. Listed for admins; never shown to users.",
+          },
+        },
+      },
       RegulationQueueCase: {
         type: "object",
         description:
@@ -3987,6 +4347,26 @@ export const openApiDocument = {
             nullable: true,
             description:
               "The short name an admin gave this regulation, from the PINNED revision — an addition to `title`, never a replacement. Null when none was set. Show it as the heading with a mark that it was shortened, and keep `title` and `regulationNumber` as the legal reference.",
+          },
+          group: {
+            type: "object",
+            description:
+              "The navigation group this regulation is listed under, resolved from the PINNED revision. Always present: when the admin group it names no longer exists or has been retired, the country's DEFAULT group for its source type is returned instead (`isDefault: true`, id `default:<jurisdiction>:<sourceType>`), which is what makes an ungrouped estate read exactly like the source-based rows. A group is only ever reachable through a member, so an empty group never appears.",
+            required: ["id", "name", "sortOrder", "isDefault"],
+            properties: {
+              id: {
+                type: "string",
+                description:
+                  "An admin group's uuid, or `default:<jurisdiction>:<sourceType>`.",
+              },
+              name: { type: "string" },
+              sortOrder: {
+                type: "integer",
+                description:
+                  "Ascending. Admin groups come first; default groups sort after all of them.",
+              },
+              isDefault: { type: "boolean" },
+            },
           },
           authority: { type: "string", nullable: true },
           regulationNumber: { type: "string", nullable: true },
@@ -4414,6 +4794,13 @@ export const openApiDocument = {
             maxLength: 120,
             description:
               "A short admin-set name for a statute whose official title is unreadably long. Additive: `title` stays the official title. Omitted or null means none; changing it needs a `displayName` justification like any other field.",
+          },
+          groupId: {
+            type: "string",
+            format: "uuid",
+            nullable: true,
+            description:
+              "The admin-defined group this regulation is navigated under; null means its country's default group. Membership is what users see, so it travels the propose \u2192 approve path like any other field and needs a `groupId` justification. The group must exist, belong to this case's jurisdiction and not be retired, or the proposal is refused with `group_not_found` / `group_not_of_jurisdiction` / `group_retired`.",
           },
           authority: { type: "string", nullable: true },
           regulationNumber: { type: "string", nullable: true },
