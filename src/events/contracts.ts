@@ -556,6 +556,15 @@ export const REGULATION_APPROVAL_RECORDED_PATHWAY =
  */
 export const regulationRevisionFieldsSchema = z.object({
   title: z.string().min(1).max(500),
+  /**
+   * A short admin-set name for a statute whose official title runs four
+   * lines. It is an ADDITION, never a replacement: `title` stays the
+   * official title everywhere it is cited (the corpus fragment, the popup's
+   * legal reference), and a regulation without one is shown by its title as
+   * before. Optional so every snapshot written before this field existed
+   * still parses; absent reads as null.
+   */
+  displayName: z.string().trim().min(1).max(120).nullable().optional(),
   authority: z.string().max(200).nullable(),
   regulationNumber: z.string().max(100).nullable(),
   category: z.string().max(200).nullable(),

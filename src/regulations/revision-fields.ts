@@ -6,10 +6,27 @@ import type { RegulationApplicability } from "./applicability";
 type CaseRow = typeof schema.regulationCases.$inferSelect;
 
 /**
+ * The editable fields that have NO case column — they live only in the
+ * revision `fields` snapshot, so anything rebuilding a full snapshot from
+ * the case row has to read them back from the current revision or its
+ * proposal would silently clear them.
+ */
+export type SnapshotOnlyFields = Pick<RegulationRevisionFields, "displayName">;
+
+/** Those same fields read back out of a stored (or absent) snapshot. */
+export function snapshotOnlyFieldsOf(fields: unknown): SnapshotOnlyFields {
+  const snapshot = (fields ?? {}) as Partial<RegulationRevisionFields>;
+  return { displayName: snapshot.displayName ?? null };
+}
+
+/**
  * The editable-field snapshot of a case row, in the event-contract shape
  * (ISO instants, explicit nulls). Every revision — collector or redraft —
  * stores one of these, so moving the current-revision pointer restores the
  * full field state without replaying a delta chain.
+ *
+ * `snapshotOnly` is passed rather than defaulted so a caller cannot forget
+ * that the case row is not the whole truth any more.
  */
 export function editableFieldsOfCase(
   row: Pick<
@@ -26,9 +43,11 @@ export function editableFieldsOfCase(
     | "interpretationNotes"
     | "applicability"
   >,
+  snapshotOnly: SnapshotOnlyFields,
 ): RegulationRevisionFields {
   return {
     title: row.title,
+    displayName: snapshotOnly.displayName,
     authority: row.authority,
     regulationNumber: row.regulationNumber,
     category: row.category,
@@ -78,6 +97,8 @@ export function caseColumnsOfFields(
 ): Partial<typeof schema.regulationCases.$inferInsert> {
   return {
     title: fields.title,
+    // `displayName` has no column on purpose: the revision snapshot is its
+    // only home, so a redraft cannot leak it into the published read.
     authority: fields.authority,
     regulationNumber: fields.regulationNumber,
     category: fields.category,
