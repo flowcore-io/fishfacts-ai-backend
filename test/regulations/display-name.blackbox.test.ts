@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import postgres from "postgres";
 import { AppProcess } from "../fixtures/app-process";
 import { FakeFishfactsServer } from "../fixtures/fake-fishfacts";
-import { FakeUsableServer } from "../fixtures/fake-usable";
+import { FakeUsableServer, frontmatterOf } from "../fixtures/fake-usable";
 import { WebhookTestFixture } from "../fixtures/webhook.fixture";
 
 const APP_PORT = 4480;
@@ -371,7 +371,7 @@ describe("regulation display name black-box", () => {
     expect((await publishedRead())?.displayName).toBe(SECOND_NAME);
   });
 
-  test("the corpus fragment the 1st mate retrieves keeps the official title", async () => {
+  test("the corpus fragment the 1st mate retrieves speaks the approved short name and still cites the official title", async () => {
     const published = await publishedRead();
     const fragment = await waitFor(async () => {
       return (
@@ -385,12 +385,19 @@ describe("regulation display name black-box", () => {
       );
     }, "the published-corpus fragment was never synced");
 
+    // The official title is what every answer cites: it stays the title and
+    // the heading, and the short name never replaces it.
     expect(fragment.title).toBe(OFFICIAL_TITLE);
-    expect(fragment.content).toContain(`# ${OFFICIAL_TITLE}`);
-    // The short name is an admin's label for a UI heading — it is not what
-    // an answer cites, so it never reaches the retrieval corpus.
-    expect(fragment.content).not.toContain(SECOND_NAME);
     expect(fragment.title).not.toContain(SECOND_NAME);
+    expect(fragment.content).toContain(`# ${OFFICIAL_TITLE}\n`);
+    // The approved short name rides beside it, directly under the heading, so
+    // the 1st mate speaks the name skippers see on the map — and only the
+    // APPROVED one: the first name was replaced by the second approval.
+    expect(fragment.content).toContain(
+      `# ${OFFICIAL_TITLE}\n\nShort name (set by FishFacts admins): ${SECOND_NAME}\n`,
+    );
+    expect(fragment.content).not.toContain(FIRST_NAME);
+    expect(frontmatterOf(fragment.content)?.displayName).toBe(SECOND_NAME);
   });
 
   test("an amended source text keeps the display name the admin set", async () => {

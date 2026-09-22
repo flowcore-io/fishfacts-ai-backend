@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import postgres from "postgres";
 import { AppProcess } from "../fixtures/app-process";
 import { FakeFishfactsServer } from "../fixtures/fake-fishfacts";
-import { FakeUsableServer } from "../fixtures/fake-usable";
+import { FakeUsableServer, frontmatterOf } from "../fixtures/fake-usable";
 import { WebhookTestFixture } from "../fixtures/webhook.fixture";
 
 const APP_PORT = 4480;
@@ -330,12 +330,24 @@ describe("regulation case notes black-box", () => {
       async () =>
         // Found by the case key the fragment states in its own frontmatter,
         // rather than by re-deriving the sanitized fragment key here.
-        Array.from(usable.fragments.values()).find((entry) =>
-          entry.content.includes(detail.case.caseKey),
+        Array.from(usable.fragments.values()).find(
+          (entry) =>
+            entry.key?.startsWith("regulation-published-") &&
+            entry.content.includes(detail.case.caseKey),
         ),
       "the published fragment was never synced",
     );
+    // The fragment now carries admin-set names too (short name, group), so
+    // every admin-authored part of it is checked, not only the body: the
+    // frontmatter values, the tags, the title and the summary.
+    expect(fragment.content).toContain("\nGroup: ");
     expect(fragment.content).not.toContain(SENTINEL);
+    const frontmatter = frontmatterOf(fragment.content);
+    expect(frontmatter?.caseKey).toBe(detail.case.caseKey);
+    expect(JSON.stringify(frontmatter)).not.toContain(SENTINEL);
+    expect(JSON.stringify(fragment.tags ?? [])).not.toContain(SENTINEL);
+    expect(fragment.title).not.toContain(SENTINEL);
+    expect(fragment.summary ?? "").not.toContain(SENTINEL);
     // …and nothing the sync SENT carried it either, fragment or not.
     expect(JSON.stringify(usable.calls)).not.toContain(SENTINEL);
   }, 60000);

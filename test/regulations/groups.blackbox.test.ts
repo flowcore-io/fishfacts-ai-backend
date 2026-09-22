@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import postgres from "postgres";
 import { AppProcess } from "../fixtures/app-process";
 import { FakeFishfactsServer } from "../fixtures/fake-fishfacts";
-import { FakeUsableServer } from "../fixtures/fake-usable";
+import { FakeUsableServer, frontmatterOf } from "../fixtures/fake-usable";
 import { WebhookTestFixture } from "../fixtures/webhook.fixture";
 
 const APP_PORT = 4500;
@@ -36,7 +36,9 @@ const BODY = "Tað er forboðið at fiska við botntroli í økinum.";
  * them without touching a concurrently developed suite's rows. */
 const GROUP_PREFIX = "gp-test ";
 const GROUP_NAME = `${GROUP_PREFIX}Foreign-flag fishing 2026`;
-const GROUP_RENAMED = `${GROUP_PREFIX}Foreign flags 2026`;
+/** Hostile on purpose: `: ` and ` #` break a raw YAML scalar, so this name
+ * only reads back from a corpus fragment's frontmatter if it was quoted. */
+const GROUP_RENAMED = `${GROUP_PREFIX}Foreign-flag: 2026 #1`;
 const EMPTY_GROUP_NAME = `${GROUP_PREFIX}Nobody in here`;
 const FOREIGN_GROUP_NAME = `${GROUP_PREFIX}Faroese waters`;
 
@@ -317,6 +319,71 @@ async function waitFor<T>(
   throw new Error(message);
 }
 
+type CorpusFragment = { id: string; content: string; tags?: string[] };
+
+/** The members' published-corpus fragments as the fake Usable holds them. */
+function memberFragments(): Array<CorpusFragment | undefined> {
+  return MEMBERS.map((member) =>
+    Array.from(usable.fragments.values()).find(
+      (fragment) =>
+        fragment.key?.startsWith("regulation-published-") &&
+        fragment.key.endsWith(member.jmNumber),
+    ),
+  );
+}
+
+/** Wait until every member's corpus fragment names this group — what the
+ * scheduled sync writes after the change, with nobody running it. */
+async function waitForCorpusGroup(
+  group: { id: string; name: string },
+  message: string,
+): Promise<CorpusFragment[]> {
+  return await waitFor(async () => {
+    const fragments = memberFragments();
+    const all = fragments.every((fragment) => {
+      const frontmatter = fragment ? frontmatterOf(fragment.content) : null;
+      return (
+        frontmatter?.groupId === group.id &&
+        frontmatter?.groupName === group.name
+      );
+    });
+    return all ? (fragments as CorpusFragment[]) : null;
+  }, message);
+}
+
+/** Every corpus write addressed to one of these fragments. */
+function patchesTo(fragments: CorpusFragment[]): number {
+  const paths = new Set(
+    fragments.map((fragment) => `/api/memory-fragments/${fragment.id}`),
+  );
+  return usable.calls.filter(
+    (call) => call.method === "PATCH" && paths.has(call.path),
+  ).length;
+}
+
+/**
+ * Wait until the published sync has gone quiet: no Usable traffic for longer
+ * than the trigger's debounce (3 s). Afterwards nothing an earlier event
+ * scheduled is still pending, so whatever rewrites the corpus next was
+ * scheduled by what the test does next.
+ */
+async function waitForQuietSync(): Promise<void> {
+  const quietMs = 4000;
+  const deadline = Date.now() + 30000;
+  let seen = usable.calls.length;
+  let since = Date.now();
+  while (Date.now() < deadline) {
+    await Bun.sleep(100);
+    if (usable.calls.length !== seen) {
+      seen = usable.calls.length;
+      since = Date.now();
+    } else if (Date.now() - since >= quietMs) {
+      return;
+    }
+  }
+  throw new Error("the published sync never went quiet");
+}
+
 /** Wait for a landed proposal to become the current revision. */
 async function waitForCurrentRevision(
   caseId: string,
@@ -480,6 +547,25 @@ describe("regulation groups black-box", () => {
     }
   });
 
+  test("a member's corpus fragment names its group, by name for the 1st mate and by id in the tag", async () => {
+    const fragments = await waitForCorpusGroup(
+      { id: groupId, name: GROUP_NAME },
+      "the approval's sync never wrote the group into the corpus",
+    );
+    for (const fragment of fragments) {
+      expect(fragment.content).toContain(`\nGroup: ${GROUP_NAME}\n`);
+      expect(frontmatterOf(fragment.content)?.groupIsDefault).toBe(false);
+      expect(fragment.tags).toContain(`group:${groupId}`);
+      // The name is free text and never a tag: a space fails the tag pattern.
+      expect(fragment.tags?.some((tag) => tag.includes(GROUP_NAME))).toBe(
+        false,
+      );
+    }
+    // Let the approvals' syncs finish, so the rename below is the only thing
+    // left that could rewrite these fragments.
+    await waitForQuietSync();
+  }, 60000);
+
   test("renaming and reordering reach users at once and leave every member approved", async () => {
     const before = await Promise.all(
       caseIds.map(async (caseId) => {
@@ -534,6 +620,37 @@ describe("regulation groups black-box", () => {
     }
   });
 
+  test("a rename alone rewrites the members' corpus fragments, and a hostile name then reads as current", async () => {
+    // No approval and no manual run since the rename: only the sync the
+    // rename itself scheduled can put the new name here.
+    const fragments = await waitForCorpusGroup(
+      { id: groupId, name: GROUP_RENAMED },
+      "a group rename never reached the corpus",
+    );
+    for (const fragment of fragments) {
+      expect(fragment.content).toContain(`\nGroup: ${GROUP_RENAMED}\n`);
+      expect(fragment.content).not.toContain(`Group: ${GROUP_NAME}\n`);
+      expect(fragment.tags).toContain(`group:${groupId}`);
+    }
+    await waitForQuietSync();
+
+    // A second sync over the same state must find both fragments current —
+    // a name the frontmatter could not round-trip would rewrite them on every
+    // sync, forever.
+    const writesBefore = patchesTo(fragments);
+    const run = await adminFetch("/api/jobs/run", {
+      method: "POST",
+      body: JSON.stringify({ jobId: "regulation-published-sync" }),
+    });
+    expect(run.status).toBe(202);
+    await waitFor(async () => {
+      const response = await adminFetch("/api/jobs/state");
+      const state = (await response.json()) as { runningJobIds: string[] };
+      return !state.runningJobIds.includes("regulation-published-sync");
+    }, "the manual published sync never finished");
+    expect(patchesTo(fragments)).toBe(writesBefore);
+  }, 60000);
+
   test("an empty group and a retired group never reach users", async () => {
     // A group with no approved member is unreachable: groups are only ever
     // read through a member.
@@ -583,13 +700,26 @@ describe("regulation groups black-box", () => {
       groups.find((group) => group.groupId === emptyGroupId)?.retiredAt,
     ).toBeNull();
 
+    // And the corpus follows on its own: the members' fragments fall back
+    // to the default group's name, id and tag.
+    const fragments = await waitForCorpusGroup(
+      { id: DEFAULT_GROUP_ID, name: DEFAULT_GROUP_NAME },
+      "a group retirement never reached the corpus",
+    );
+    for (const fragment of fragments) {
+      expect(fragment.content).toContain(`\nGroup: ${DEFAULT_GROUP_NAME}\n`);
+      expect(frontmatterOf(fragment.content)?.groupIsDefault).toBe(true);
+      expect(fragment.tags).toContain(`group:${DEFAULT_GROUP_ID}`);
+      expect(fragment.tags).not.toContain(`group:${groupId}`);
+    }
+
     // Retiring it again is a no-op rather than a second retirement.
     const again = await adminFetch(
       `/api/regulations/groups/${groupId}/retire`,
       { method: "POST" },
     );
     expect(again.status).toBe(200);
-  });
+  }, 60000);
 
   test("blank, duplicate, unknown, mis-ordered and non-admin group writes are all refused", async () => {
     const blank = await createGroup("   ");
