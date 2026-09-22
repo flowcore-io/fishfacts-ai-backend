@@ -563,6 +563,10 @@ export function createPathwayRuntime(
       const envelope = event as { eventId: string; payload: unknown };
       const parsed = regulationGroupRenamedSchema.parse(envelope.payload);
       await regulationGroupProjector.handleRenamed(parsed);
+      // A group name is printed in every member's corpus fragment and is not
+      // a revision field, so nothing else would ever rewrite them — the
+      // same trigger approval uses, effective as soon as the debounce lets it.
+      publishedSyncTrigger.schedule("group.renamed");
     });
 
   pathways
@@ -595,6 +599,9 @@ export function createPathwayRuntime(
       const envelope = event as { eventId: string; payload: unknown };
       const parsed = regulationGroupRetiredSchema.parse(envelope.payload);
       await regulationGroupProjector.handleRetired(parsed);
+      // Retiring moves every member back to its country default group,
+      // which their corpus fragments have to say.
+      publishedSyncTrigger.schedule("group.retired");
     });
 
   pathways
