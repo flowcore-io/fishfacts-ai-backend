@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.12.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.11.0...v2.12.0) (2026-09-22)
+
+
+### Features
+
+* **regulations:** admin-defined regulation groups per country ([#192](https://github.com/flowcore-io/fishfacts-ai-backend/issues/192)) ([00fb683](https://github.com/flowcore-io/fishfacts-ai-backend/commit/00fb683e0173f827aa1ec1586e191f45572975a4))
+* **regulations:** admin-set display name on a regulation revision ([#189](https://github.com/flowcore-io/fishfacts-ai-backend/issues/189)) ([15e367b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/15e367b14e181a17767c3644cbb3b10b949227c3))
+* **regulations:** private admin notes on a regulation case ([#190](https://github.com/flowcore-io/fishfacts-ai-backend/issues/190)) ([782e07e](https://github.com/flowcore-io/fishfacts-ai-backend/commit/782e07e29a83a6c7f035a8d657f5cc5c1d5cfb6d))
+
 ## [2.11.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.10.1...v2.11.0) (2026-09-17)
 
 
