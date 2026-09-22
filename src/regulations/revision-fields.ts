@@ -11,12 +11,18 @@ type CaseRow = typeof schema.regulationCases.$inferSelect;
  * the case row has to read them back from the current revision or its
  * proposal would silently clear them.
  */
-export type SnapshotOnlyFields = Pick<RegulationRevisionFields, "displayName">;
+export type SnapshotOnlyFields = Pick<
+  RegulationRevisionFields,
+  "displayName" | "groupId"
+>;
 
 /** Those same fields read back out of a stored (or absent) snapshot. */
 export function snapshotOnlyFieldsOf(fields: unknown): SnapshotOnlyFields {
   const snapshot = (fields ?? {}) as Partial<RegulationRevisionFields>;
-  return { displayName: snapshot.displayName ?? null };
+  return {
+    displayName: snapshot.displayName ?? null,
+    groupId: snapshot.groupId ?? null,
+  };
 }
 
 /**
@@ -48,6 +54,7 @@ export function editableFieldsOfCase(
   return {
     title: row.title,
     displayName: snapshotOnly.displayName,
+    groupId: snapshotOnly.groupId,
     authority: row.authority,
     regulationNumber: row.regulationNumber,
     category: row.category,
@@ -97,8 +104,9 @@ export function caseColumnsOfFields(
 ): Partial<typeof schema.regulationCases.$inferInsert> {
   return {
     title: fields.title,
-    // `displayName` has no column on purpose: the revision snapshot is its
-    // only home, so a redraft cannot leak it into the published read.
+    // `displayName` and `groupId` have no column on purpose: the revision
+    // snapshot is their only home, so a redraft cannot leak either of them
+    // into the published read.
     authority: fields.authority,
     regulationNumber: fields.regulationNumber,
     category: fields.category,

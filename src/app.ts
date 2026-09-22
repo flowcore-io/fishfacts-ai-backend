@@ -32,6 +32,7 @@ import { openApiDocument } from "./openapi";
 import type { PathwayRuntime } from "./pathways";
 import type { PoiRepository } from "./poi/repository";
 import { createPoiRouter } from "./poi/routes";
+import type { RegulationGroupRepository } from "./regulations/group-repository";
 import type { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import { createPublishedRegulationsRouter } from "./regulations/published-routes";
 import type { RegulationQueueReadRepository } from "./regulations/read-repository";
@@ -67,6 +68,7 @@ export type AppDependencies = {
   reportsClient: ReportsClient | null;
   regulationQueueReadRepository: RegulationQueueReadRepository;
   regulationPublishedReadRepository: RegulationPublishedReadRepository;
+  regulationGroupRepository: RegulationGroupRepository;
   db: Database;
 };
 
@@ -92,6 +94,7 @@ export function createApp({
   reportsClient,
   regulationQueueReadRepository,
   regulationPublishedReadRepository,
+  regulationGroupRepository,
   db,
 }: AppDependencies) {
   const app = new Hono();
@@ -176,6 +179,7 @@ export function createApp({
     "/api/regulations",
     createRegulationsRouter({
       queue: regulationQueueReadRepository,
+      groups: regulationGroupRepository,
       writer: pathways.writer,
       poi: poiRepository,
       jobRunner,

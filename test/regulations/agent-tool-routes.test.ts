@@ -142,6 +142,7 @@ function makeApp(
     createRegulationsRouter({
       queue,
       writer,
+      groups: { getById: async () => null } as never,
       poi: { list: async () => POIS } as never,
       jobRunner: {
         startJob: async (jobId: string, _trigger: string, args: unknown) => {

@@ -190,6 +190,13 @@
       "when": 1790090225768,
       "tag": "0026_normal_roulette",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790091697034,
+      "tag": "0027_silly_slyde",
+      "breakpoints": true
     }
   ]
 }

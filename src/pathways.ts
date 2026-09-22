@@ -50,6 +50,14 @@ import {
   REGULATION_CASE_NOTE_RECORDED_EVENT_TYPE,
   REGULATION_CASE_NOTE_RECORDED_PATHWAY,
   REGULATION_FLOW_TYPE,
+  REGULATION_GROUP_CREATED_EVENT_TYPE,
+  REGULATION_GROUP_CREATED_PATHWAY,
+  REGULATION_GROUP_RENAMED_EVENT_TYPE,
+  REGULATION_GROUP_RENAMED_PATHWAY,
+  REGULATION_GROUP_REORDERED_EVENT_TYPE,
+  REGULATION_GROUP_REORDERED_PATHWAY,
+  REGULATION_GROUP_RETIRED_EVENT_TYPE,
+  REGULATION_GROUP_RETIRED_PATHWAY,
   REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE,
   REGULATION_REVISION_POINTER_MOVED_PATHWAY,
   REGULATION_REVISION_PROPOSED_EVENT_TYPE,
@@ -61,6 +69,10 @@ import {
   type RegulationAdminActionRecorded,
   type RegulationApprovalRecorded,
   type RegulationCaseNoteRecorded,
+  type RegulationGroupCreated,
+  type RegulationGroupRenamed,
+  type RegulationGroupReordered,
+  type RegulationGroupRetired,
   type RegulationRevisionPointerMoved,
   type RegulationRevisionProposed,
   type RegulationValidationRecorded,
@@ -81,6 +93,10 @@ import {
   regulationAdminActionRecordedSchema,
   regulationApprovalRecordedSchema,
   regulationCaseNoteRecordedSchema,
+  regulationGroupCreatedSchema,
+  regulationGroupRenamedSchema,
+  regulationGroupReorderedSchema,
+  regulationGroupRetiredSchema,
   regulationRevisionPointerMovedSchema,
   regulationRevisionProposedSchema,
   regulationValidationRecordedSchema,
@@ -95,6 +111,7 @@ import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import type { PublishedSyncTrigger } from "./jobs/published-sync-trigger";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { RegulationCaseActionProjector } from "./regulations/action-projector";
+import type { RegulationGroupProjector } from "./regulations/group-projector";
 import type { RegulationCaseNoteProjector } from "./regulations/note-projector";
 import type { RegulationRevisionProjector } from "./regulations/revision-projector";
 import type { RegulationVerdictProjector } from "./regulations/verdict-projector";
@@ -144,6 +161,12 @@ export interface PathwayWriter {
   writeRegulationCaseNoteRecorded(
     data: RegulationCaseNoteRecorded,
   ): Promise<string>;
+  writeRegulationGroupCreated(data: RegulationGroupCreated): Promise<string>;
+  writeRegulationGroupRenamed(data: RegulationGroupRenamed): Promise<string>;
+  writeRegulationGroupReordered(
+    data: RegulationGroupReordered,
+  ): Promise<string>;
+  writeRegulationGroupRetired(data: RegulationGroupRetired): Promise<string>;
   /**
    * Emit one AIS position fix. `opts.eventTime` is set by the BACKFILL job
    * (= location.timestamp) so the event lands in its historical hour-bucket and
@@ -249,6 +272,7 @@ export function createPathwayRuntime(
   regulationCaseActionProjector: RegulationCaseActionProjector,
   regulationCaseNoteProjector: RegulationCaseNoteProjector,
   regulationRevisionProjector: RegulationRevisionProjector,
+  regulationGroupProjector: RegulationGroupProjector,
   publishedSyncTrigger: PublishedSyncTrigger,
 ): PathwayRuntime {
   const runtimeEnv =
@@ -504,6 +528,73 @@ export function createPathwayRuntime(
       // read repository either way, and telling the cases apart here would
       // duplicate the projector's own rules.
       publishedSyncTrigger.schedule("approval.recorded");
+    });
+
+  // The admin-defined navigation layer. Four event types rather than one
+  // discriminated union: the payloads share nothing but the actor, and each
+  // has its own idempotency rule under replay.
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_GROUP_CREATED_EVENT_TYPE,
+      schema: regulationGroupCreatedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator created a named regulation group under one country",
+    })
+    .handle(REGULATION_GROUP_CREATED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationGroupCreatedSchema.parse(envelope.payload);
+      await regulationGroupProjector.handleCreated(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_GROUP_RENAMED_EVENT_TYPE,
+      schema: regulationGroupRenamedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator renamed a regulation group (a navigation label, effective at once)",
+    })
+    .handle(REGULATION_GROUP_RENAMED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationGroupRenamedSchema.parse(envelope.payload);
+      await regulationGroupProjector.handleRenamed(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_GROUP_REORDERED_EVENT_TYPE,
+      schema: regulationGroupReorderedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator reordered one country's regulation groups (the full resulting order)",
+    })
+    .handle(REGULATION_GROUP_REORDERED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationGroupReorderedSchema.parse(envelope.payload);
+      await regulationGroupProjector.handleReordered(parsed);
+    });
+
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_GROUP_RETIRED_EVENT_TYPE,
+      schema: regulationGroupRetiredSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator retired a regulation group; its members fall back to the country default",
+    })
+    .handle(REGULATION_GROUP_RETIRED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationGroupRetiredSchema.parse(envelope.payload);
+      await regulationGroupProjector.handleRetired(parsed);
     });
 
   pathways
@@ -846,6 +937,93 @@ export function createPathwayRuntime(
             metadata: {
               source: "fishfacts-ai-backend-api",
               caseKey: data.caseKey,
+              actor: data.actor,
+            },
+          }),
+        );
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationGroupCreated(data) {
+        const eventId = await recoverSlowProjection("group.created", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_GROUP_CREATED_PATHWAY,
+              input: {
+                data: RegulationGroupCreated;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_GROUP_CREATED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              jurisdiction: data.jurisdiction,
+              name: data.name,
+              actor: data.actor,
+            },
+          }),
+        );
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationGroupRenamed(data) {
+        const eventId = await recoverSlowProjection("group.renamed", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_GROUP_RENAMED_PATHWAY,
+              input: {
+                data: RegulationGroupRenamed;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_GROUP_RENAMED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              groupId: data.groupId,
+              name: data.name,
+              actor: data.actor,
+            },
+          }),
+        );
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationGroupReordered(data) {
+        const eventId = await recoverSlowProjection("group.reordered", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_GROUP_REORDERED_PATHWAY,
+              input: {
+                data: RegulationGroupReordered;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_GROUP_REORDERED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              jurisdiction: data.jurisdiction,
+              count: data.groupIds.length,
+              actor: data.actor,
+            },
+          }),
+        );
+        return Array.isArray(eventId) ? eventId[0] : eventId;
+      },
+      async writeRegulationGroupRetired(data) {
+        const eventId = await recoverSlowProjection("group.retired", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_GROUP_RETIRED_PATHWAY,
+              input: {
+                data: RegulationGroupRetired;
+                metadata: Record<string, unknown>;
+              },
+            ) => Promise<string | string[]>
+          )(REGULATION_GROUP_RETIRED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              groupId: data.groupId,
               actor: data.actor,
             },
           }),
