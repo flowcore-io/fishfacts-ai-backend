@@ -249,3 +249,18 @@ function embedChatStream(answer: string): string {
   ];
   return `${frames.map((frame) => `data: ${JSON.stringify(frame)}`).join("\n\n")}\n\n`;
 }
+
+/**
+ * A stored fragment's YAML frontmatter, parsed the way any Usable reader
+ * would — so a test can assert what a synced fragment SAYS without importing
+ * the app's own parser. null when there is no block or it does not parse.
+ */
+export function frontmatterOf(content: string): Record<string, unknown> | null {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!match) return null;
+  try {
+    return Bun.YAML.parse(match[1] ?? "") as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}

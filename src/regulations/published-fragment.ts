@@ -32,6 +32,33 @@ function windowLine(item: PublishedRegulation): string {
   return `${item.effectiveFrom?.toISOString() ?? "…"} → ${end?.toISOString() ?? "…"}`;
 }
 
+/**
+ * A frontmatter string value, JSON-quoted. The block is hand-written and read
+ * back with `Bun.YAML.parse`, and the admin names are free text: raw, a name
+ * like `Foreign-flag: 2026 #1` nulls the whole block and `2026` / `yes` comes
+ * back retyped — either way the staleness check never matches again and the
+ * fragment is rewritten on every sync. A JSON string is a valid YAML scalar
+ * that always reads back as the same string.
+ */
+function yamlString(value: string | null): string {
+  return value === null ? "null" : JSON.stringify(value);
+}
+
+/**
+ * The admins' names, directly under the official heading so they land in the
+ * first embedded chunk — what a search by either name matches. Additions to
+ * the statute title, never replacements: the title, key and heading stay the
+ * official title every citation names. The group line is always there (every
+ * published regulation has one, the country default at worst); the short name
+ * only when an admin gave one.
+ */
+function namingLines(item: PublishedRegulation): string {
+  const group = `Group: ${item.group.name}`;
+  return item.displayName
+    ? `Short name (set by FishFacts admins): ${item.displayName}\n${group}`
+    : group;
+}
+
 export function buildPublishedCaseFragment(
   item: PublishedRegulation,
   now: Date = new Date(),
@@ -60,9 +87,15 @@ caseKey: ${item.caseKey}
 revisionId: ${item.publishedRevisionId}
 publishedAt: ${item.publishedAt?.toISOString() ?? "null"}
 state: published
+displayName: ${yamlString(item.displayName)}
+groupId: ${yamlString(item.group.id)}
+groupName: ${yamlString(item.group.name)}
+groupIsDefault: ${item.group.isDefault}
 ---
 
 # ${item.title}
+
+${namingLines(item)}
 
 Reviewed and approved regulation — safe to cite in user-facing answers.
 
@@ -88,6 +121,9 @@ ${geometrySections.join("\n\n") || (item.metadataOnly ? "Metadata-only regulatio
       "published",
       `jurisdiction:${item.jurisdiction}`,
       `source:${item.sourceType}`,
+      // The id, never the name: a name with spaces or ð fails Usable's tag
+      // pattern and would fail the whole write.
+      `group:${item.group.id}`,
     ],
   };
 }
@@ -126,9 +162,16 @@ admin review queue after having been published). Do not cite it.
 
 /** Is the fragment already faithful to the published case? Decided from the
  * frontmatter the last sync wrote — the pinned revision id and the publish
- * stamp cover every field the fragment renders except the computed
+ * stamp cover every revision field the fragment renders except the computed
  * `inForce`, which is why an `inForce` flip alone does not force a rewrite:
- * the validity window it derives from is unchanged and in the content. */
+ * the validity window it derives from is unchanged and in the content.
+ *
+ * The group is NOT a revision field: an admin rename or retire changes the
+ * name (or the group itself) with no new revision, so the group id and name
+ * are compared on their own. The display name rides on the revision already;
+ * it is compared too so a fragment written before names existed reads stale.
+ * A fragment missing any of these keys is stale — which is how the corpus
+ * written before this change is rewritten exactly once. */
 export function publishedFragmentIsCurrent(
   frontmatter: Record<string, unknown> | null,
   item: PublishedRegulation,
@@ -138,8 +181,18 @@ export function publishedFragmentIsCurrent(
     frontmatter.state === "published" &&
     frontmatter.revisionId === item.publishedRevisionId &&
     String(frontmatter.publishedAt ?? "null") ===
-      (item.publishedAt?.toISOString() ?? "null")
+      (item.publishedAt?.toISOString() ?? "null") &&
+    optionalString(frontmatter.displayName) === item.displayName &&
+    optionalString(frontmatter.groupId) === item.group.id &&
+    optionalString(frontmatter.groupName) === item.group.name
   );
+}
+
+/** A frontmatter value as the string it was written as — `null` and a
+ * missing key both read as null, so a display name literally called "null"
+ * still differs from no display name. */
+function optionalString(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
 }
 
 export function withdrawnFragmentIsCurrent(

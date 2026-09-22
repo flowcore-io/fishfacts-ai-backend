@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { Env } from "@/env";
-import { publishedFragmentKeyFor } from "@/regulations/published-fragment";
+import {
+  buildPublishedCaseFragment,
+  publishedFragmentKeyFor,
+} from "@/regulations/published-fragment";
 import type {
   PublishedRegulation,
   RegulationPublishedReadRepository,
@@ -141,7 +144,8 @@ describe("regulation-published-sync job", () => {
       existingByKey: {
         [key]: {
           id: "frag-1",
-          content: `---\ncaseKey: ${item.caseKey}\nrevisionId: ${item.publishedRevisionId}\npublishedAt: ${PUBLISHED_AT.toISOString()}\nstate: published\n---\n\nbody`,
+          // What the previous sync wrote for this very item.
+          content: buildPublishedCaseFragment(item).content,
         },
       },
     });
