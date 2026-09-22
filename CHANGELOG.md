@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.12.0...v2.13.0) (2026-09-22)
+
+
+### Features
+
+* **regulations:** corpus fragments carry admin display names and groups ([#193](https://github.com/flowcore-io/fishfacts-ai-backend/issues/193)) ([eb8025a](https://github.com/flowcore-io/fishfacts-ai-backend/commit/eb8025a49c4f860e7fbb9e7476f90a891e1af6ea))
+
 ## [2.12.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.11.0...v2.12.0) (2026-09-22)
 
 
