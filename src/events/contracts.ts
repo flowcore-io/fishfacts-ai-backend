@@ -573,8 +573,14 @@ export const regulationRevisionFieldsSchema = z.object({
    * effect at once. A logical reference: no foreign key, and a group that
    * has since been retired (or never projected) reads back as the default.
    * Optional so every snapshot written before this field existed parses.
+   *
+   * Lower-cased here, at the one boundary every path crosses: the route
+   * validates it, the snapshot stores it and the published read looks it up
+   * against the group ids, which are lower-case uuids. Normalising anywhere
+   * later would leave a mixed-case uuid validating against a real group and
+   * then resolving to the default one at publish time.
    */
-  groupId: z.string().uuid().nullable().optional(),
+  groupId: z.string().uuid().toLowerCase().nullable().optional(),
   authority: z.string().max(200).nullable(),
   regulationNumber: z.string().max(100).nullable(),
   category: z.string().max(200).nullable(),

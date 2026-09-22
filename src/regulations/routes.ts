@@ -458,9 +458,11 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       // fallback after approval. Checked only when the group actually
       // moved, so a redraft of an unrelated field never fails on a group
       // retired since.
+      // Already lower-cased by the field schema, so this lookup, the stored
+      // snapshot and the published read all see the same id.
       const proposedGroupId = parsed.data.fields.groupId ?? null;
       if (proposedGroupId !== null && changedFields.includes("groupId")) {
-        const group = await deps.groups.getById(proposedGroupId.toLowerCase());
+        const group = await deps.groups.getById(proposedGroupId);
         if (!group) {
           return invalidPayload(c, { reason: API_REASON.groupNotFound });
         }

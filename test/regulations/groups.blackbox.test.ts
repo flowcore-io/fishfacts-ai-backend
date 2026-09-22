@@ -736,6 +736,31 @@ describe("regulation groups black-box", () => {
     expect(after.revisions).toHaveLength(detail.revisions.length);
   });
 
+  test("an upper-case group id is stored and resolved as the one group it names", async () => {
+    // The group ids in `regulation_groups` are lower-case uuids, so a
+    // mixed-case one that validated but was stored raw would silently
+    // resolve to the default group at publish time.
+    const caseId = caseIds[1] as string;
+    const proposed = await proposeGroup(
+      caseId,
+      emptyGroupId.toUpperCase(),
+      "Pasted the id from a log line.",
+    );
+    expect(proposed.status).toBe(202);
+    const { revisionId } = (await proposed.json()) as { revisionId: string };
+    const detail = await waitForCurrentRevision(caseId, revisionId);
+    expect(
+      detail.revisions.find((entry) => entry.id === revisionId)?.fields
+        ?.groupId,
+    ).toBe(emptyGroupId);
+
+    await validateAndApprove(caseId, revisionId);
+    const published = await publishedRead(caseId);
+    expect(published?.group.id).toBe(emptyGroupId);
+    expect(published?.group.name).toBe(EMPTY_GROUP_NAME);
+    expect(published?.group.isDefault).toBe(false);
+  });
+
   test("a collector amendment keeps the group an admin chose", async () => {
     const caseId = caseIds[0] as string;
     const member = MEMBERS[0] as (typeof MEMBERS)[number];

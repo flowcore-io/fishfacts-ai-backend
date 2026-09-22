@@ -87,6 +87,11 @@ export class RegulationGroupRepository {
    * constraint on purpose: a unique index over a projection can fail a
    * replay, and the nullable `retired_at` is exactly the case that would
    * tempt `.nullsNotDistinct()` (DRIZZLE-C6).
+   *
+   * Best-effort by design, and the accepted cost of that choice: two admins
+   * naming the same group at the same instant both pass this check and both
+   * groups are created. A duplicate heading is a thing an admin can see and
+   * retire; a constraint that fails a replay is not.
    */
   async findActiveByName(
     jurisdiction: string,
