@@ -17,7 +17,7 @@ Concise runbook for working on this repo. Read alongside `README.md`.
 - Flow types: `fishfacts-generic.0`, `fishfacts-announcement.0`
 - Tenant API key: `fc_<keyId>_<secret>` in K8s secret `fishfacts-ai-backend-credentials` (env `FLOWCORE_API_KEY`), policy `fishfacts-ai-backend-datacore-access` (read/write/ingest/fetch on the data core)
 - `autoProvision.pathway: true` — SDK upserts the pathway by name (`PUT /api/v1/pathways/by-name/fishfacts-ai-backend`) on every boot. Labels and `virtualConfig.flowTypes` are overwritten from `src/pathways.ts:pathwayLabels` + builder config. **CP UI header renders the `name` and `description` label keys** — keep both set in `pathwayLabels`.
-- Production = virtual + cluster: only the leader pod runs the pump (Postgres-coordinated leader election via `pathway_leases` / `pathway_instances`). Pump cursor lives in `pathway_pump_state`. These are SDK-managed runtime tables, not in our drizzle schema.
+- Production = virtual + cluster: only the leader pod runs the pump (Postgres-coordinated leader election via `pathway_leases` / `pathway_instances`). Pump cursor lives in `pathway_pump_state`. Awaited writes resolve against `pathway_state` (Postgres, shared by both replicas — `src/pathway-state.ts`; an in-process state would leave a write on the non-handling pod waiting out its timeout). These are SDK-managed runtime tables, not in our drizzle schema.
 
 ## Auth header for the Flowcore CP
 

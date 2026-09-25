@@ -137,6 +137,7 @@ describe("POST /api/regulations/cases/:id/notes", () => {
       noteId: written[0]?.noteId as string,
       eventId: "event-789",
       recordedAt: written[0]?.recordedAt as string,
+      status: "processing",
     });
     expect(written).toHaveLength(1);
   });
@@ -149,6 +150,7 @@ describe("POST /api/regulations/cases/:id/notes", () => {
       noteId: written[0]?.noteId as string,
       eventId: "event-789",
       recordedAt: written[0]?.recordedAt as string,
+      status: "processing",
     });
   });
 });

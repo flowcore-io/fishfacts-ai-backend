@@ -1898,7 +1898,7 @@ export const openApiDocument = {
         summary:
           "Add a private admin note to a case (ADMIN authority required)",
         description:
-          "Emits `regulation.case.note.recorded.0`; the projector is the only writer of `regulation_case_notes`. A note is a private working aide — it never enters a revision's fields, so it cannot reach the published read model, the Usable corpus fragment or the 1st mate. `actor` (`admin:<username>`) and `recordedAt` are stamped server-side. The handler runs in this service, so the awaited write is already projected and the route answers 201 with the stored row; the 202 is the rare case where the projection outran the wait. Notes are append-only: there is deliberately no update or delete verb, and a correction is a second note.",
+          "Emits `regulation.case.note.recorded.0`; the projector is the only writer of `regulation_case_notes`. A note is a private working aide — it never enters a revision's fields, so it cannot reach the published read model, the Usable corpus fragment or the 1st mate. `actor` (`admin:<username>`) and `recordedAt` are stamped server-side. The route waits (at most 15 s, inside the admin UI's 25 s budget) for the note handler on whichever replica runs it, then answers 201 with the stored row; the 202 `status: \"processing\"` is the rare case where the projection outran that wait — the note is recorded and appears on the case once projected. Notes are append-only: there is deliberately no update or delete verb, and a correction is a second note.",
         security: [{ FishfactsAuthToken: [] }],
         parameters: [
           {
@@ -1953,11 +1953,12 @@ export const openApiDocument = {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["noteId", "eventId", "recordedAt"],
+                  required: ["noteId", "eventId", "recordedAt", "status"],
                   properties: {
                     noteId: { type: "string", format: "uuid" },
                     eventId: { type: "string" },
                     recordedAt: { type: "string", format: "date-time" },
+                    status: { type: "string", enum: ["processing"] },
                   },
                 },
               },

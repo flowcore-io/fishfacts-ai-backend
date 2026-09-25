@@ -139,8 +139,8 @@ export function createRegulationApplicabilityJob(
   /**
    * Wait for the case pointer to reach the revision we just proposed.
    *
-   * Only for the SLOW path: `recoverSlowProjection` returns the moment the
-   * pathways wait gives up, with the event durably written and the handler
+   * Only for the SLOW path: `awaitInteractiveWrite` returns the moment its
+   * bounded wait gives up, with the event durably written and the handler
    * still running, so an immediate read there shows the OLD pointer for a
    * proposal that lands seconds later. Polling turns that into the non-event
    * it is. On the fast path the wait already confirmed the projection, and
