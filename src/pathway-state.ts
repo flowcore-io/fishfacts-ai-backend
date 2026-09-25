@@ -136,12 +136,66 @@ export async function awaitInteractiveWrite(
       `Pathway write "${label}" returned no event id — nothing to wait for`,
     );
   }
-  if (await awaitProcessed(state, eventId, timeoutMs)) {
-    return { eventId, projectionPending: false };
+  // Past this line the event is durable. A failure while WAITING (the state
+  // store erroring) says nothing about the write, so it is reported the same
+  // way as a slow projection — never as a failed write a client would retry.
+  let processed: boolean;
+  try {
+    processed = await awaitProcessed(state, eventId, timeoutMs);
+  } catch (error) {
+    console.warn(
+      "[Pathways] write recorded but waiting for its projection failed — returning the pending event",
+      {
+        label,
+        eventId,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return { eventId, projectionPending: true };
   }
+  if (processed) return { eventId, projectionPending: false };
   console.warn(
     "[Pathways] write recorded but projection outran the wait — returning the pending event",
     { label, eventId, timeoutMs },
   );
   return { eventId, projectionPending: true };
+}
+
+/**
+ * Postgres codes for losing a concurrent `CREATE TABLE IF NOT EXISTS`: the
+ * table's row type collides in `pg_type_typname_nsp_index` (23505), or the
+ * relation appeared between the check and the create (42P07).
+ */
+const CREATE_RACE_CODES = new Set(["23505", "42P07"]);
+
+function isCreateRace(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && CREATE_RACE_CODES.has(code);
+}
+
+/**
+ * Create the shared state's table at boot, before anything can race for it.
+ * The SDK creates `pathway_state` lazily on first use and exposes no init
+ * method, so two concurrent first uses — a writer's poll and a handler's
+ * setProcessed, or two pods booting together — race its CREATE TABLE and
+ * one of them fails (seen on the first write after the 2.13.1 deploy). A
+ * probe read runs that initialisation once; losing the race is retried,
+ * because by then the winner has created the table. Anything else throws.
+ */
+export async function ensurePathwayStateReady(
+  state: Pick<PathwayState, "isProcessed">,
+  {
+    attempts = 3,
+    backoffMs = 250,
+  }: { attempts?: number; backoffMs?: number } = {},
+): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await state.isProcessed("startup-probe");
+      return;
+    } catch (error) {
+      if (!isCreateRace(error) || attempt >= attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, backoffMs * attempt));
+    }
+  }
 }

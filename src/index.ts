@@ -157,6 +157,8 @@ const pathways = createPathwayRuntime(
   regulationGroupProjector,
   publishedSyncTrigger,
 );
+// Before the pump or any request can race the SDK's lazy CREATE TABLE.
+await pathways.ensureStateReady();
 const jobs = createJobDefinitions(
   env,
   pathways.writer,

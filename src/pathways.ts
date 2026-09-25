@@ -114,6 +114,7 @@ import {
   type SharedPathwayState,
   awaitInteractiveWrite,
   createSharedPathwayState,
+  ensurePathwayStateReady,
 } from "./pathway-state";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { RegulationCaseActionProjector } from "./regulations/action-projector";
@@ -199,6 +200,8 @@ export interface PathwayWriter {
 export type PathwayRuntime = {
   writer: PathwayWriter;
   router: PathwayRouter;
+  /** Create the shared pathway-state table; await before serving writes. */
+  ensureStateReady(): Promise<void>;
   startPump(): Promise<void>;
   stopPump(): Promise<void>;
 };
@@ -1169,6 +1172,7 @@ export function createPathwayRuntime(
       },
     },
     router,
+    ensureStateReady: () => ensurePathwayStateReady(pathwayState),
     async startPump() {
       if (env.DISABLE_EVENT_STREAMING) return;
       if (runtimeEnv === "production") {

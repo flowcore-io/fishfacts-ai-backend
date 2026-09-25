@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Hono } from "hono";
 import type { AuthContext } from "../../src/auth/types";
 import type { RegulationCaseNoteRecorded } from "../../src/events/contracts";
+import { awaitInteractiveWrite } from "../../src/pathway-state";
 import type { PathwayWriter } from "../../src/pathways";
 import type { RegulationQueueReadRepository } from "../../src/regulations/read-repository";
 import { createRegulationsRouter } from "../../src/regulations/routes";
@@ -42,6 +43,8 @@ const CASE_KEY = "test-source:test-ban";
 function makeApp(
   opts: {
     writeError?: Error;
+    /** The event is written, then waiting for its projection throws. */
+    waitError?: Error;
     readBackError?: Error;
     readBackMisses?: boolean;
   } = {},
@@ -52,6 +55,23 @@ function makeApp(
       data: RegulationCaseNoteRecorded,
     ) => {
       if (opts.writeError) throw opts.writeError;
+      const waitError = opts.waitError;
+      if (waitError) {
+        // The real bounded wait over a state store that fails mid-poll.
+        const { eventId } = await awaitInteractiveWrite(
+          "case-note",
+          {
+            isProcessed: () => {
+              throw waitError;
+            },
+          },
+          async () => {
+            written.push(data);
+            return "event-789";
+          },
+        );
+        return eventId;
+      }
       written.push(data);
       return "event-789";
     },
@@ -132,6 +152,24 @@ describe("POST /api/regulations/cases/:id/notes", () => {
     const response = await postNote(app, "check with Vørn");
     // The distinction that matters: a 502 here would invite a retry, and
     // the retried request mints a NEW noteId — two notes for one intent.
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      noteId: written[0]?.noteId as string,
+      eventId: "event-789",
+      recordedAt: written[0]?.recordedAt as string,
+      status: "processing",
+    });
+    expect(written).toHaveLength(1);
+  });
+
+  test("a failed WAIT after a durable write is a 202 processing, never a 502", async () => {
+    const { app, written } = makeApp({
+      waitError: new Error(
+        'duplicate key value violates unique constraint "pg_type_typname_nsp_index"',
+      ),
+      readBackMisses: true,
+    });
+    const response = await postNote(app, "check with Vørn");
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({
       noteId: written[0]?.noteId as string,
