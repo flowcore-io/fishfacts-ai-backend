@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.13.0...v2.13.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **pathways:** share pathway state across replicas so awaited writes resolve on every pod ([#195](https://github.com/flowcore-io/fishfacts-ai-backend/issues/195)) ([00bc4d8](https://github.com/flowcore-io/fishfacts-ai-backend/commit/00bc4d8c0c2ac86f110f9fe5b0350253c848955f))
+
 ## [2.13.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.12.0...v2.13.0) (2026-09-22)
 
 
