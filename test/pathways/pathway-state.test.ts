@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { InternalPathwayState, PostgresPathwayState } from "@flowcore/pathways";
 import {
   INTERACTIVE_WRITE_WAIT_MS,
+  MAX_LOCAL_ONLY_EVENT_IDS,
   SharedPathwayState,
   awaitInteractiveWrite,
   awaitProcessed,
@@ -77,6 +78,36 @@ describe("configurePathwayState", () => {
     await state.setProcessed(EVENT_ID);
   });
 
+  test("every local-only pathway is written fire-and-forget, so none is ever awaited", async () => {
+    const source = await Bun.file("src/pathways.ts").text();
+    const listStart = source.indexOf("export const LOCAL_STATE_PATHWAYS = [");
+    const listBody = source.slice(
+      listStart,
+      source.indexOf("] as const", listStart),
+    );
+    const names = [...listBody.matchAll(/\b([A-Z_]+_PATHWAY)\b/g)].map(
+      (m) => m[1] as string,
+    );
+    expect(names).toHaveLength(LOCAL_STATE_PATHWAYS.length);
+    for (const name of names) {
+      const calls = [...source.matchAll(new RegExp(`\\)\\(${name}, \\{`, "g"))];
+      expect(calls.length).toBeGreaterThan(0);
+      for (const call of calls) {
+        // The write's input object runs up to the next writer method.
+        const from = call.index ?? 0;
+        const next = source.indexOf("\n      async ", from);
+        const input = source.slice(from, next === -1 ? undefined : next);
+        expect({
+          name,
+          fireAndForget: input.includes("fireAndForget: true"),
+        }).toEqual({
+          name,
+          fireAndForget: true,
+        });
+      }
+    }
+  });
+
   test("createPathwayRuntime wires it before building the router", async () => {
     const source = await Bun.file("src/pathways.ts").text();
     const wired = source.indexOf("= configurePathwayState(");
@@ -107,6 +138,24 @@ describe("SharedPathwayState", () => {
     await state.setProcessed(EVENT_ID);
     expect(shared.processed).toEqual([]);
     expect(await state.isProcessed(EVENT_ID)).toBe(true);
+  });
+
+  test("stranded local-only ids are bounded, oldest evicted first", async () => {
+    const shared = recordingState();
+    const state = new SharedPathwayState(
+      shared.state,
+      new InternalPathwayState(),
+    );
+    for (let i = 0; i <= MAX_LOCAL_ONLY_EVENT_IDS; i++) {
+      state.markLocalOnly(`evt-${i}`);
+    }
+    expect(state.localOnlyCount).toBe(MAX_LOCAL_ONLY_EVENT_IDS);
+    // The oldest fell out, so its marker now goes to the shared store…
+    await state.setProcessed("evt-0");
+    expect(shared.processed).toEqual(["evt-0"]);
+    // …while the newest is still local.
+    await state.setProcessed(`evt-${MAX_LOCAL_ONLY_EVENT_IDS}`);
+    expect(shared.processed).toEqual(["evt-0"]);
   });
 
   test("a marker written by ANOTHER replica is visible here", async () => {
@@ -155,6 +204,17 @@ describe("awaitInteractiveWrite", () => {
         250,
       ),
     ).rejects.toThrow("fetch failed");
+  });
+
+  test("a write that returns no event id fails loudly instead of polling", async () => {
+    await expect(
+      awaitInteractiveWrite(
+        "test",
+        { isProcessed: () => false },
+        async () => [],
+        250,
+      ),
+    ).rejects.toThrow('Pathway write "test" returned no event id');
   });
 
   test("the default deadline fits inside the FE's request budget", () => {

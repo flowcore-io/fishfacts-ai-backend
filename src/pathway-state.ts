@@ -17,6 +17,15 @@ export const INTERACTIVE_WRITE_WAIT_MS = 15_000;
 const PROCESSED_POLL_INTERVAL_MS = 100;
 
 /**
+ * Upper bound on remembered local-only event ids. An id normally leaves the
+ * set at its `setProcessed`, but a handler that never returns (or a shutdown
+ * mid-handler) would strand it; the oldest are evicted past this cap. Well
+ * above the in-flight ceiling (AIS reserves 2000 per cycle), and an evicted
+ * id only costs its marker one Postgres upsert.
+ */
+export const MAX_LOCAL_ONLY_EVENT_IDS = 20_000;
+
+/**
  * The pathway state a `pathways.write()` is awaited against, shared across
  * replicas.
  *
@@ -43,6 +52,15 @@ export class SharedPathwayState implements PathwayState {
 
   markLocalOnly(eventId: string): void {
     this.localOnlyEventIds.add(eventId);
+    if (this.localOnlyEventIds.size > MAX_LOCAL_ONLY_EVENT_IDS) {
+      // A Set iterates in insertion order, so the first id is the oldest.
+      const oldest = this.localOnlyEventIds.values().next().value;
+      if (oldest !== undefined) this.localOnlyEventIds.delete(oldest);
+    }
+  }
+
+  get localOnlyCount(): number {
+    return this.localOnlyEventIds.size;
   }
 
   async setProcessed(eventId: string): Promise<void> {
@@ -53,6 +71,13 @@ export class SharedPathwayState implements PathwayState {
     await this.shared.setProcessed(eventId);
   }
 
+  /**
+   * Only ever polled by a waiting writer: the SDK (2.4.6) calls
+   * `isProcessed` solely inside `waitForPathwayToBeProcessed`, never on the
+   * delivery/handler path, and our own `awaitProcessed` is the other caller.
+   * Fire-and-forget events are never waited on, so the Postgres fall-through
+   * on a local miss costs nothing on the pump's hot path.
+   */
   async isProcessed(eventId: string): Promise<boolean> {
     return (
       (await this.local.isProcessed(eventId)) ||
@@ -105,7 +130,12 @@ export async function awaitInteractiveWrite(
   timeoutMs: number = INTERACTIVE_WRITE_WAIT_MS,
 ): Promise<{ eventId: string; projectionPending: boolean }> {
   const written = await doWrite();
-  const eventId = (Array.isArray(written) ? written[0] : written) as string;
+  const eventId = Array.isArray(written) ? written[0] : written;
+  if (!eventId) {
+    throw new Error(
+      `Pathway write "${label}" returned no event id — nothing to wait for`,
+    );
+  }
   if (await awaitProcessed(state, eventId, timeoutMs)) {
     return { eventId, projectionPending: false };
   }
