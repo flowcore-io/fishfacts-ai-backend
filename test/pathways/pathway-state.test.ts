@@ -43,6 +43,18 @@ function fakeHost() {
   return { host, states, subscriptions };
 }
 
+/** The text of the parenthesised group opening at `open` (a `(`). */
+function balancedArgs(source: string, open: number): string {
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "(") depth++;
+    else if (source[i] === ")" && --depth === 0) {
+      return source.slice(open, i + 1);
+    }
+  }
+  throw new Error(`unbalanced call at offset ${open}`);
+}
+
 function recordingState() {
   const processed: string[] = [];
   return {
@@ -93,10 +105,8 @@ describe("configurePathwayState", () => {
       const calls = [...source.matchAll(new RegExp(`\\)\\(${name}, \\{`, "g"))];
       expect(calls.length).toBeGreaterThan(0);
       for (const call of calls) {
-        // The write's input object runs up to the next writer method.
-        const from = call.index ?? 0;
-        const next = source.indexOf("\n      async ", from);
-        const input = source.slice(from, next === -1 ? undefined : next);
+        // Exactly this call's argument list: `)(NAME, { … })`.
+        const input = balancedArgs(source, (call.index ?? 0) + 1);
         expect({
           name,
           fireAndForget: input.includes("fireAndForget: true"),
@@ -117,6 +127,27 @@ describe("configurePathwayState", () => {
 });
 
 describe("SharedPathwayState", () => {
+  test("the SDK polls isProcessed only while a writer waits", async () => {
+    // SharedPathwayState.isProcessed falls through to Postgres on a local
+    // miss, which is only free because the SDK never calls isProcessed on
+    // the delivery/handler path. If this fails after a @flowcore/pathways
+    // bump, re-verify the new call sites — and if one runs per delivered
+    // event, make isProcessed answer local-only ids from the local state
+    // without touching Postgres.
+    const builder = await Bun.file(
+      "node_modules/@flowcore/pathways/esm/pathways/builder.js",
+    ).text();
+    const callers = [...builder.matchAll(/\bisProcessed\(/g)].map((call) => {
+      const before = builder.slice(0, call.index ?? 0);
+      const methods = [
+        ...before.matchAll(/^ {4}(?:async )?(\w+)\([^)]*\) \{$/gm),
+      ];
+      return methods.at(-1)?.[1];
+    });
+    expect(callers.length).toBeGreaterThan(0);
+    expect(new Set(callers)).toEqual(new Set(["waitForPathwayToBeProcessed"]));
+  });
+
   test("an unmarked event is recorded in the shared store", async () => {
     const shared = recordingState();
     const state = new SharedPathwayState(
