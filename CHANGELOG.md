@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.13.1...v2.13.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **pathways:** create the shared pathway state at boot and never 502 a durable write whose wait failed ([#197](https://github.com/flowcore-io/fishfacts-ai-backend/issues/197)) ([cf7f53d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/cf7f53dcd2671355d1221f8d5d1cb52cce4e3daa))
+
 ## [2.13.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.13.0...v2.13.1) (2026-09-25)
 
 
