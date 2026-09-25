@@ -6,6 +6,7 @@ import {
   SharedPathwayState,
   awaitInteractiveWrite,
   awaitProcessed,
+  ensurePathwayStateReady,
 } from "../../src/pathway-state";
 import {
   LOCAL_STATE_PATHWAYS,
@@ -224,6 +225,20 @@ describe("awaitInteractiveWrite", () => {
     expect(Date.now() - started).toBeLessThan(1_000);
   });
 
+  test("a failing wait after a durable write is pending, not a failure", async () => {
+    const result = await awaitInteractiveWrite(
+      "test",
+      {
+        isProcessed: () => {
+          throw new Error("connection terminated");
+        },
+      },
+      async () => EVENT_ID,
+      250,
+    );
+    expect(result).toEqual({ eventId: EVENT_ID, projectionPending: true });
+  });
+
   test("a failed write still throws — nothing was recorded", async () => {
     await expect(
       awaitInteractiveWrite(
@@ -258,5 +273,70 @@ describe("awaitProcessed", () => {
     expect(
       await awaitProcessed({ isProcessed: () => false }, EVENT_ID, 50, 10),
     ).toBe(false);
+  });
+});
+
+describe("ensurePathwayStateReady", () => {
+  function pgError(code: string, message: string) {
+    return Object.assign(new Error(message), { code });
+  }
+
+  function flakyState(failures: Error[]) {
+    let calls = 0;
+    return {
+      get calls() {
+        return calls;
+      },
+      isProcessed: () => {
+        const failure = failures[calls++];
+        if (failure) throw failure;
+        return false;
+      },
+    };
+  }
+
+  test("retries a lost CREATE TABLE race (23505) and succeeds", async () => {
+    const state = flakyState([
+      pgError(
+        "23505",
+        'duplicate key value violates unique constraint "pg_type_typname_nsp_index"',
+      ),
+    ]);
+    await ensurePathwayStateReady(state, { backoffMs: 1 });
+    expect(state.calls).toBe(2);
+  });
+
+  test("retries a relation that appeared mid-create (42P07)", async () => {
+    const state = flakyState([
+      pgError("42P07", 'relation "pathway_state" already exists'),
+    ]);
+    await ensurePathwayStateReady(state, { backoffMs: 1 });
+    expect(state.calls).toBe(2);
+  });
+
+  test("any other error fails the boot at once", async () => {
+    const state = flakyState([
+      pgError("28P01", "password authentication failed"),
+    ]);
+    await expect(
+      ensurePathwayStateReady(state, { backoffMs: 1 }),
+    ).rejects.toThrow("password authentication failed");
+    expect(state.calls).toBe(1);
+  });
+
+  test("gives up after the last attempt", async () => {
+    const race = pgError("23505", "duplicate key");
+    const state = flakyState([race, race, race]);
+    await expect(
+      ensurePathwayStateReady(state, { attempts: 3, backoffMs: 1 }),
+    ).rejects.toThrow("duplicate key");
+    expect(state.calls).toBe(3);
+  });
+
+  test("the service boots it before the pump starts", async () => {
+    const source = await Bun.file("src/index.ts").text();
+    const ready = source.indexOf("await pathways.ensureStateReady()");
+    expect(ready).toBeGreaterThan(-1);
+    expect(ready).toBeLessThan(source.indexOf("await pathways.startPump()"));
   });
 });
