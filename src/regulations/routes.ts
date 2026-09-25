@@ -292,9 +292,9 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     // the response into the real resource — and its own failure mode is the
     // same as a projection that has not landed yet.
     try {
-      // The note handler runs in THIS service, so the awaited write above
-      // has already been projected: answer with the real row, not an
-      // optimistic echo of the request.
+      // The awaited write above waited (boundedly) for the note handler on
+      // whichever replica ran it, so the row is normally there: answer with
+      // the real row, not an optimistic echo of the request.
       const note = await deps.queue.getCaseNote(noteId);
       if (note) return c.json({ note }, 201);
     } catch (error) {
@@ -309,7 +309,10 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     }
     // The event is durable and only its projection is unconfirmed — reported
     // as such rather than dressed up as a created resource or as a failure.
-    return c.json({ noteId, eventId, recordedAt }, 202);
+    return c.json(
+      { noteId, eventId, recordedAt, status: "processing" as const },
+      202,
+    );
   });
 
   // ---------------------------------------------------------------------

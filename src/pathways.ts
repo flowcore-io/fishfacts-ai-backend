@@ -5,6 +5,7 @@ import {
   createPostgresPathwayCoordinator,
   createPostgresPumpStateManagerFactory,
 } from "@flowcore/pathways";
+import type { PathwayState } from "@flowcore/pathways";
 import type { z } from "zod";
 import type { AisPositionProjector } from "./ais/projector";
 import type { AreasProjector } from "./areas/projector";
@@ -109,6 +110,11 @@ import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
 import type { JMeldingChunkAssembler } from "./jobs/jmelding-chunk-assembler";
 import type { PublishedSyncTrigger } from "./jobs/published-sync-trigger";
+import {
+  type SharedPathwayState,
+  awaitInteractiveWrite,
+  createSharedPathwayState,
+} from "./pathway-state";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { RegulationCaseActionProjector } from "./regulations/action-projector";
 import type { RegulationGroupProjector } from "./regulations/group-projector";
@@ -198,64 +204,51 @@ export type PathwayRuntime = {
 };
 
 /**
- * The pathways lib's post-write wait throws a plain `Error` when processing
- * outruns `pathwayTimeoutMs` — but by then the event IS durably written (the
- * wait only polls `isProcessed(eventId)`). Detect that one error at this one
- * boundary and recover the eventId it carries, so an interactive route can
- * honour its 202 contract instead of failing a write that succeeded — the
- * first approval ever processed did exactly this (502 after 31s, fully
- * applied; task followed from the 2026-09-09 demo). String-matched because
- * the lib exports no typed error. The capture anchors on the EVENT ID'S
- * SHAPE (a UUID) rather than the end of the message: 2.7.0 — inside our
- * ^-range — already appended explanatory prose after the id, and an
- * end-anchored pattern would have silently reverted routes to 502-on-success
- * the day the lockfile moved. Both known wordings are pinned by unit tests.
+ * Fire-and-forget flows: no request ever awaits their projection, and AIS /
+ * GEBCO run at pump volumes, so their processed markers stay in-process
+ * rather than costing a Postgres upsert per event (see `SharedPathwayState`).
  */
-const PATHWAY_PROCESSING_TIMEOUT_RE =
-  /^Pathway processing timed out after \d+ms for event ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b/;
+export const LOCAL_STATE_PATHWAYS = [
+  AIS_POSITION_FIX_OBSERVED_PATHWAY,
+  GEBCO_FEATURE_OBSERVED_PATHWAY,
+  GILLNET_VESSEL_OBSERVED_PATHWAY,
+  JMELDING_ANNOUNCEMENT_PATHWAY,
+  SILDELAGET_CATCH_ENTRY_OBSERVED_PATHWAY,
+  REGULATION_VERDICT_RECORDED_PATHWAY,
+] as const;
 
-export function pendingEventIdOf(error: unknown): string | null {
-  if (!(error instanceof Error)) return null;
-  const match = PATHWAY_PROCESSING_TIMEOUT_RE.exec(error.message);
-  return match?.[1] ?? null;
-}
-
-/**
- * Await an interactive pathway write, treating a processing timeout as the
- * slow success it is: the eventId comes back, the projection follows. Real
- * write failures (nothing durably recorded) still throw.
- */
-export async function recoverSlowProjection(
-  label: string,
-  doWrite: () => Promise<string | string[]>,
-): Promise<string | string[]> {
-  return (await recoverSlowProjectionDetailed(label, doWrite)).eventId;
-}
+/** The two builder methods pathway-state wiring needs, untyped by path. */
+export type PathwayStateHost = {
+  withPathwayState(state: PathwayState): unknown;
+  subscribe(
+    path: string,
+    handler: (event: { eventId: string }) => void,
+    type: "before",
+  ): unknown;
+};
 
 /**
- * The same recovery, but SAYING which path it took.
- *
- * `projectionPending: true` means the write is durable and the handler had
- * not finished when the wait gave up — so a caller that reads its own
- * projection back must not read the absence of its row as a refusal. Callers
- * that only need the id keep using `recoverSlowProjection`; behaviour is
- * identical either way.
+ * Point the builder's post-write wait at a pathway state every replica
+ * shares. Without it the SDK falls back to a per-process map, and in cluster
+ * mode a write awaited on the pod that did not run the handler waits out the
+ * full `pathwayTimeoutMs` although the projection landed in milliseconds.
  */
-export async function recoverSlowProjectionDetailed(
-  label: string,
-  doWrite: () => Promise<string | string[]>,
-): Promise<{ eventId: string | string[]; projectionPending: boolean }> {
-  try {
-    return { eventId: await doWrite(), projectionPending: false };
-  } catch (error) {
-    const pendingEventId = pendingEventIdOf(error);
-    if (pendingEventId === null) throw error;
-    console.warn(
-      "[Pathways] write recorded but projection outran the wait — returning the pending event",
-      { label, eventId: pendingEventId },
+export function configurePathwayState(
+  pathways: PathwayStateHost,
+  env: Pick<Env, "DATABASE_URL">,
+): SharedPathwayState {
+  const state = createSharedPathwayState(env);
+  pathways.withPathwayState(state);
+  for (const path of LOCAL_STATE_PATHWAYS) {
+    // "before" fires on the pod that runs the handler, ahead of the
+    // setProcessed that follows it — on success and after exhausted retries.
+    pathways.subscribe(
+      path,
+      (event) => state.markLocalOnly(event.eventId),
+      "before",
     );
-    return { eventId: pendingEventId, projectionPending: true };
   }
+  return state;
 }
 
 export function createPathwayRuntime(
@@ -664,6 +657,20 @@ export function createPathwayRuntime(
       );
     });
 
+  // After registration (subscribe needs the pathways), before any write.
+  const pathwayState = configurePathwayState(
+    pathways as never as PathwayStateHost,
+    env,
+  );
+  // Interactive writes go fire-and-forget and wait here instead, with a
+  // deadline inside the FE's 25 s budget (the SDK's own wait is pinned to
+  // 30 s, and its per-write override is keyed by path at register time but
+  // read by event id, so it never applies).
+  const awaitWrite = (
+    label: string,
+    doWrite: () => Promise<string | string[]>,
+  ) => awaitInteractiveWrite(label, pathwayState, doWrite);
+
   const router = new PathwayRouter(pathways, env.FLOWCORE_TRANSFORMER_SECRET);
 
   return {
@@ -812,42 +819,37 @@ export function createPathwayRuntime(
           .eventId;
       },
       async writeRegulationRevisionProposedDetailed(data) {
-        const written = await recoverSlowProjectionDetailed(
-          "revision.proposed",
-          () =>
-            (
-              pathways.write as never as (
-                path: typeof REGULATION_REVISION_PROPOSED_PATHWAY,
-                input: {
-                  data: RegulationRevisionProposed;
-                  metadata: Record<string, unknown>;
-                },
-              ) => Promise<string | string[]>
-            )(REGULATION_REVISION_PROPOSED_PATHWAY, {
-              data,
-              metadata: {
-                source: "fishfacts-ai-backend-api",
-                caseKey: data.caseKey,
-                revisionId: data.revisionId,
-                actor: data.actor,
+        return awaitWrite("revision.proposed", () =>
+          (
+            pathways.write as never as (
+              path: typeof REGULATION_REVISION_PROPOSED_PATHWAY,
+              input: {
+                data: RegulationRevisionProposed;
+                metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
-            }),
+            ) => Promise<string | string[]>
+          )(REGULATION_REVISION_PROPOSED_PATHWAY, {
+            data,
+            metadata: {
+              source: "fishfacts-ai-backend-api",
+              caseKey: data.caseKey,
+              revisionId: data.revisionId,
+              actor: data.actor,
+            },
+            options: { fireAndForget: true },
+          }),
         );
-        return {
-          eventId: Array.isArray(written.eventId)
-            ? (written.eventId[0] as string)
-            : written.eventId,
-          projectionPending: written.projectionPending,
-        };
       },
       async writeRegulationRevisionPointerMoved(data) {
-        const eventId = await recoverSlowProjection("revision.pointer", () =>
+        const { eventId } = await awaitWrite("revision.pointer", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_REVISION_POINTER_MOVED_PATHWAY,
               input: {
                 data: RegulationRevisionPointerMoved;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_REVISION_POINTER_MOVED_PATHWAY, {
@@ -858,18 +860,20 @@ export function createPathwayRuntime(
               toRevisionId: data.toRevisionId,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationValidationRecorded(data) {
-        const eventId = await recoverSlowProjection("validation.recorded", () =>
+        const { eventId } = await awaitWrite("validation.recorded", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_VALIDATION_RECORDED_PATHWAY,
               input: {
                 data: RegulationValidationRecorded;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_VALIDATION_RECORDED_PATHWAY, {
@@ -881,18 +885,20 @@ export function createPathwayRuntime(
               scope: data.scope,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationApprovalRecorded(data) {
-        const eventId = await recoverSlowProjection("approval.recorded", () =>
+        const { eventId } = await awaitWrite("approval.recorded", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_APPROVAL_RECORDED_PATHWAY,
               input: {
                 data: RegulationApprovalRecorded;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_APPROVAL_RECORDED_PATHWAY, {
@@ -903,18 +909,20 @@ export function createPathwayRuntime(
               revisionId: data.revisionId,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationAdminActionRecorded(data) {
-        const eventId = await recoverSlowProjection("admin-action", () =>
+        const { eventId } = await awaitWrite("admin-action", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_ADMIN_ACTION_RECORDED_PATHWAY,
               input: {
                 data: RegulationAdminActionRecorded;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_ADMIN_ACTION_RECORDED_PATHWAY, {
@@ -925,18 +933,20 @@ export function createPathwayRuntime(
               kind: data.action.kind,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationCaseNoteRecorded(data) {
-        const eventId = await recoverSlowProjection("case-note", () =>
+        const { eventId } = await awaitWrite("case-note", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_CASE_NOTE_RECORDED_PATHWAY,
               input: {
                 data: RegulationCaseNoteRecorded;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_CASE_NOTE_RECORDED_PATHWAY, {
@@ -946,18 +956,20 @@ export function createPathwayRuntime(
               caseKey: data.caseKey,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationGroupCreated(data) {
-        const eventId = await recoverSlowProjection("group.created", () =>
+        const { eventId } = await awaitWrite("group.created", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_GROUP_CREATED_PATHWAY,
               input: {
                 data: RegulationGroupCreated;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_GROUP_CREATED_PATHWAY, {
@@ -968,18 +980,20 @@ export function createPathwayRuntime(
               name: data.name,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationGroupRenamed(data) {
-        const eventId = await recoverSlowProjection("group.renamed", () =>
+        const { eventId } = await awaitWrite("group.renamed", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_GROUP_RENAMED_PATHWAY,
               input: {
                 data: RegulationGroupRenamed;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_GROUP_RENAMED_PATHWAY, {
@@ -990,18 +1004,20 @@ export function createPathwayRuntime(
               name: data.name,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationGroupReordered(data) {
-        const eventId = await recoverSlowProjection("group.reordered", () =>
+        const { eventId } = await awaitWrite("group.reordered", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_GROUP_REORDERED_PATHWAY,
               input: {
                 data: RegulationGroupReordered;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_GROUP_REORDERED_PATHWAY, {
@@ -1012,18 +1028,20 @@ export function createPathwayRuntime(
               count: data.groupIds.length,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writeRegulationGroupRetired(data) {
-        const eventId = await recoverSlowProjection("group.retired", () =>
+        const { eventId } = await awaitWrite("group.retired", () =>
           (
             pathways.write as never as (
               path: typeof REGULATION_GROUP_RETIRED_PATHWAY,
               input: {
                 data: RegulationGroupRetired;
                 metadata: Record<string, unknown>;
+                options: { fireAndForget: true };
               },
             ) => Promise<string | string[]>
           )(REGULATION_GROUP_RETIRED_PATHWAY, {
@@ -1033,9 +1051,10 @@ export function createPathwayRuntime(
               groupId: data.groupId,
               actor: data.actor,
             },
+            options: { fireAndForget: true },
           }),
         );
-        return Array.isArray(eventId) ? eventId[0] : eventId;
+        return eventId;
       },
       async writePoiCreated(data) {
         const eventId = await (
