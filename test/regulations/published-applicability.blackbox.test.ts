@@ -303,13 +303,15 @@ function corpusFragment(seed: CaseSeed): CorpusFragment | undefined {
   );
 }
 
-/** Wait until the sync the approval scheduled has written the case's
- * fragment — nobody runs the job by hand for this. */
-async function waitForCorpusFragment(seed: CaseSeed): Promise<CorpusFragment> {
-  return await waitFor(
-    async () => corpusFragment(seed),
-    `the published sync never wrote ${seed.jmNumber} to the corpus`,
-  );
+/** The case's fragment, which the setup test proved was written. */
+function writtenFragment(seed: CaseSeed): CorpusFragment {
+  const fragment = corpusFragment(seed);
+  if (!fragment) {
+    throw new Error(
+      `${seed.jmNumber} is not in the corpus — see the setup test`,
+    );
+  }
+  return fragment;
 }
 
 /** The fragment's `## Applicability` section, up to the next heading. */
@@ -352,18 +354,63 @@ async function waitForQuietSync(): Promise<void> {
   throw new Error("the published sync never went quiet");
 }
 
-/** One manual published sync, the admin's `POST /api/jobs/run`, to the end. */
+type SyncJobState = {
+  runningJobIds: string[];
+  state: {
+    jobs: Record<
+      string,
+      { lastRunStatus?: string; lastError?: string; lastRunAt?: string }
+    >;
+  };
+};
+
+async function jobState(): Promise<SyncJobState> {
+  const response = await adminFetch("/api/jobs/state");
+  expect(response.status).toBe(200);
+  return (await response.json()) as SyncJobState;
+}
+
+/**
+ * One manual published sync, the admin's `POST /api/jobs/run`, to the end —
+ * and it has to have SUCCEEDED, or the failure is reported by its own error
+ * instead of as a missing fragment later.
+ *
+ * The approvals' event-triggered sync may still be running (or retrying on
+ * its backoff) when this is called, and the runner refuses a second start of
+ * the same job. So: wait until no sync runs, start ours, and start again if
+ * an event-triggered run won the race in between.
+ */
 async function runPublishedSync(): Promise<void> {
-  const run = await adminFetch("/api/jobs/run", {
-    method: "POST",
-    body: JSON.stringify({ jobId: SYNC_JOB_ID }),
-  });
-  expect(run.status).toBe(202);
-  await waitFor(async () => {
-    const response = await adminFetch("/api/jobs/state");
-    const state = (await response.json()) as { runningJobIds: string[] };
-    return !state.runningJobIds.includes(SYNC_JOB_ID);
+  const deadline = Date.now() + 60000;
+  let runId: string | null = null;
+  while (runId === null) {
+    if (Date.now() > deadline) {
+      throw new Error("the manual published sync never got to start");
+    }
+    await waitFor(
+      async () => !(await jobState()).runningJobIds.includes(SYNC_JOB_ID),
+      "a running published sync never finished",
+    );
+    const run = await adminFetch("/api/jobs/run", {
+      method: "POST",
+      body: JSON.stringify({ jobId: SYNC_JOB_ID }),
+    });
+    if (run.status === 202) {
+      runId = ((await run.json()) as { runId: string }).runId;
+    } else {
+      await Bun.sleep(200);
+    }
+  }
+  const finished = await waitFor(async () => {
+    const state = await jobState();
+    return state.runningJobIds.includes(SYNC_JOB_ID) ? null : state;
   }, "the manual published sync never finished");
+  const job = finished.state.jobs[SYNC_JOB_ID];
+  if (job?.lastRunStatus !== "success") {
+    throw new Error(
+      `the manual published sync ${runId} ended ${job?.lastRunStatus}: ${job?.lastError}`,
+    );
+  }
 }
 
 describe("published corpus applicability black-box", () => {
@@ -395,17 +442,7 @@ describe("published corpus applicability black-box", () => {
       )`;
     }
     await db`delete from regulation_cases where case_key like ${mine}`;
-
-    for (const seed of Object.values(CASES)) {
-      await seedAnnouncement(seed);
-      const caseId = await caseIdOf(seed.jmNumber);
-      const revisionId =
-        seed.applicability === null
-          ? (await caseDetail(caseId)).case.currentRevisionId
-          : await proposeApplicability(caseId, seed.applicability);
-      await validateAndApprove(caseId, revisionId);
-    }
-  }, 120000);
+  });
 
   afterAll(async () => {
     await app.stop();
@@ -415,10 +452,31 @@ describe("published corpus applicability black-box", () => {
     await db.end();
   });
 
+  // Seeding lives in a test, not in beforeAll: five approvals take longer
+  // than the 5 s a hook gets, and a hook cannot be given more on the Bun CI
+  // pins. Every test below reads what this one proved was written.
+  test("five approved regulations reach the published corpus", async () => {
+    for (const seed of Object.values(CASES)) {
+      await seedAnnouncement(seed);
+      const caseId = await caseIdOf(seed.jmNumber);
+      const revisionId =
+        seed.applicability === null
+          ? (await caseDetail(caseId)).case.currentRevisionId
+          : await proposeApplicability(caseId, seed.applicability);
+      await validateAndApprove(caseId, revisionId);
+    }
+    // Let the approvals' own syncs settle, then run one to the end: from
+    // here on the corpus holds exactly what the published set says, without
+    // depending on how long the debounce and the sync took on this machine.
+    await waitForQuietSync();
+    await runPublishedSync();
+    for (const seed of Object.values(CASES)) {
+      expect(corpusFragment(seed)?.content).toContain("\n## Applicability\n");
+    }
+  }, 120000);
+
   test("a stated dimension is written with its values and the source quote behind it", async () => {
-    const section = applicabilitySection(
-      await waitForCorpusFragment(CASES.stated),
-    );
+    const section = applicabilitySection(writtenFragment(CASES.stated));
     expect(section).toContain(
       "- Gear: torsketrål — source: “forbudt å fiske med torsketrål”",
     );
@@ -432,9 +490,7 @@ describe("published corpus applicability black-box", () => {
   }, 30000);
 
   test("a bound printed as 120 BT is printed as written, never converted", async () => {
-    const section = applicabilitySection(
-      await waitForCorpusFragment(CASES.stated),
-    );
+    const section = applicabilitySection(writtenFragment(CASES.stated));
     expect(section).toContain(
       "- Vessel length: up to 120 BT — source: “fartøy under 120 BT”",
     );
@@ -442,9 +498,7 @@ describe("published corpus applicability black-box", () => {
   }, 30000);
 
   test("an allowed activity reads as a permission, not a closure", async () => {
-    const section = applicabilitySection(
-      await waitForCorpusFragment(CASES.permission),
-    );
+    const section = applicabilitySection(writtenFragment(CASES.permission));
     expect(section).toContain(
       "- Activity: allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here — source: “Det er tillatt å fiske flatfisk”",
     );
@@ -453,27 +507,21 @@ describe("published corpus applicability black-box", () => {
   }, 30000);
 
   test("an applicability nobody extracted says it cannot be confirmed for any vessel", async () => {
-    const section = applicabilitySection(
-      await waitForCorpusFragment(CASES.unextracted),
-    );
+    const section = applicabilitySection(writtenFragment(CASES.unextracted));
     expect(section).toBe(
       "Applicability has not been extracted for this regulation, so it cannot be confirmed that it applies to any particular vessel.",
     );
   }, 30000);
 
   test("an applicability with no dimension says the source states no restriction", async () => {
-    const section = applicabilitySection(
-      await waitForCorpusFragment(CASES.unrestricted),
-    );
+    const section = applicabilitySection(writtenFragment(CASES.unrestricted));
     expect(section).toBe(
       "The source states no restriction on who or what this regulation applies to.",
     );
   }, 30000);
 
   test("empty lists narrow nothing: the gear gets a line, the empty species and fishery do not", async () => {
-    const section = applicabilitySection(
-      await waitForCorpusFragment(CASES.emptyLists),
-    );
+    const section = applicabilitySection(writtenFragment(CASES.emptyLists));
     expect(section).toContain("- Gear: trol — source: “fiske med trol”");
     expect(section).not.toContain("- Species:");
     expect(section).not.toContain("- Fishery:");
@@ -482,13 +530,13 @@ describe("published corpus applicability black-box", () => {
 
   test("the admin's notes never reach the corpus", async () => {
     for (const seed of [CASES.stated, CASES.unrestricted]) {
-      const fragment = await waitForCorpusFragment(seed);
+      const fragment = writtenFragment(seed);
       expect(fragment.content).not.toContain("ADMIN-ONLY");
     }
   }, 30000);
 
   test("a fragment the previous renderer wrote is rewritten once by the next sync, then left alone", async () => {
-    const written = await waitForCorpusFragment(CASES.stated);
+    const written = writtenFragment(CASES.stated);
     // Let the approvals' syncs finish, so only the runs below write.
     await waitForQuietSync();
 
