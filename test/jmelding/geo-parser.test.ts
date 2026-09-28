@@ -246,3 +246,147 @@ describe("areasToWkt", () => {
     expect(wkt).toBe("MULTIPOINT(5.000000 60.000000,6.000000 61.000000)");
   });
 });
+
+describe("parseJmeldingGeo — one area per closure in the source", () => {
+  test("J-144-2026 — the amendment preamble is not a second copy of the areas", () => {
+    // An amending J-melding prints each changed paragraph twice: under
+    // `§ N (endret|ny) skal lyde:` and again in the consolidated forskrift.
+    // Reading both used to lose §§ 31–34 entirely — the preamble copy won the
+    // proximity dedup and, having no markdown heading, stranded the vertices in
+    // a nameless bucket while the real `### § 31` came out empty.
+    const sample = `
+I forskrift om stenging av områder gjøres følgende endring:
+
+§ 31 (ny) skal lyde:
+
+§ 31 Yttergrunnen i Trøndelag
+- Nord 64 grader 10,000 minutter. Øst 009 grader 30,000 minutter.
+- Nord 64 grader 12,000 minutter. Øst 009 grader 30,000 minutter.
+
+II
+Forskriften trer i kraft straks.
+
+Forskriften lyder etter dette:
+
+## Forskrift om stenging av områder
+
+### § 31 Yttergrunnen i Trøndelag
+
+Det er forbudt å fiske, avgrenset av rette linjer mellom følgende posisjoner:
+
+- Nord 64 grader 10,000 minutter. Øst 009 grader 30,000 minutter.
+- Nord 64 grader 12,000 minutter. Øst 009 grader 30,000 minutter.
+`;
+    const result = parseJmeldingGeo(sample);
+    expect(result.areas).toHaveLength(1);
+    expect(result.areas[0].name).toBe("§ 31 Yttergrunnen i Trøndelag");
+    expect(result.areas[0].points).toHaveLength(2);
+  });
+
+  test("J-155-2026 — a body with no headings splits on its lead-in sentences", () => {
+    // Twelve closures separated by nothing but their own "forbudt … følgende
+    // posisjoner" sentences. Grouping by nearest heading read the whole body as
+    // one area spanning several hundred nautical miles.
+    const sample = `
+Det er forbudt å fiske etter reker med trål på Varanger i Troms og Finnmark i et område avgrenset av rette linjer mellom følgende posisjoner:
+
+- Nord 70 grader 03,5 minutter. Øst 029 grader 06,7 minutter.
+- Nord 70 grader 06,8 minutter. Øst 029 grader 11,7 minutter.
+
+Det er forbudt å fiske etter reker med trål i et område på Tvibergfeltet i Trøndelag i et område beskrevet med følgende posisjoner:
+
+- Nord 64 grader 03,5 minutter. Øst 009 grader 06,7 minutter.
+- Nord 64 grader 06,8 minutter. Øst 009 grader 11,7 minutter.
+`;
+    const result = parseJmeldingGeo(sample);
+    expect(result.areas).toHaveLength(2);
+    expect(result.areas[0].points).toHaveLength(2);
+    expect(result.areas[1].points).toHaveLength(2);
+    expect(result.areas[0].name).toContain("Varanger");
+    expect(result.areas[1].name).toContain("Tvibergfeltet");
+  });
+
+  test("§ 1 Lafjorden — 'herfra videre' continues the same closure", () => {
+    // The area is bounded by a line in the west and another in the east, closed
+    // by the coastline. Two lead-ins, one closure — splitting on the second
+    // would cut it in half.
+    const sample = `
+### § 1 Lafjorden og Magerøysundet i Finnmark
+
+Det er forbudt å fiske, avgrenset i vest av en rett linje mellom følgende posisjoner:
+
+- Nord 70 grader 58,8 minutter. Øst 025 grader 20,1 minutter.
+- Nord 70 grader 59,6 minutter. Øst 025 grader 23,5 minutter.
+
+herfra videre avgrenset i øst av rett linje mellom følgende posisjoner:
+
+- Nord 70 grader 56,5 minutter. Øst 025 grader 41,3 minutter.
+- Nord 70 grader 54,6 minutter. Øst 025 grader 41,1 minutter.
+`;
+    const result = parseJmeldingGeo(sample);
+    expect(result.areas).toHaveLength(1);
+    expect(result.areas[0].points).toHaveLength(4);
+  });
+
+  test("J-155-2026 — 'Herfra videre til posisjon 1' closes a ring, it does not continue it", () => {
+    // The trap the continuation rule has to survive: three of J-155's rings
+    // close with wording that reads like a continuation. Matching on the
+    // destination ("til posisjon N") rather than on "tilbake" tells them apart.
+    const sample = `
+Det er forbudt å fiske på Varanger avgrenset av rette linjer mellom følgende posisjoner:
+
+- Nord 70 grader 03,5 minutter. Øst 029 grader 06,7 minutter.
+- Nord 70 grader 06,8 minutter. Øst 029 grader 11,7 minutter. Herfra videre til posisjon 1.
+
+Det er forbudt å fiske på Tvibergfeltet avgrenset av rette linjer mellom følgende posisjoner:
+
+- Nord 64 grader 03,5 minutter. Øst 009 grader 06,7 minutter.
+- Nord 64 grader 06,8 minutter. Øst 009 grader 11,7 minutter.
+`;
+    const result = parseJmeldingGeo(sample);
+    expect(result.areas).toHaveLength(2);
+  });
+
+  test("two closures may share a corner without either losing it", () => {
+    // Dedup is per area, not per document: it exists to collapse one position
+    // that two grammars both matched, not to delete a coordinate a neighbouring
+    // closure legitimately reuses.
+    const shared =
+      "Nord 70 grader 03,5 minutter. Øst 029 grader 06,7 minutter.";
+    const sample = `
+Det er forbudt å fiske på Varanger avgrenset av rette linjer mellom følgende posisjoner:
+
+- ${shared}
+- Nord 70 grader 06,8 minutter. Øst 029 grader 11,7 minutter.
+
+Det er forbudt å fiske på Tanasnaget avgrenset av rette linjer mellom følgende posisjoner:
+
+- ${shared}
+- Nord 70 grader 09,9 minutter. Øst 029 grader 15,0 minutter.
+`;
+    const result = parseJmeldingGeo(sample);
+    expect(result.areas).toHaveLength(2);
+    expect(result.areas[0].points).toHaveLength(2);
+    expect(result.areas[1].points).toHaveLength(2);
+  });
+
+  test("the '## Kart' chart list does not become an area name", () => {
+    // Every J-melding opens with a list of the sea charts covering each
+    // paragraph. The bullets read exactly like the headings real names come in.
+    const sample = `
+## Kart
+
+- Sjøkart Innhold § 1
+- § 2
+
+Det er forbudt å fiske på Varanger avgrenset av rette linjer mellom følgende posisjoner:
+
+- Nord 70 grader 03,5 minutter. Øst 029 grader 06,7 minutter.
+- Nord 70 grader 06,8 minutter. Øst 029 grader 11,7 minutter.
+`;
+    const result = parseJmeldingGeo(sample);
+    expect(result.areas).toHaveLength(1);
+    expect(result.areas[0].name).not.toBe("Kart");
+    expect(result.areas[0].name).toContain("Varanger");
+  });
+});
