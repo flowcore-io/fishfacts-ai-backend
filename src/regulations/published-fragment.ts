@@ -17,7 +17,26 @@
  * Pure builders + staleness decisions; the sync job keeps only the wiring.
  */
 
+import {
+  APPLICABILITY_DIMENSIONS,
+  type ApplicabilityDimension,
+  type RegulationApplicability,
+  regulationApplicabilitySchema,
+} from "./applicability";
 import type { PublishedRegulation } from "./published-repository";
+
+/**
+ * The version of what `buildPublishedCaseFragment` renders, written to the
+ * frontmatter as `renderVersion`. The staleness check otherwise compares only
+ * revision and naming keys, so a change to the RENDERER alone (a new section
+ * drawn from fields the pinned revision already had) would never reach the
+ * fragments already synced. Bump it with every such change: a fragment
+ * written by an older renderer reads stale exactly once and current after.
+ *
+ * 1 — implicit: every fragment written before the key existed.
+ * 2 — the `## Applicability` section.
+ */
+export const PUBLISHED_FRAGMENT_RENDER_VERSION = 2;
 
 /** `fiskeridir-jmelding:J-39-2026` → `regulation-published-fiskeridir-jmelding-J-39-2026`. */
 export function publishedFragmentKeyFor(caseKey: string): string {
@@ -59,6 +78,120 @@ function namingLines(item: PublishedRegulation): string {
     : group;
 }
 
+/** How a dimension is named to a reader, in `APPLICABILITY_DIMENSIONS` order.
+ * Typed over the dimension union so a new dimension cannot ship unlabelled. */
+const DIMENSION_LABELS: Record<ApplicabilityDimension, string> = {
+  species: "Species",
+  gear: "Gear",
+  vesselType: "Vessel type",
+  vesselLength: "Vessel length",
+  vesselPower: "Engine power",
+  vesselFlag: "Vessel flag",
+  fishery: "Fishery",
+  permits: "Permits",
+  exemptions: "Exemptions",
+  activity: "Activity",
+};
+
+/**
+ * An extracted value or quote, kept on one line. Both come from a model's
+ * reading of source text, so either may carry newlines — and a newline
+ * followed by `## ` or `---` would open a heading or a frontmatter fence of
+ * its own. Collapsing every whitespace run leaves each value inside the
+ * bullet our own text started; the characters themselves are kept as
+ * printed, never translated or normalised.
+ */
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function boundText(bound: { min?: string; max?: string }): string | null {
+  const min = bound.min === undefined ? "" : oneLine(bound.min);
+  const max = bound.max === undefined ? "" : oneLine(bound.max);
+  const parts = [
+    min === "" ? null : `from ${min}`,
+    max === "" ? null : `up to ${max}`,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+/**
+ * What a dimension restricts, or null when it restricts nothing. An empty
+ * list, a list of blank values and a bound with neither end all narrow
+ * nothing — the same rule the FE's per-vessel verdict applies — so they are
+ * NOT stated restrictions: a "Species: none listed" line would read as
+ * "applies to no species".
+ */
+function dimensionValue(
+  applicability: RegulationApplicability,
+  dimension: ApplicabilityDimension,
+): string | null {
+  if (dimension === "activity") {
+    return applicability.activity === undefined
+      ? null
+      : activityValue(applicability.activity);
+  }
+  if (dimension === "vesselLength" || dimension === "vesselPower") {
+    const bound = applicability[dimension];
+    return bound === undefined ? null : boundText(bound);
+  }
+  const values = (applicability[dimension] ?? [])
+    .map(oneLine)
+    .filter((value) => value !== "");
+  return values.length > 0 ? values.join("; ") : null;
+}
+
+function activityValue(activity: "allowed" | "prohibited"): string {
+  return activity === "allowed"
+    ? "allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here"
+    : "prohibited — the listed activity is prohibited inside its areas";
+}
+
+/** The verbatim evidence quote as a suffix, or nothing for a blank one. The
+ * typographic quotes are the delimiter, so a `"` inside the source text
+ * cannot read as the end of the quote. */
+function sourceSuffix(quote: string | undefined): string {
+  const text = quote === undefined ? "" : oneLine(quote);
+  return text === "" ? "" : ` — source: “${text}”`;
+}
+
+/**
+ * The `## Applicability` section: who and what the approved regulation binds,
+ * as the admin confirmed it on the pinned revision. Three states read
+ * differently because they mean different things (see `applicability.ts`):
+ * never extracted, extracted with no restriction, and the restrictions the
+ * source states — each with the verbatim quote behind it. `notes` is written
+ * to the admin reviewing the extraction and is never rendered. No verdict for
+ * any particular vessel is claimed here: that depends on the vessel's own
+ * facts, which this corpus does not hold.
+ */
+function applicabilitySection(raw: unknown): string {
+  const parsed =
+    raw === null || raw === undefined
+      ? null
+      : regulationApplicabilitySchema.safeParse(raw);
+  // A value that does not parse is treated as never extracted: claiming "no
+  // restriction" from a malformed record would be the one wrong answer.
+  if (!parsed?.success) {
+    return "Applicability has not been extracted for this regulation, so it cannot be confirmed that it applies to any particular vessel.";
+  }
+  const applicability = parsed.data;
+  const lines = APPLICABILITY_DIMENSIONS.flatMap((dimension) => {
+    const value = dimensionValue(applicability, dimension);
+    if (value === null) return [];
+    const source = sourceSuffix(applicability.evidence?.[dimension]);
+    return [`- ${DIMENSION_LABELS[dimension]}: ${value}${source}`];
+  });
+  if (lines.length === 0) {
+    return "The source states no restriction on who or what this regulation applies to.";
+  }
+  return `The source states these conditions on who or what this regulation applies to:
+
+${lines.join("\n")}
+
+Whether it applies to a specific vessel depends on that vessel's own facts; this record does not decide that.`;
+}
+
 export function buildPublishedCaseFragment(
   item: PublishedRegulation,
   now: Date = new Date(),
@@ -91,6 +224,7 @@ displayName: ${yamlString(item.displayName)}
 groupId: ${yamlString(item.group.id)}
 groupName: ${yamlString(item.group.name)}
 groupIsDefault: ${item.group.isDefault}
+renderVersion: ${PUBLISHED_FRAGMENT_RENDER_VERSION}
 ---
 
 # ${item.title}
@@ -102,6 +236,10 @@ Reviewed and approved regulation — safe to cite in user-facing answers.
 - Jurisdiction: ${item.jurisdiction}${item.authority ? ` · Authority: ${item.authority}` : ""}${item.regulationNumber ? ` · Number: ${item.regulationNumber}` : ""}
 - Source: ${item.sourceType} — ${item.sourceUrl}
 - Validity: ${windowLine(item)} · ${inForceLine}${item.seasonalRecurrence ? `\n- Seasonal recurrence: ${item.seasonalRecurrence}` : ""}${item.category ? `\n- Category: ${item.category}` : ""}${item.summary ? `\n- Summary: ${item.summary}` : ""}${item.interpretationNotes ? `\n- Interpretation notes: ${item.interpretationNotes}` : ""}
+
+## Applicability
+
+${applicabilitySection(item.applicability)}
 
 ## Areas
 
@@ -171,13 +309,22 @@ admin review queue after having been published). Do not cite it.
  * are compared on their own. The display name rides on the revision already;
  * it is compared too so a fragment written before names existed reads stale.
  * A fragment missing any of these keys is stale — which is how the corpus
- * written before this change is rewritten exactly once. */
+ * written before this change is rewritten exactly once.
+ *
+ * The renderer itself is versioned too (`renderVersion`, see
+ * {@link PUBLISHED_FRAGMENT_RENDER_VERSION}): a fragment an older renderer
+ * wrote lacks a section the current one draws from the same revision, so it
+ * is stale once. A NEWER version reads current, so during a rolling deploy
+ * of a later bump the older pod does not rewrite, back and forth, what the
+ * newer one just wrote. */
 export function publishedFragmentIsCurrent(
   frontmatter: Record<string, unknown> | null,
   item: PublishedRegulation,
 ): boolean {
   if (!frontmatter) return false;
   return (
+    Number(frontmatter.renderVersion ?? 0) >=
+      PUBLISHED_FRAGMENT_RENDER_VERSION &&
     frontmatter.state === "published" &&
     frontmatter.revisionId === item.publishedRevisionId &&
     String(frontmatter.publishedAt ?? "null") ===

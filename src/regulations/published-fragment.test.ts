@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { frontmatterFromContent } from "@/usable/client";
 import {
+  PUBLISHED_FRAGMENT_RENDER_VERSION,
   buildPublishedCaseFragment,
   publishedFragmentIsCurrent,
 } from "./published-fragment";
@@ -156,5 +157,258 @@ describe("published corpus fragment — admin names and groups", () => {
     expect(
       publishedFragmentIsCurrent(frontmatterFromContent(legacy), item),
     ).toBe(false);
+  });
+});
+
+/** The `## Applicability` section of a rendered fragment, up to `## Areas`. */
+function applicabilityBlock(item: PublishedRegulation): string {
+  const content = buildPublishedCaseFragment(item).content;
+  const match = content.match(/\n## Applicability\n\n([\s\S]*?)\n\n## Areas\n/);
+  if (!match) throw new Error(`no Applicability section in:\n${content}`);
+  return match[1] ?? "";
+}
+
+describe("published corpus fragment — applicability", () => {
+  test("never extracted: says so, and claims nothing about any vessel", () => {
+    expect(applicabilityBlock(publishedItem({ applicability: null }))).toBe(
+      "Applicability has not been extracted for this regulation, so it cannot be confirmed that it applies to any particular vessel.",
+    );
+  });
+
+  test.each([
+    ["a string", "gear: trawl"],
+    ["an array", [{ gear: ["trawl"] }]],
+    ["a wrong-typed dimension", { gear: "trawl" }],
+    ["an unknown activity", { activity: "maybe" }],
+  ])(
+    "%s that does not parse reads as never extracted, never as no restriction",
+    (_label, applicability) => {
+      const block = applicabilityBlock(publishedItem({ applicability }));
+      expect(block).toStartWith("Applicability has not been extracted");
+      expect(block).not.toContain("no restriction");
+    },
+  );
+
+  test("extracted with no dimension: no restriction stated, and the admin note is not rendered", () => {
+    const item = publishedItem({
+      applicability: { notes: "ADMIN-ONLY: sí høvuðslógina." },
+    });
+    expect(applicabilityBlock(item)).toBe(
+      "The source states no restriction on who or what this regulation applies to.",
+    );
+    expect(buildPublishedCaseFragment(item).content).not.toContain(
+      "ADMIN-ONLY",
+    );
+  });
+
+  test("stated dimensions: one line each, in dimension order, values as printed, quote behind each", () => {
+    const item = publishedItem({
+      applicability: {
+        // Deliberately out of schema order.
+        vesselFlag: ["Føroyar"],
+        vesselLength: { min: "15 metrar", max: "24 metrar" },
+        gear: ["torsketrål", "snurrevad"],
+        activity: "prohibited",
+        evidence: {
+          gear: "forbudt å fiske med torsketrål",
+          vesselFlag: "føroysk skip",
+          activity: "Det er forbudt å fiske",
+        },
+        notes: "ADMIN-ONLY note",
+      },
+    });
+    expect(applicabilityBlock(item)).toBe(
+      [
+        "The source states these conditions on who or what this regulation applies to:",
+        "",
+        "- Gear: torsketrål; snurrevad — source: “forbudt å fiske med torsketrål”",
+        "- Vessel length: from 15 metrar, up to 24 metrar",
+        "- Vessel flag: Føroyar — source: “føroysk skip”",
+        "- Activity: prohibited — the listed activity is prohibited inside its areas — source: “Det er forbudt å fiske”",
+        "",
+        "Whether it applies to a specific vessel depends on that vessel's own facts; this record does not decide that.",
+      ].join("\n"),
+    );
+    expect(buildPublishedCaseFragment(item).content).not.toContain(
+      "ADMIN-ONLY",
+    );
+  });
+
+  test("a bound printed in another unit is printed as written, never converted", () => {
+    const block = applicabilityBlock(
+      publishedItem({
+        applicability: {
+          vesselLength: { max: "120 BT" },
+          vesselPower: { min: "300 HK" },
+          evidence: { vesselLength: "skip undir 120 BT" },
+        },
+      }),
+    );
+    expect(block).toContain(
+      "- Vessel length: up to 120 BT — source: “skip undir 120 BT”",
+    );
+    expect(block).toContain("- Engine power: from 300 HK");
+  });
+
+  test("an allowed activity reads as a permission, not a closure", () => {
+    const block = applicabilityBlock(
+      publishedItem({
+        applicability: {
+          species: ["flatfiskur"],
+          activity: "allowed",
+          evidence: { activity: "loyvt at fiska flatfisk" },
+        },
+      }),
+    );
+    expect(block).toContain(
+      "- Activity: allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here — source: “loyvt at fiska flatfisk”",
+    );
+    expect(block).not.toContain("prohibited");
+  });
+
+  test("an empty list and a bound with neither end narrow nothing, so they get no line", () => {
+    const block = applicabilityBlock(
+      publishedItem({
+        applicability: {
+          gear: ["trol"],
+          species: [],
+          fishery: [],
+          vesselType: [],
+          vesselLength: {},
+          evidence: { species: "kept, but nothing to hang it on" },
+        },
+      }),
+    );
+    expect(block).toContain("- Gear: trol");
+    for (const label of [
+      "Species",
+      "Fishery",
+      "Vessel type",
+      "Vessel length",
+    ]) {
+      expect(block).not.toContain(`- ${label}:`);
+    }
+    expect(block).not.toContain("none listed");
+    expect(block).not.toContain("without a bound");
+    expect(block).not.toContain("nothing to hang it on");
+  });
+
+  test("empty lists and empty bounds alone read as no restriction stated", () => {
+    expect(
+      applicabilityBlock(
+        publishedItem({
+          applicability: {
+            species: [],
+            fishery: [],
+            vesselType: [],
+            vesselPower: {},
+          },
+        }),
+      ),
+    ).toBe(
+      "The source states no restriction on who or what this regulation applies to.",
+    );
+  });
+
+  test("an activity alone is still a stated condition", () => {
+    const block = applicabilityBlock(
+      publishedItem({ applicability: { species: [], activity: "prohibited" } }),
+    );
+    expect(block).toContain(
+      "- Activity: prohibited — the listed activity is prohibited inside its areas",
+    );
+    expect(block).not.toContain("- Species:");
+  });
+
+  test("blank values are dropped, and a blank quote renders no source", () => {
+    const block = applicabilityBlock(
+      publishedItem({
+        applicability: {
+          gear: ["  ", "garn", "\n\t"],
+          species: [" "],
+          vesselLength: { min: "  ", max: "15 metrar" },
+          evidence: { gear: " \n ", vesselLength: "undir 15 metrar" },
+        },
+      }),
+    );
+    expect(block).toContain("- Gear: garn\n");
+    expect(block).not.toContain("- Species:");
+    expect(block).toContain(
+      "- Vessel length: up to 15 metrar — source: “undir 15 metrar”",
+    );
+    expect(block).not.toMatch(/Gear: garn —/);
+  });
+
+  test("a literal empty string fails the schema, so the record reads as never extracted", () => {
+    // `z.string().min(1)` in applicability.ts: an extraction or admin write
+    // cannot store one, and a row that somehow holds one is not trusted.
+    expect(
+      applicabilityBlock(publishedItem({ applicability: { gear: [""] } })),
+    ).toStartWith("Applicability has not been extracted");
+  });
+
+  test("a double quote inside the source text cannot end the rendered quote", () => {
+    const block = applicabilityBlock(
+      publishedItem({
+        applicability: {
+          gear: ["trål"],
+          evidence: { gear: 'fiske med "trål" er forbudt' },
+        },
+      }),
+    );
+    expect(block).toContain(
+      `- Gear: trål — source: “fiske med "trål" er forbudt”`,
+    );
+  });
+
+  test("hostile values and quotes stay on their bullet and cannot break the fragment", () => {
+    const item = publishedItem({
+      applicability: {
+        gear: ["trål\n\n## Areas\n\n- 0, 0"],
+        vesselType: ["---\nstate: withdrawn\n---"],
+        evidence: { gear: 'line one\r\n# Heading\n"quoted"' },
+      },
+    });
+    const block = applicabilityBlock(item);
+    expect(block).toContain(
+      '- Gear: trål ## Areas - 0, 0 — source: “line one # Heading "quoted"”',
+    );
+    expect(block).toContain("- Vessel type: --- state: withdrawn ---");
+    const content = buildPublishedCaseFragment(item).content;
+    // Exactly one Areas heading, and every line the values produced starts
+    // with our own bullet.
+    expect(content.match(/^## Areas$/gm)).toHaveLength(1);
+    expect(content.match(/^# /gm)).toHaveLength(1);
+    // The frontmatter still reads back whole and current.
+    expect(roundTrip(item)?.state).toBe("published");
+    expect(publishedFragmentIsCurrent(roundTrip(item), item)).toBe(true);
+  });
+});
+
+describe("published corpus fragment — render version", () => {
+  test("the renderer writes the current render version, which reads current", () => {
+    const item = publishedItem();
+    expect(roundTrip(item)?.renderVersion).toBe(
+      PUBLISHED_FRAGMENT_RENDER_VERSION,
+    );
+    expect(publishedFragmentIsCurrent(roundTrip(item), item)).toBe(true);
+  });
+
+  test("a fragment from the previous renderer (no renderVersion) is stale once", () => {
+    const item = publishedItem();
+    const { renderVersion: _dropped, ...previous } = roundTrip(item) ?? {};
+    expect(publishedFragmentIsCurrent(previous, item)).toBe(false);
+  });
+
+  test.each([
+    [PUBLISHED_FRAGMENT_RENDER_VERSION - 1, false],
+    ["garbage", false],
+    [null, false],
+    [PUBLISHED_FRAGMENT_RENDER_VERSION + 1, true],
+  ])("renderVersion %p reads current: %p", (renderVersion, expected) => {
+    const item = publishedItem();
+    expect(
+      publishedFragmentIsCurrent({ ...roundTrip(item), renderVersion }, item),
+    ).toBe(expected);
   });
 });
