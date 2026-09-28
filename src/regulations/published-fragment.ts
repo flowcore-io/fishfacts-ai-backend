@@ -105,29 +105,54 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function boundText(bound: { min?: string; max?: string }): string {
+function boundText(bound: { min?: string; max?: string }): string | null {
+  const min = bound.min === undefined ? "" : oneLine(bound.min);
+  const max = bound.max === undefined ? "" : oneLine(bound.max);
   const parts = [
-    bound.min === undefined ? null : `from ${oneLine(bound.min)}`,
-    bound.max === undefined ? null : `up to ${oneLine(bound.max)}`,
+    min === "" ? null : `from ${min}`,
+    max === "" ? null : `up to ${max}`,
   ].filter((part): part is string => part !== null);
-  return parts.length > 0 ? parts.join(", ") : "stated without a bound";
+  return parts.length > 0 ? parts.join(", ") : null;
 }
 
+/**
+ * What a dimension restricts, or null when it restricts nothing. An empty
+ * list, a list of blank values and a bound with neither end all narrow
+ * nothing — the same rule the FE's per-vessel verdict applies — so they are
+ * NOT stated restrictions: a "Species: none listed" line would read as
+ * "applies to no species".
+ */
 function dimensionValue(
   applicability: RegulationApplicability,
-  dimension: Exclude<ApplicabilityDimension, "activity">,
-): string {
-  if (dimension === "vesselLength" || dimension === "vesselPower") {
-    return boundText(applicability[dimension] ?? {});
+  dimension: ApplicabilityDimension,
+): string | null {
+  if (dimension === "activity") {
+    return applicability.activity === undefined
+      ? null
+      : activityValue(applicability.activity);
   }
-  const values = applicability[dimension] ?? [];
-  return values.length > 0 ? values.map(oneLine).join("; ") : "none listed";
+  if (dimension === "vesselLength" || dimension === "vesselPower") {
+    const bound = applicability[dimension];
+    return bound === undefined ? null : boundText(bound);
+  }
+  const values = (applicability[dimension] ?? [])
+    .map(oneLine)
+    .filter((value) => value !== "");
+  return values.length > 0 ? values.join("; ") : null;
 }
 
 function activityValue(activity: "allowed" | "prohibited"): string {
   return activity === "allowed"
     ? "allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here"
     : "prohibited — the listed activity is prohibited inside its areas";
+}
+
+/** The verbatim evidence quote as a suffix, or nothing for a blank one. The
+ * typographic quotes are the delimiter, so a `"` inside the source text
+ * cannot read as the end of the quote. */
+function sourceSuffix(quote: string | undefined): string {
+  const text = quote === undefined ? "" : oneLine(quote);
+  return text === "" ? "" : ` — source: “${text}”`;
 }
 
 /**
@@ -151,21 +176,15 @@ function applicabilitySection(raw: unknown): string {
     return "Applicability has not been extracted for this regulation, so it cannot be confirmed that it applies to any particular vessel.";
   }
   const applicability = parsed.data;
-  const stated = APPLICABILITY_DIMENSIONS.filter(
-    (dimension) => applicability[dimension] !== undefined,
-  );
-  if (stated.length === 0) {
+  const lines = APPLICABILITY_DIMENSIONS.flatMap((dimension) => {
+    const value = dimensionValue(applicability, dimension);
+    if (value === null) return [];
+    const source = sourceSuffix(applicability.evidence?.[dimension]);
+    return [`- ${DIMENSION_LABELS[dimension]}: ${value}${source}`];
+  });
+  if (lines.length === 0) {
     return "The source states no restriction on who or what this regulation applies to.";
   }
-  const lines = stated.map((dimension) => {
-    const value =
-      dimension === "activity"
-        ? activityValue(applicability.activity as "allowed" | "prohibited")
-        : dimensionValue(applicability, dimension);
-    const quote = applicability.evidence?.[dimension];
-    const source = quote === undefined ? "" : ` — source: "${oneLine(quote)}"`;
-    return `- ${DIMENSION_LABELS[dimension]}: ${value}${source}`;
-  });
   return `The source states these conditions on who or what this regulation applies to:
 
 ${lines.join("\n")}

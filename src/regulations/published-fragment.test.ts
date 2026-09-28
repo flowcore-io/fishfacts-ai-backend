@@ -221,10 +221,10 @@ describe("published corpus fragment — applicability", () => {
       [
         "The source states these conditions on who or what this regulation applies to:",
         "",
-        '- Gear: torsketrål; snurrevad — source: "forbudt å fiske med torsketrål"',
+        "- Gear: torsketrål; snurrevad — source: “forbudt å fiske med torsketrål”",
         "- Vessel length: from 15 metrar, up to 24 metrar",
-        '- Vessel flag: Føroyar — source: "føroysk skip"',
-        '- Activity: prohibited — the listed activity is prohibited inside its areas — source: "Det er forbudt å fiske"',
+        "- Vessel flag: Føroyar — source: “føroysk skip”",
+        "- Activity: prohibited — the listed activity is prohibited inside its areas — source: “Det er forbudt å fiske”",
         "",
         "Whether it applies to a specific vessel depends on that vessel's own facts; this record does not decide that.",
       ].join("\n"),
@@ -245,7 +245,7 @@ describe("published corpus fragment — applicability", () => {
       }),
     );
     expect(block).toContain(
-      '- Vessel length: up to 120 BT — source: "skip undir 120 BT"',
+      "- Vessel length: up to 120 BT — source: “skip undir 120 BT”",
     );
     expect(block).toContain("- Engine power: from 300 HK");
   });
@@ -261,17 +261,104 @@ describe("published corpus fragment — applicability", () => {
       }),
     );
     expect(block).toContain(
-      '- Activity: allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here — source: "loyvt at fiska flatfisk"',
+      "- Activity: allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here — source: “loyvt at fiska flatfisk”",
     );
     expect(block).not.toContain("prohibited");
   });
 
-  test("an asserted empty list and an empty bound are still stated, not dropped", () => {
+  test("an empty list and a bound with neither end narrow nothing, so they get no line", () => {
     const block = applicabilityBlock(
-      publishedItem({ applicability: { gear: [], vesselLength: {} } }),
+      publishedItem({
+        applicability: {
+          gear: ["trol"],
+          species: [],
+          fishery: [],
+          vesselType: [],
+          vesselLength: {},
+          evidence: { species: "kept, but nothing to hang it on" },
+        },
+      }),
     );
-    expect(block).toContain("- Gear: none listed");
-    expect(block).toContain("- Vessel length: stated without a bound");
+    expect(block).toContain("- Gear: trol");
+    for (const label of [
+      "Species",
+      "Fishery",
+      "Vessel type",
+      "Vessel length",
+    ]) {
+      expect(block).not.toContain(`- ${label}:`);
+    }
+    expect(block).not.toContain("none listed");
+    expect(block).not.toContain("without a bound");
+    expect(block).not.toContain("nothing to hang it on");
+  });
+
+  test("empty lists and empty bounds alone read as no restriction stated", () => {
+    expect(
+      applicabilityBlock(
+        publishedItem({
+          applicability: {
+            species: [],
+            fishery: [],
+            vesselType: [],
+            vesselPower: {},
+          },
+        }),
+      ),
+    ).toBe(
+      "The source states no restriction on who or what this regulation applies to.",
+    );
+  });
+
+  test("an activity alone is still a stated condition", () => {
+    const block = applicabilityBlock(
+      publishedItem({ applicability: { species: [], activity: "prohibited" } }),
+    );
+    expect(block).toContain(
+      "- Activity: prohibited — the listed activity is prohibited inside its areas",
+    );
+    expect(block).not.toContain("- Species:");
+  });
+
+  test("blank values are dropped, and a blank quote renders no source", () => {
+    const block = applicabilityBlock(
+      publishedItem({
+        applicability: {
+          gear: ["  ", "garn", "\n\t"],
+          species: [" "],
+          vesselLength: { min: "  ", max: "15 metrar" },
+          evidence: { gear: " \n ", vesselLength: "undir 15 metrar" },
+        },
+      }),
+    );
+    expect(block).toContain("- Gear: garn\n");
+    expect(block).not.toContain("- Species:");
+    expect(block).toContain(
+      "- Vessel length: up to 15 metrar — source: “undir 15 metrar”",
+    );
+    expect(block).not.toMatch(/Gear: garn —/);
+  });
+
+  test("a literal empty string fails the schema, so the record reads as never extracted", () => {
+    // `z.string().min(1)` in applicability.ts: an extraction or admin write
+    // cannot store one, and a row that somehow holds one is not trusted.
+    expect(
+      applicabilityBlock(publishedItem({ applicability: { gear: [""] } })),
+    ).toStartWith("Applicability has not been extracted");
+  });
+
+  test("a double quote inside the source text cannot end the rendered quote", () => {
+    const block = applicabilityBlock(
+      publishedItem({
+        applicability: {
+          gear: ["trål"],
+          evidence: { gear: 'fiske med "trål" er forbudt' },
+        },
+      }),
+    );
+    expect(block).toContain(
+      `- Gear: trål — source: “fiske med "trål" er forbudt”`,
+    );
   });
 
   test("hostile values and quotes stay on their bullet and cannot break the fragment", () => {
@@ -284,7 +371,7 @@ describe("published corpus fragment — applicability", () => {
     });
     const block = applicabilityBlock(item);
     expect(block).toContain(
-      '- Gear: trål ## Areas - 0, 0 — source: "line one # Heading "quoted""',
+      '- Gear: trål ## Areas - 0, 0 — source: “line one # Heading "quoted"”',
     );
     expect(block).toContain("- Vessel type: --- state: withdrawn ---");
     const content = buildPublishedCaseFragment(item).content;

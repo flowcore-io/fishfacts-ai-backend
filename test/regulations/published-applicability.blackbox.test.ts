@@ -78,6 +78,19 @@ const CASES = {
     body: "Meldingen sier ingenting om hvem den gjelder.",
     applicability: { notes: "ADMIN-ONLY: kilden nevner ingen avgrensning." },
   },
+  /** Empty lists as production holds them: they narrow nothing, so only the
+   * gear is a stated restriction. */
+  emptyLists: {
+    jmNumber: "pa-05-2026",
+    title: "J-205-2026 Forbud mot trål i området",
+    body: "Det er forbudt å fiske med trol i området.",
+    applicability: {
+      gear: ["trol"],
+      species: [],
+      fishery: [],
+      evidence: { gear: "fiske med trol" },
+    },
+  },
 } as const;
 
 type CaseSeed = (typeof CASES)[keyof typeof CASES];
@@ -407,10 +420,10 @@ describe("published corpus applicability black-box", () => {
       await waitForCorpusFragment(CASES.stated),
     );
     expect(section).toContain(
-      '- Gear: torsketrål — source: "forbudt å fiske med torsketrål"',
+      "- Gear: torsketrål — source: “forbudt å fiske med torsketrål”",
     );
     expect(section).toContain(
-      '- Activity: prohibited — the listed activity is prohibited inside its areas — source: "Det er forbudt å fiske"',
+      "- Activity: prohibited — the listed activity is prohibited inside its areas — source: “Det er forbudt å fiske”",
     );
     // The corpus names the conditions and never claims a vessel verdict.
     expect(section).toContain(
@@ -423,7 +436,7 @@ describe("published corpus applicability black-box", () => {
       await waitForCorpusFragment(CASES.stated),
     );
     expect(section).toContain(
-      '- Vessel length: up to 120 BT — source: "fartøy under 120 BT"',
+      "- Vessel length: up to 120 BT — source: “fartøy under 120 BT”",
     );
     expect(section).not.toMatch(/\d\s*m\b|metre|meter/i);
   }, 30000);
@@ -433,9 +446,9 @@ describe("published corpus applicability black-box", () => {
       await waitForCorpusFragment(CASES.permission),
     );
     expect(section).toContain(
-      '- Activity: allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here — source: "Det er tillatt å fiske flatfisk"',
+      "- Activity: allowed — this regulation is a permission, not a closure: the listed activity is allowed inside its areas under the conditions stated here — source: “Det er tillatt å fiske flatfisk”",
     );
-    expect(section).toContain('- Species: flatfisk — source: "fiske flatfisk"');
+    expect(section).toContain("- Species: flatfisk — source: “fiske flatfisk”");
     expect(section).not.toContain("prohibited");
   }, 30000);
 
@@ -455,6 +468,16 @@ describe("published corpus applicability black-box", () => {
     expect(section).toBe(
       "The source states no restriction on who or what this regulation applies to.",
     );
+  }, 30000);
+
+  test("empty lists narrow nothing: the gear gets a line, the empty species and fishery do not", async () => {
+    const section = applicabilitySection(
+      await waitForCorpusFragment(CASES.emptyLists),
+    );
+    expect(section).toContain("- Gear: trol — source: “fiske med trol”");
+    expect(section).not.toContain("- Species:");
+    expect(section).not.toContain("- Fishery:");
+    expect(section).not.toContain("none listed");
   }, 30000);
 
   test("the admin's notes never reach the corpus", async () => {
@@ -489,7 +512,7 @@ describe("published corpus applicability black-box", () => {
     const rewritten = corpusFragment(CASES.stated) as CorpusFragment;
     expect(rewritten.id).toBe(written.id);
     expect(applicabilitySection(rewritten)).toContain(
-      '- Gear: torsketrål — source: "forbudt å fiske med torsketrål"',
+      "- Gear: torsketrål — source: “forbudt å fiske med torsketrål”",
     );
     const renderVersion = frontmatterOf(rewritten.content)?.renderVersion;
     expect(renderVersion).toBeNumber();
