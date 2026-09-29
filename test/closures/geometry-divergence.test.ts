@@ -115,3 +115,37 @@ describe("compareCase", () => {
     expect(result?.areas[0].kind).toBe("unreadable-source");
   });
 });
+
+describe("compareCase — a § the reader split into several areas", () => {
+  test("several areas under one § are compared against the authority together", () => {
+    // The reader splits at every lead-in and does not judge continuation, so
+    // § 1 of the seinot forskrift arrives as two boundary runs. Treating the
+    // repeated § as unpairable would drop the announcement onto positional
+    // pairing and lose every real finding in it.
+    const result = compareCase(
+      "J-153-2026",
+      [official(1, "Lafjorden", BOX)],
+      [
+        { name: "§ 1 Lafjorden", points: BOX.slice(0, 2) },
+        { name: "§ 1 Lafjorden", points: BOX.slice(2) },
+      ],
+    );
+    expect(result).toBeNull();
+  });
+
+  test("a real finding elsewhere survives a § that split", () => {
+    const moved = [{ lat: BOX[0].lat, lon: 7.05 }, ...BOX.slice(1)];
+    const result = compareCase(
+      "J-153-2026",
+      [official(1, "Lafjorden", BOX), official(32, "Skatebåen", BOX)],
+      [
+        { name: "§ 1 Lafjorden", points: BOX.slice(0, 2) },
+        { name: "§ 1 Lafjorden", points: BOX.slice(2) },
+        { name: "§ 32 Skatebåen", points: moved },
+      ],
+    );
+    expect(result?.areas).toHaveLength(1);
+    expect(result?.areas[0].paragraph).toBe(32);
+    expect(result?.areas[0].kind).toBe("position");
+  });
+});

@@ -133,26 +133,22 @@ const CLOSURE_LEAD_IN_RE =
   /(?:følgende|disse|avgrenses av følgende)\s+(?:posisjoner|koordinater|punkter)\s*[.:]/gi;
 
 /**
- * `herfra videre avgrenset i øst av rett linje mellom følgende posisjoner` —
- * the statute saying the next run of vertices continues the SAME area. § 1 of
- * the seinot forskrift is built this way: a western boundary line, then an
- * eastern one, closed by the coastline. Splitting on that second lead-in would
- * cut one closure into two.
+ * Every lead-in starts a new area, with no attempt to judge from the prose
+ * whether the run that follows continues the previous closure.
  *
- * Returning to position 1 is the opposite — it closes a ring, so a lead-in
- * after it does start a new area even though the sentence also says "herfra".
- * Matched on the destination rather than on "tilbake", because J-155-2026
- * closes three of its rings with "Herfra videre til posisjon 1" and "Herfra
- * videre en rett linje til posisjon 1" — a close worded as a continuation.
+ * The reader takes the coordinates and their order at face value. Deciding
+ * that `herfra videre avgrenset i øst av rett linje mellom følgende posisjoner`
+ * joins two runs into one closure — as § 1 of the seinot forskrift is worded —
+ * is reading the statute, not reading coordinates, and reading it wrongly
+ * produces a plausible shape nothing downstream can question. Splitting always
+ * produces two short runs instead, which fail geometry validation and reach an
+ * admin, whose job that judgement is.
  *
- * Position 1 specifically, not any numbered position: a run that continues to
- * some other vertex is still describing one boundary. J-147-2026 traces
- * "Videre langs yttergrensen for fiskevernsonen ved Svalbard … til posisjon 8",
- * which is a boundary carrying on, not a ring closing. (162 of the corpus's 164
- * `til posisjon N` phrases name position 1; those two name 8.)
+ * It costs nothing real: § 1 is bounded by open lines plus the coastline, so it
+ * was never derivable from the text anyway — merging its two runs only made it
+ * LOOK derivable, as a four-corner quadrilateral against the authority's
+ * 103-vertex coast polygon.
  */
-const CONTINUATION_RE = /herfra\s+videre/i;
-const RING_CLOSE_RE = /til\s+posisjon\s+1\b/i;
 
 function dedupByProximity(matches: MatchedPoint[]): MatchedPoint[] {
   const byPriority = [...matches].sort(
@@ -366,14 +362,9 @@ function consolidatedText(text: string): string {
 function findSegmentStarts(text: string, headings: Heading[]): number[] {
   const starts = new Set<number>(headings.map((h) => h.offset));
   CLOSURE_LEAD_IN_RE.lastIndex = 0;
-  let previousEnd = 0;
   for (const match of text.matchAll(CLOSURE_LEAD_IN_RE)) {
     if (match.index === undefined) continue;
-    const between = text.slice(previousEnd, match.index);
-    previousEnd = match.index + match[0].length;
-    const continues =
-      CONTINUATION_RE.test(between) && !RING_CLOSE_RE.test(between);
-    if (!continues) starts.add(match.index);
+    starts.add(match.index);
   }
   return [...starts].sort((a, b) => a - b);
 }

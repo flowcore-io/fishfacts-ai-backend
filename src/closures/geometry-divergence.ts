@@ -87,7 +87,7 @@ export function paragraphOf(name: string | null): number | null {
 function pairByParagraph(
   official: OfficialClosure[],
   ours: ParsedArea[],
-): { byParagraph: Map<number, ParsedArea>; unnumbered: number } | null {
+): { byParagraph: Map<number, ParsedArea[]>; unnumbered: number } | null {
   if (official.some((o) => o.paragraph === null)) return null;
   const numbered = ours.flatMap((area) => {
     const paragraph = paragraphOf(area.name);
@@ -99,12 +99,19 @@ function pairByParagraph(
   // is reported on its own rather than dragging the rest onto positional
   // pairing.
   if (numbered.length === 0) return null;
-  const paragraphs = numbered.map((n) => n.paragraph);
-  if (new Set(paragraphs).size !== paragraphs.length) return null;
-  return {
-    byParagraph: new Map(numbered.map((n) => [n.paragraph, n.area])),
-    unnumbered: ours.length - numbered.length,
-  };
+  // A § may yield SEVERAL areas — the reader splits at every lead-in and does
+  // not judge whether a run continues the previous one, so a paragraph bounded
+  // by two separate lines (§ 1 of the seinot forskrift) arrives as two. They
+  // are compared against the authority's single list together, in source
+  // order; treating a repeated § as unpairable would drop the whole
+  // announcement onto positional pairing and lose every real finding in it.
+  const byParagraph = new Map<number, ParsedArea[]>();
+  for (const { paragraph, area } of numbered) {
+    const existing = byParagraph.get(paragraph);
+    if (existing) existing.push(area);
+    else byParagraph.set(paragraph, [area]);
+  }
+  return { byParagraph, unnumbered: ours.length - numbered.length };
 }
 
 /** Findings for one closure the authority and we both have. */
@@ -165,8 +172,8 @@ export function compareCase(
   const paired = pairByParagraph(ordered, ours);
   if (paired) {
     for (const officialArea of ordered) {
-      const ourArea = paired.byParagraph.get(officialArea.paragraph as number);
-      if (!ourArea) {
+      const ourAreas = paired.byParagraph.get(officialArea.paragraph as number);
+      if (!ourAreas || ourAreas.length === 0) {
         divergences.push({
           paragraph: officialArea.paragraph,
           officialName: officialArea.name,
@@ -176,7 +183,12 @@ export function compareCase(
         });
         continue;
       }
-      divergences.push(...compareArea(officialArea, ourArea));
+      divergences.push(
+        ...compareArea(officialArea, {
+          name: ourAreas[0].name,
+          points: ourAreas.flatMap((a) => a.points),
+        }),
+      );
     }
     if (paired.unnumbered > 0) {
       divergences.push({

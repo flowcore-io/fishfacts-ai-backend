@@ -306,10 +306,13 @@ Det er forbudt å fiske etter reker med trål i et område på Tvibergfeltet i T
     expect(result.areas[1].name).toContain("Tvibergfeltet");
   });
 
-  test("§ 1 Lafjorden — 'herfra videre' continues the same closure", () => {
-    // The area is bounded by a line in the west and another in the east, closed
-    // by the coastline. Two lead-ins, one closure — splitting on the second
-    // would cut it in half.
+  test("§ 1 Lafjorden — each boundary run is its own area, not one merged closure", () => {
+    // The statute bounds this closure with a line in the west and another in
+    // the east, closed by the coastline. Reading "herfra videre" as joining
+    // them would emit a four-corner quadrilateral — a shape the statute never
+    // describes, and one the authority publishes as a 103-vertex coast polygon.
+    // Two short runs instead: they fail geometry validation and reach an admin,
+    // which is where that judgement belongs.
     const sample = `
 ### § 1 Lafjorden og Magerøysundet i Finnmark
 
@@ -324,33 +327,18 @@ herfra videre avgrenset i øst av rett linje mellom følgende posisjoner:
 - Nord 70 grader 54,6 minutter. Øst 025 grader 41,1 minutter.
 `;
     const result = parseJmeldingGeo(sample);
-    expect(result.areas).toHaveLength(1);
-    expect(result.areas[0].points).toHaveLength(4);
-  });
-
-  test("J-155-2026 — 'Herfra videre til posisjon 1' closes a ring, it does not continue it", () => {
-    // The trap the continuation rule has to survive: three of J-155's rings
-    // close with wording that reads like a continuation. Matching on the
-    // destination ("til posisjon N") rather than on "tilbake" tells them apart.
-    const sample = `
-Det er forbudt å fiske på Varanger avgrenset av rette linjer mellom følgende posisjoner:
-
-- Nord 70 grader 03,5 minutter. Øst 029 grader 06,7 minutter.
-- Nord 70 grader 06,8 minutter. Øst 029 grader 11,7 minutter. Herfra videre til posisjon 1.
-
-Det er forbudt å fiske på Tvibergfeltet avgrenset av rette linjer mellom følgende posisjoner:
-
-- Nord 64 grader 03,5 minutter. Øst 009 grader 06,7 minutter.
-- Nord 64 grader 06,8 minutter. Øst 009 grader 11,7 minutter.
-`;
-    const result = parseJmeldingGeo(sample);
     expect(result.areas).toHaveLength(2);
+    expect(result.areas[0].points).toHaveLength(2);
+    expect(result.areas[1].points).toHaveLength(2);
+    // Coordinates and their order survive the split untouched.
+    expect(result.areas[0].points[0].lat).toBeCloseTo(70 + 58.8 / 60, 6);
+    expect(result.areas[1].points[1].lon).toBeCloseTo(25 + 41.1 / 60, 6);
   });
 
-  test("J-147-2026 — a boundary continuing to a position other than 1 is not a ring close", () => {
+  test("J-147-2026 — a run continuing to another position still becomes its own area", () => {
     // "Videre langs yttergrensen for fiskevernsonen ved Svalbard … til posisjon
-    // 8" is one boundary carrying on, not a ring returning to its start. Only
-    // position 1 ends a closure, so a lead-in after this stays part of it.
+    // 8" reads like one boundary carrying on. Whether it is, is a question
+    // about the statute; the reader does not answer it.
     const sample = `
 Det er forbudt å fiske avgrenset av rette linjer mellom følgende posisjoner:
 
@@ -363,8 +351,8 @@ herfra videre langs yttergrensen til posisjon 8, avgrenset av rette linjer mello
 - Nord 79 grader 30,0 minutter. Vest 003 grader 45,0 minutter.
 `;
     const result = parseJmeldingGeo(sample);
-    expect(result.areas).toHaveLength(1);
-    expect(result.areas[0].points).toHaveLength(4);
+    expect(result.areas).toHaveLength(2);
+    expect(result.areas.flatMap((a) => a.points)).toHaveLength(4);
   });
 
   test("two closures may share a corner without either losing it", () => {
