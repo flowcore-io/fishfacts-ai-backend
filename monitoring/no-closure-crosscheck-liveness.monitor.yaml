@@ -16,6 +16,19 @@
 # monitor, and a dead check that reports nothing is worse than no check at all,
 # because it reads as a clean bill of health.
 #
+# Ingestion was verified against live logs on 2026-09-29, before this job had
+# ever run, using the existing `[Vessels] registry loaded` line as the control:
+#
+#   - `console.info` from this workload IS ingested, but arrives at
+#     **level `unknown`**, not `info` — the workload emits only `error` and
+#     `unknown`. Do NOT "tighten" the query below with `level:info`; it would
+#     match nothing and the monitor would go quiet exactly when it should fire.
+#   - Hyphenated tokens match as bare free text (`ais-position-tail` returns
+#     hits), so `cross-check` in the phrase below is safe.
+#   - A structured second argument is split across following lines, so the
+#     keyword has to live in the first argument — it does: the summary is
+#     interpolated into the template string, not passed as an object field.
+#
 # The Groundcover MCP is read-only, so this can't be applied via API. Create it
 # in the Groundcover UI (Monitors → New monitor → Logs → "Edit as code") or via
 # your monitors-as-code pipeline. Reconcile the surrounding keys with an
