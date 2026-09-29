@@ -1,0 +1,83 @@
+# Groundcover logs monitor — Norwegian closure cross-check liveness
+# ------------------------------------------------------------------
+# Companion to no-closure-geometry-divergence.monitor.yaml, and the reason it
+# is a separate monitor: that one alerts on findings and must stay quiet when
+# there are none (`noDataState: OK`), which means a cross-check that stopped
+# running looks exactly like a cross-check that found nothing. Both are
+# silence. This one alerts on the silence.
+#
+# `fiskeridir-wfs-crosscheck` emits, on every run including a clean one:
+#
+#   [Fiskeridir] closure cross-check complete: <summary>
+#
+# Absence of that line for more than a day means the job did not finish — the
+# scheduler skipped it, the Fiskeridirektoratet WFS was unreachable, or it threw
+# before comparing anything. None of those are visible in the divergence
+# monitor, and a dead check that reports nothing is worse than no check at all,
+# because it reads as a clean bill of health.
+#
+# Ingestion was verified against live logs on 2026-09-29, before this job had
+# ever run, using the existing `[Vessels] registry loaded` line as the control:
+#
+#   - `console.info` from this workload IS ingested, but arrives at
+#     **level `unknown`**, not `info` — the workload emits only `error` and
+#     `unknown`. Do NOT "tighten" the query below with `level:info`; it would
+#     match nothing and the monitor would go quiet exactly when it should fire.
+#   - Hyphenated tokens match as bare free text (`ais-position-tail` returns
+#     hits), so `cross-check` in the phrase below is safe.
+#   - A structured second argument is split across following lines, so the
+#     keyword has to live in the first argument — it does: the summary is
+#     interpolated into the template string, not passed as an object field.
+#
+# The Groundcover MCP is read-only, so this can't be applied via API. Create it
+# in the Groundcover UI (Monitors → New monitor → Logs → "Edit as code") or via
+# your monitors-as-code pipeline. Reconcile the surrounding keys with an
+# existing "[SQL] …" monitor if the schema differs.
+
+title: "[SQL] fishfacts-ai-backend: Norwegian closure cross-check has not run"
+severity: warning
+labels:
+  team: fishfacts
+  service: fishfacts-ai-backend
+  category: liveness
+
+model:
+  queries:
+    - name: completions
+      dataType: logs
+      pipeline: >-
+        workload:fishfacts-ai-backend closure cross-check complete
+        | stats count() as hits
+  thresholds:
+    - inputName: completions
+      column: hits
+      # The job runs daily at 05:40; fewer than one completion in the window
+      # below means a run was missed rather than delayed.
+      operator: lt
+      value: 1
+
+evaluationInterval:
+  # 26 h, not 24 h — a day-wide window with a daily job would flap on ordinary
+  # scheduling jitter.
+  interval: 26h
+  pendingFor: 0s
+
+# The point of this monitor: no logs IS the problem it is looking for.
+noDataState: ALERTING
+executionErrorState: OK
+
+annotations:
+  summary: >-
+    The Norwegian closure cross-check has not logged a completion in over a
+    day — its divergence monitor is therefore silent for the wrong reason.
+  description: >-
+    fishfacts-ai-backend has not logged "[Fiskeridir] closure cross-check
+    complete" within the evaluation window. Until it does, the companion
+    divergence monitor proves nothing: it alerts on findings, and a job that
+    never ran produces none. Check GET /api/jobs/state for
+    `fiskeridir-wfs-crosscheck` (last run, last error), then whether
+    gis.fiskeridir.no is reachable — the job fetches
+    J_melding_stengt_wfs/MapServer/0 and throws on a non-200.
+    gcQL to inspect recent runs:
+    workload:fishfacts-ai-backend closure cross-check complete
+    | fields _time, content | sort by (_time desc) | limit 20

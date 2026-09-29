@@ -103,6 +103,63 @@ const FORMAT_PRIORITY: Record<MatchedPoint["format"], number> = {
   "dmm-fo": 3,
 };
 
+/**
+ * A J-melding that amends a forskrift prints the changed paragraphs TWICE: once
+ * under `§ N (endret) skal lyde:` near the top, then again inside the
+ * consolidated forskrift that follows this marker. Only the consolidated text
+ * is the regulation — the preamble is a restatement of it.
+ *
+ * Reading both halves is what used to lose whole areas: the preamble copy comes
+ * first, so it won the proximity dedup, and the preamble's `§ 31 (ny) skal
+ * lyde:` is not a markdown heading, so those vertices ended up nameless while
+ * the real `### § 31` was left empty. Confirmed against J-144-2026, where
+ * §§ 31–34 (the four paragraphs it adds) vanished this way.
+ */
+const CONSOLIDATED_MARKER_RE = /forskriften lyder etter dette\s*:/i;
+
+/**
+ * Every closure in a J-melding opens with its own "…forbudt å fiske… avgrenset
+ * av rette linjer mellom følgende posisjoner" sentence. That sentence — not a
+ * heading — is what reliably separates one area from the next: plenty of
+ * J-meldinger (J-155-2026, twelve closures) carry no headings at all and are
+ * otherwise read as a single 40-vertex blob.
+ *
+ * Deliberately loose about the lead-in's wording and terminator. The real
+ * bodies vary ("Det er det forbudt", "Der et forbudt", `posisjoner:` vs
+ * `posisjoner.`) and the phrase being matched is only the boundary — the
+ * coordinates themselves are still read by the grammars above.
+ */
+const CLOSURE_LEAD_IN_RE =
+  /(?:følgende|disse|avgrenses av følgende)\s+(?:posisjoner|koordinater|punkter)\s*[.:]/gi;
+
+/**
+ * Every lead-in starts a new area, with no attempt to judge from the prose
+ * whether the run that follows continues the previous closure.
+ *
+ * The reader takes the coordinates and their order at face value. Deciding
+ * that `herfra videre avgrenset i øst av rett linje mellom følgende posisjoner`
+ * joins two runs into one closure — as § 1 of the seinot forskrift is worded —
+ * is reading the statute, not reading coordinates, and reading it wrongly
+ * produces a plausible shape nothing downstream can question.
+ *
+ * What each path then does with a two-vertex run, since neither is an admin
+ * gate and it is worth not overstating them:
+ *
+ * - The regulation queue stores it unvalidated (`geometryValidated` false)
+ *   and an admin validates or rejects it per area, which IS a review step.
+ * - The map tiles drop it. `tiles/repository.ts` convex-hulls each feature's
+ *   points and keeps only `POLYGON`/`MULTIPOLYGON`; two points hull to a
+ *   LINESTRING, so § 1 contributes nothing to that layer rather than drawing
+ *   as a line.
+ *
+ * So the trade is a closure that is absent from the tile layer against one
+ * drawn as a shape we invented. § 1 is bounded by open lines plus the
+ * coastline and was never derivable from the text — merging its runs only made
+ * it LOOK derivable, as a four-corner quadrilateral against the authority's
+ * 103-vertex coast polygon. Ingesting those polygons is what actually fixes
+ * it; until then the map is short one closure it was previously drawing wrong.
+ */
+
 function dedupByProximity(matches: MatchedPoint[]): MatchedPoint[] {
   const byPriority = [...matches].sort(
     (a, b) => FORMAT_PRIORITY[a.format] - FORMAT_PRIORITY[b.format],
@@ -234,13 +291,40 @@ function cleanHeading(raw: string): string {
     .trim();
 }
 
+/**
+ * The `## Kart` block a J-melding opens with lists the sea charts covering each
+ * paragraph — `- Sjøkart Innhold § 1`, `- § 2`, … It reads exactly like the
+ * bullet headings real area names come in, so without this the first closure of
+ * a body with no consolidated marker is named after a chart link.
+ *
+ * Runs from the `## Kart` line to the first line that is neither blank nor a
+ * bullet, which is where the regulation's own text starts.
+ */
+function kartTocRange(text: string): [number, number] | null {
+  const kart = /^#{2,6}\s+Kart\s*$/m.exec(text);
+  if (!kart) return null;
+  const lines = text.slice(kart.index).split("\n");
+  let offset = kart.index + lines[0].length + 1;
+  for (const line of lines.slice(1)) {
+    if (line.trim() !== "" && !line.trimStart().startsWith("-")) break;
+    offset += line.length + 1;
+  }
+  return [kart.index, offset];
+}
+
 function findHeadings(text: string): Heading[] {
   const headings: Heading[] = [];
   const seen = new Set<number>();
+  const toc = kartTocRange(text);
   for (const { re, group } of HEADING_PATTERNS) {
     re.lastIndex = 0;
     for (const match of text.matchAll(re)) {
       if (match.index === undefined) continue;
+      // The heading patterns lead with `^\s*`, so a match can start on the
+      // newline before its own line — compare the first real character.
+      const textStart =
+        match.index + (match[0].length - match[0].trimStart().length);
+      if (toc && textStart >= toc[0] && textStart < toc[1]) continue;
       const lineText = match[0];
       if (isCoordinateLine(lineText)) continue;
       const captured = group === 0 ? lineText : match[group];
@@ -272,26 +356,82 @@ function nearestHeading(
   return candidate?.name ?? null;
 }
 
-function groupByName(matches: MatchedPoint[], text: string): NamedArea[] {
-  const headings = findHeadings(text);
-  const buckets = new Map<string, NamedArea>();
-  const order: string[] = [];
-  for (const m of matches) {
-    const name = nearestHeading(headings, m.start, 1500);
-    const key = name ?? "__unnamed__";
-    let area = buckets.get(key);
-    if (!area) {
-      area = { name, points: [] };
-      buckets.set(key, area);
-      order.push(key);
-    }
-    area.points.push(m.point);
+/**
+ * The consolidated forskrift, when the body carries one. Falls back to the whole
+ * text if the marker is missing (a standalone forskrift, or a Vørn ban) or if
+ * nothing follows it — a truncated snapshot must not silently parse to nothing.
+ */
+function consolidatedText(text: string): string {
+  const marker = CONSOLIDATED_MARKER_RE.exec(text);
+  if (!marker) return text;
+  const after = text.slice(marker.index + marker[0].length);
+  return after.trim().length > 0 ? after : text;
+}
+
+/** Offsets at which a new area begins, ascending. */
+function findSegmentStarts(text: string, headings: Heading[]): number[] {
+  const starts = new Set<number>(headings.map((h) => h.offset));
+  CLOSURE_LEAD_IN_RE.lastIndex = 0;
+  for (const match of text.matchAll(CLOSURE_LEAD_IN_RE)) {
+    if (match.index === undefined) continue;
+    starts.add(match.index);
   }
-  return order.map((key) => {
-    const area = buckets.get(key);
-    if (!area) throw new Error(`missing bucket ${key}`);
-    return area;
-  });
+  return [...starts].sort((a, b) => a - b);
+}
+
+/**
+ * One area per segment of the source, in source order.
+ *
+ * The name still comes from the nearest preceding heading, so the bullet- and
+ * `###`-headed bodies keep the names they had. Where a body has no headings the
+ * lead-in sentence itself becomes the name: it is verbatim source text rather
+ * than a place name picked out of Norwegian prose, so it can be wrong only in
+ * the way the source is.
+ */
+function groupBySegment(matches: MatchedPoint[], text: string): NamedArea[] {
+  const headings = findHeadings(text);
+  const starts = findSegmentStarts(text, headings);
+  const segments: { name: string | null; matches: MatchedPoint[] }[] = [];
+  let currentStart = Number.NaN;
+  for (const m of matches) {
+    let start = -1;
+    for (const s of starts) {
+      if (s > m.start) break;
+      start = s;
+    }
+    if (segments.length === 0 || start !== currentStart) {
+      segments.push({
+        name: segmentName(text, headings, m.start, start),
+        matches: [],
+      });
+      currentStart = start;
+    }
+    segments[segments.length - 1].matches.push(m);
+  }
+  // Dedup per area, not per document: it exists to collapse one position that
+  // two grammars both matched (a table row printing DMS and DMM side by side),
+  // and adjacent closures legitimately share a corner.
+  return segments
+    .map((s) => ({
+      name: s.name,
+      points: dedupByProximity(s.matches).map((m) => m.point),
+    }))
+    .filter((a) => a.points.length > 0);
+}
+
+function segmentName(
+  text: string,
+  headings: Heading[],
+  pointOffset: number,
+  segmentStart: number,
+): string | null {
+  const heading = nearestHeading(headings, pointOffset, 1500);
+  if (heading) return heading;
+  if (segmentStart < 0) return null;
+  // The lead-in sentence, back to the start of its own line.
+  const lineStart = text.lastIndexOf("\n", segmentStart) + 1;
+  const name = cleanHeading(text.slice(lineStart, segmentStart));
+  return name.length >= 2 ? name.slice(0, 80) : null;
 }
 
 function computeBbox(areas: NamedArea[]): Bbox | null {
@@ -333,17 +473,20 @@ export function parseJmeldingGeo(
   if (!bodyMarkdown) {
     return { areas: [], bbox: null, hasGeo: false };
   }
-  const text = normalize(bodyMarkdown);
+  const text = consolidatedText(normalize(bodyMarkdown));
   const rawMatches: MatchedPoint[] = [];
   findDmsMatches(text, rawMatches);
   findDmmLongMatches(text, rawMatches);
   findDmmSymbolMatches(text, rawMatches);
   findDmmFoMatches(text, rawMatches);
-  const matches = dedupByProximity(rawMatches);
-  if (matches.length === 0) {
+  rawMatches.sort((a, b) => a.start - b.start);
+  if (rawMatches.length === 0) {
     return { areas: [], bbox: null, hasGeo: false };
   }
-  const areas = groupByName(matches, text);
+  const areas = groupBySegment(rawMatches, text);
+  if (areas.length === 0) {
+    return { areas: [], bbox: null, hasGeo: false };
+  }
   const bbox = computeBbox(areas);
   return {
     areas,
