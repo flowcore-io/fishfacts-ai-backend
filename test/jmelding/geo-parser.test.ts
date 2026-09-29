@@ -347,6 +347,26 @@ Det er forbudt å fiske på Tvibergfeltet avgrenset av rette linjer mellom følg
     expect(result.areas).toHaveLength(2);
   });
 
+  test("J-147-2026 — a boundary continuing to a position other than 1 is not a ring close", () => {
+    // "Videre langs yttergrensen for fiskevernsonen ved Svalbard … til posisjon
+    // 8" is one boundary carrying on, not a ring returning to its start. Only
+    // position 1 ends a closure, so a lead-in after this stays part of it.
+    const sample = `
+Det er forbudt å fiske avgrenset av rette linjer mellom følgende posisjoner:
+
+- Nord 79 grader 00,0 minutter. Vest 003 grader 29,0 minutter.
+- Nord 79 grader 10,0 minutter. Vest 003 grader 35,0 minutter.
+
+herfra videre langs yttergrensen til posisjon 8, avgrenset av rette linjer mellom følgende posisjoner:
+
+- Nord 79 grader 20,0 minutter. Vest 003 grader 40,0 minutter.
+- Nord 79 grader 30,0 minutter. Vest 003 grader 45,0 minutter.
+`;
+    const result = parseJmeldingGeo(sample);
+    expect(result.areas).toHaveLength(1);
+    expect(result.areas[0].points).toHaveLength(4);
+  });
+
   test("two closures may share a corner without either losing it", () => {
     // Dedup is per area, not per document: it exists to collapse one position
     // that two grammars both matched, not to delete a coordinate a neighbouring

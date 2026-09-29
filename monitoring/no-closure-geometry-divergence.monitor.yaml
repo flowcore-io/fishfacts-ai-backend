@@ -55,7 +55,10 @@ evaluationInterval:
   interval: 24h
   pendingFor: 0s
 
-noDataState: OK # the job writes nothing when everything matches
+# No findings is the good case. That makes this monitor blind to a job that
+# stopped running, which is why no-closure-crosscheck-liveness.monitor.yaml
+# exists — read the two together, this one proves nothing on its own.
+noDataState: OK
 executionErrorState: OK
 
 annotations:

@@ -144,9 +144,15 @@ const CLOSURE_LEAD_IN_RE =
  * Matched on the destination rather than on "tilbake", because J-155-2026
  * closes three of its rings with "Herfra videre til posisjon 1" and "Herfra
  * videre en rett linje til posisjon 1" — a close worded as a continuation.
+ *
+ * Position 1 specifically, not any numbered position: a run that continues to
+ * some other vertex is still describing one boundary. J-147-2026 traces
+ * "Videre langs yttergrensen for fiskevernsonen ved Svalbard … til posisjon 8",
+ * which is a boundary carrying on, not a ring closing. (162 of the corpus's 164
+ * `til posisjon N` phrases name position 1; those two name 8.)
  */
 const CONTINUATION_RE = /herfra\s+videre/i;
-const RING_CLOSE_RE = /til\s+posisjon\s+\d/i;
+const RING_CLOSE_RE = /til\s+posisjon\s+1\b/i;
 
 function dedupByProximity(matches: MatchedPoint[]): MatchedPoint[] {
   const byPriority = [...matches].sort(

@@ -120,6 +120,18 @@ export function createFiskeridirWfsCrosscheckJob(
         ? `${compared} Norwegian announcement(s) match the authority's published vertices; ${notPublished} not in the register.`
         : `${divergences.length} of ${compared} Norwegian announcement(s) diverge from the authority's published vertices (${divergentAreas} finding(s)); ${notPublished} not in the register.`;
 
+    // Emitted on every run, including a clean one. Without it a cross-check
+    // that stopped running — WFS unreachable, scheduler skipped, job throwing
+    // before it compares anything — is indistinguishable from a cross-check
+    // that found nothing, because both are silence. The liveness monitor
+    // watches for the absence of this line.
+    console.info(`[Fiskeridir] closure cross-check complete: ${message}`, {
+      compared,
+      notPublished,
+      divergentCases: divergences.length,
+      divergentAreas,
+    });
+
     return {
       checkedAt,
       // Read-only: nothing is written, so nothing changed. `changed` drives
