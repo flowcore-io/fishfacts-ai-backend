@@ -1,6 +1,6 @@
 {
   "name": "fishfacts-ai-backend",
-  "version": "2.13.2",
+  "version": "2.14.0",
   "type": "module",
   "private": true,
   "scripts": {
