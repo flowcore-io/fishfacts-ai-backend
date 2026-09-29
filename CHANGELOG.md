@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.14.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.13.2...v2.14.0) (2026-09-29)
+
+
+### Features
+
+* **closures:** read one area per Norwegian closure and cross-check it against Fiskeridirektoratet ([#201](https://github.com/flowcore-io/fishfacts-ai-backend/issues/201)) ([da36eab](https://github.com/flowcore-io/fishfacts-ai-backend/commit/da36eab3bfa01a09b19240b9bbb734642258125b))
+* **regulations:** published corpus fragments carry the confirmed applicability ([#199](https://github.com/flowcore-io/fishfacts-ai-backend/issues/199)) ([711efa8](https://github.com/flowcore-io/fishfacts-ai-backend/commit/711efa80e38d7d86dcc571b3c4753fc9784f86e8))
+
 ## [2.13.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.13.1...v2.13.2) (2026-09-25)
 
 
