@@ -140,14 +140,24 @@ const CLOSURE_LEAD_IN_RE =
  * that `herfra videre avgrenset i øst av rett linje mellom følgende posisjoner`
  * joins two runs into one closure — as § 1 of the seinot forskrift is worded —
  * is reading the statute, not reading coordinates, and reading it wrongly
- * produces a plausible shape nothing downstream can question. Splitting always
- * produces two short runs instead, which fail geometry validation and reach an
- * admin, whose job that judgement is.
+ * produces a plausible shape nothing downstream can question.
  *
- * It costs nothing real: § 1 is bounded by open lines plus the coastline, so it
- * was never derivable from the text anyway — merging its two runs only made it
- * LOOK derivable, as a four-corner quadrilateral against the authority's
- * 103-vertex coast polygon.
+ * What each path then does with a two-vertex run, since neither is an admin
+ * gate and it is worth not overstating them:
+ *
+ * - The regulation queue stores it unvalidated (`geometryValidated` false)
+ *   and an admin validates or rejects it per area, which IS a review step.
+ * - The map tiles drop it. `tiles/repository.ts` convex-hulls each feature's
+ *   points and keeps only `POLYGON`/`MULTIPOLYGON`; two points hull to a
+ *   LINESTRING, so § 1 contributes nothing to that layer rather than drawing
+ *   as a line.
+ *
+ * So the trade is a closure that is absent from the tile layer against one
+ * drawn as a shape we invented. § 1 is bounded by open lines plus the
+ * coastline and was never derivable from the text — merging its runs only made
+ * it LOOK derivable, as a four-corner quadrilateral against the authority's
+ * 103-vertex coast polygon. Ingesting those polygons is what actually fixes
+ * it; until then the map is short one closure it was previously drawing wrong.
  */
 
 function dedupByProximity(matches: MatchedPoint[]): MatchedPoint[] {
