@@ -20,6 +20,7 @@ import type { UsableApiClient } from "@/usable/client";
 import { postEmbedChat } from "@/usable/embed-chat";
 import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
+import { createFiskeridirWfsCrosscheckJob } from "./fiskeridir-wfs-crosscheck";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createGebcoIngestJob } from "./gebco-ingest";
 import { createGillnetPositionsJob } from "./gillnet-positions";
@@ -95,6 +96,16 @@ export function createJobDefinitions(
         refreshExisting: z.coerce.boolean().default(false),
       }),
       execute: createFiskistofaWfsClosuresJob(env, writer),
+    },
+    {
+      id: "fiskeridir-wfs-crosscheck",
+      name: "Fiskeridirektoratet closure cross-check (Norway, read-only)",
+      // Daily is ample: it reads a register that moves when a J-melding does,
+      // and it writes nothing — the point is that a divergence is noticed, not
+      // that it is noticed within the hour.
+      schedule: "40 5 * * *",
+      inputSchema: z.object({}),
+      execute: createFiskeridirWfsCrosscheckJob(regulationRawSyncRepository),
     },
     {
       id: "gillnet-positions",

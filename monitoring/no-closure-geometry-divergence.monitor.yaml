@@ -1,0 +1,75 @@
+# Groundcover logs monitor — Norwegian closure geometry divergence
+# -----------------------------------------------------------------
+# Fires when the `fiskeridir-wfs-crosscheck` job finds that the geometry we read
+# out of a J-melding's prose disagrees with the vertex list Fiskeridirektoratet
+# publishes for the same announcement (`geom_original` in the
+# J_melding_stengt_wfs layer). The job writes nothing; it emits:
+#
+#   [Fiskeridir] closure geometry diverges: <jmNumber> § <n> — <kind>: <detail>
+#
+# A firing is NOT automatically our bug. Check in this order:
+#
+#   1. A typo in the statute. J-153-2026 § 32 prints `Øst 007 grader 3,.000
+#      minutter`; the authority's own list says `7 38,000`. We read the
+#      malformed number as 3.0 and put the corner 29 km away. Worth reporting
+#      to Fiskeridirektoratet so the source is corrected.
+#   2. A closure bounded by open lines plus the coastline (`vertex-count` on
+#      §§ 1 and 6 of the seinot forskrift). The authority's list carries
+#      vertices the statute never prints, so a difference here is expected and
+#      permanent until the register's clipped polygons are ingested.
+#   3. A parser defect in src/jmelding/geo-parser.ts.
+#
+# Baseline at the time of writing (2026-09-29), with the whole Norwegian corpus
+# re-parsed: 3 findings, all of class 1 or 2 above. A jump past that is the
+# signal — hence a threshold on the count rather than on any firing.
+#
+# The Groundcover MCP is read-only, so this can't be applied via API. Create it
+# in the Groundcover UI (Monitors → New monitor → Logs → "Edit as code") or via
+# your monitors-as-code pipeline. Reconcile the surrounding keys with an
+# existing "[SQL] …" monitor if the schema differs.
+
+title: "[SQL] fishfacts-ai-backend: Norwegian closure geometry diverges from Fiskeridirektoratet"
+severity: warning
+labels:
+  team: fishfacts
+  service: fishfacts-ai-backend
+  category: data-quality
+
+model:
+  queries:
+    - name: divergences
+      dataType: logs
+      pipeline: >-
+        workload:fishfacts-ai-backend closure geometry diverges
+        | stats count() as hits
+  thresholds:
+    - inputName: divergences
+      column: hits
+      # Above the known-good baseline of 3 (see the header). Lower this to 0
+      # once the clipped polygons are ingested and §§ 1 and 6 stop differing.
+      operator: gt
+      value: 3
+
+evaluationInterval:
+  # The cross-check runs daily at 05:40; a 24 h window sees exactly one run.
+  interval: 24h
+  pendingFor: 0s
+
+noDataState: OK # the job writes nothing when everything matches
+executionErrorState: OK
+
+annotations:
+  summary: >-
+    More Norwegian closures disagree with Fiskeridirektoratet's published
+    vertices than the known baseline — a new statute typo, or a parser
+    regression.
+  description: >-
+    fishfacts-ai-backend logged "[Fiskeridir] closure geometry diverges" more
+    times than the three long-standing findings. Read the firing lines for the
+    J-melding, paragraph and kind, then work the checklist in
+    monitoring/no-closure-geometry-divergence.monitor.yaml: statute typo first,
+    coastline-bounded closure second, parser defect third. A `position` finding
+    on a paragraph that used to be clean is the one to take seriously.
+    gcQL to inspect firings:
+    workload:fishfacts-ai-backend closure geometry diverges
+    | fields _time, content | sort by (_time desc) | limit 50
