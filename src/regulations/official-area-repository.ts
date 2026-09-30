@@ -78,6 +78,20 @@ export class OfficialAreaRepository {
     };
     if (inputs.length === 0) return result;
 
+    // One row per (case, §) is the table's key. A batch that repeats one would
+    // insert twice and die on the primary key halfway through; say so up front
+    // instead, and name the pair.
+    const seen = new Set<string>();
+    for (const input of inputs) {
+      const key = `${input.caseId}:${input.paragraph}`;
+      if (seen.has(key)) {
+        throw new Error(
+          `official areas: more than one shape for case ${input.caseId} § ${input.paragraph} in one batch`,
+        );
+      }
+      seen.add(key);
+    }
+
     const caseIds = [...new Set(inputs.map((input) => input.caseId))];
     const existing = await this.db
       .select({
@@ -94,52 +108,61 @@ export class OfficialAreaRepository {
       ]),
     );
 
-    for (const input of inputs) {
-      const key = `${input.caseId}:${input.paragraph}`;
-      const contentHash = contentHashOf(input.geojson);
-      const known = hashByKey.get(key);
+    // Atomic: a run that fails partway leaves the previous state, not a mix.
+    await this.db.transaction(async (tx) => {
+      for (const input of inputs) {
+        const key = `${input.caseId}:${input.paragraph}`;
+        const contentHash = contentHashOf(input.geojson);
+        const known = hashByKey.get(key);
 
-      if (known === undefined) {
-        await this.db.insert(schema.regulationCaseOfficialAreas).values({
-          caseId: input.caseId,
-          paragraph: input.paragraph,
-          name: input.name,
-          geojson: input.geojson,
-          vertexCount: input.vertexCount,
-          contentHash,
-          fetchedAt,
-        });
-        result.inserted++;
-      } else if (known !== contentHash) {
-        await this.db
-          .update(schema.regulationCaseOfficialAreas)
-          .set({
+        if (known === undefined) {
+          await tx.insert(schema.regulationCaseOfficialAreas).values({
+            caseId: input.caseId,
+            paragraph: input.paragraph,
             name: input.name,
             geojson: input.geojson,
             vertexCount: input.vertexCount,
             contentHash,
             fetchedAt,
-          })
-          .where(
-            and(
-              eq(schema.regulationCaseOfficialAreas.caseId, input.caseId),
-              eq(schema.regulationCaseOfficialAreas.paragraph, input.paragraph),
-            ),
-          );
-        result.changed++;
-      } else {
-        await this.db
-          .update(schema.regulationCaseOfficialAreas)
-          .set({ fetchedAt })
-          .where(
-            and(
-              eq(schema.regulationCaseOfficialAreas.caseId, input.caseId),
-              eq(schema.regulationCaseOfficialAreas.paragraph, input.paragraph),
-            ),
-          );
-        result.unchanged++;
+          });
+          result.inserted++;
+        } else if (known !== contentHash) {
+          await tx
+            .update(schema.regulationCaseOfficialAreas)
+            .set({
+              name: input.name,
+              geojson: input.geojson,
+              vertexCount: input.vertexCount,
+              contentHash,
+              fetchedAt,
+            })
+            .where(
+              and(
+                eq(schema.regulationCaseOfficialAreas.caseId, input.caseId),
+                eq(
+                  schema.regulationCaseOfficialAreas.paragraph,
+                  input.paragraph,
+                ),
+              ),
+            );
+          result.changed++;
+        } else {
+          await tx
+            .update(schema.regulationCaseOfficialAreas)
+            .set({ fetchedAt })
+            .where(
+              and(
+                eq(schema.regulationCaseOfficialAreas.caseId, input.caseId),
+                eq(
+                  schema.regulationCaseOfficialAreas.paragraph,
+                  input.paragraph,
+                ),
+              ),
+            );
+          result.unchanged++;
+        }
       }
-    }
+    });
     return result;
   }
 

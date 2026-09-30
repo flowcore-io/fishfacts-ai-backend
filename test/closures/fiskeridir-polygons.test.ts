@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   fetchFiskeridirPolygons,
+  mergeRepeatedParagraphs,
   polygonIsPlausible,
   polygonVertexCount,
 } from "../../src/closures/fiskeridir-wfs";
@@ -164,5 +165,101 @@ describe("fetchFiskeridirPolygons", () => {
     await expect(fetchFiskeridirPolygons()).rejects.toThrow("503");
     respondWith({ error: { message: "boom" } });
     await expect(fetchFiskeridirPolygons()).rejects.toThrow("boom");
+  });
+});
+
+describe("one shape per J-melding and §", () => {
+  const HOLE = [
+    [25.02, 70.02],
+    [25.04, 70.02],
+    [25.04, 70.04],
+    [25.02, 70.02],
+  ];
+  const OTHER = RING.map(([lon, lat]) => [lon + 1, lat]);
+
+  test("features repeating a § become one MultiPolygon that keeps every ring", async () => {
+    // The register has never done this (65 features, 65 keys). Nothing forbids
+    // it either, and a § naming two separate waters is how it would look.
+    // Keeping one would drop geometry; keeping both breaks the key the review
+    // screen joins on.
+    respondWith({
+      features: [
+        feature(
+          { jmelding_navn: "J-153-2026", paragraf: 6, navn: "Sværholt" },
+          { type: "Polygon", coordinates: [RING, HOLE] },
+        ),
+        feature(
+          { jmelding_navn: "J-153-2026", paragraf: 6, navn: "Sværholt 2" },
+          { type: "Polygon", coordinates: [OTHER] },
+        ),
+        feature(
+          { jmelding_navn: "J-153-2026", paragraf: 7, navn: "Hasvik" },
+          { type: "Polygon", coordinates: [RING] },
+        ),
+      ],
+    });
+    const { polygons, merged, skipped } = await fetchFiskeridirPolygons();
+    expect(skipped).toBe(0);
+    expect(merged).toBe(1);
+    expect(polygons.map((p) => p.paragraph)).toEqual([6, 7]);
+
+    const six = polygons[0];
+    expect(six.geometry.type).toBe("MultiPolygon");
+    if (six.geometry.type === "MultiPolygon") {
+      // Both parts, each with its own rings — the island hole is not lost.
+      expect(six.geometry.coordinates).toEqual([[RING, HOLE], [OTHER]]);
+    }
+    expect(six.vertexCount).toBe(5 + 4 + 5);
+    expect(six.name).toBe("Sværholt");
+  });
+
+  test("a MultiPolygon part is flattened into the merge, not nested", () => {
+    const merged = mergeRepeatedParagraphs([
+      {
+        jmNumber: "J-153-2026",
+        paragraph: 1,
+        name: null,
+        geometry: { type: "MultiPolygon", coordinates: [[RING], [OTHER]] },
+        vertexCount: 10,
+      },
+      {
+        jmNumber: "J-153-2026",
+        paragraph: 1,
+        name: "Lafjorden",
+        geometry: { type: "Polygon", coordinates: [RING] },
+        vertexCount: 5,
+      },
+    ]);
+    expect(merged.merged).toBe(1);
+    expect(merged.polygons).toHaveLength(1);
+    const geometry = merged.polygons[0].geometry;
+    expect(geometry.type).toBe("MultiPolygon");
+    if (geometry.type === "MultiPolygon") {
+      expect(geometry.coordinates).toEqual([[RING], [OTHER], [RING]]);
+    }
+    // The first name found wins even when the first feature had none.
+    expect(merged.polygons[0].name).toBe("Lafjorden");
+  });
+
+  test("the same § under different J-meldinger is not a repeat", () => {
+    const shape = { type: "Polygon" as const, coordinates: [RING] };
+    const result = mergeRepeatedParagraphs([
+      {
+        jmNumber: "J-153-2026",
+        paragraph: 1,
+        name: null,
+        geometry: shape,
+        vertexCount: 5,
+      },
+      {
+        jmNumber: "J-158-2026",
+        paragraph: 1,
+        name: null,
+        geometry: shape,
+        vertexCount: 5,
+      },
+    ]);
+    expect(result.merged).toBe(0);
+    expect(result.polygons).toHaveLength(2);
   });
 });

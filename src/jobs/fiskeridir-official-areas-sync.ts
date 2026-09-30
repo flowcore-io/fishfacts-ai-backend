@@ -35,7 +35,9 @@ export function createFiskeridirOfficialAreasSyncJob(
     context: { signal: AbortSignal },
   ): Promise<JobExecutionResult> => {
     const checkedAt = new Date();
-    const { polygons, skipped } = await fetchFiskeridirPolygons(context.signal);
+    const { polygons, skipped, merged } = await fetchFiskeridirPolygons(
+      context.signal,
+    );
 
     const jmNumbers = [...new Set(polygons.map((p) => p.jmNumber))];
     const caseIds = await repository.findNorwegianCaseIds(jmNumbers);
@@ -58,12 +60,22 @@ export function createFiskeridirOfficialAreasSyncJob(
 
     const result = await repository.upsert(inputs, checkedAt);
 
+    // The register lists every closure in force nationally while we hold a
+    // subset, so this list is long every run. Name a few, count the rest.
+    const UNMATCHED_SHOWN = 8;
+    const unmatchedNote =
+      unmatched.length === 0
+        ? ""
+        : ` (${unmatched.slice(0, UNMATCHED_SHOWN).join(", ")}${
+            unmatched.length > UNMATCHED_SHOWN
+              ? ` and ${unmatched.length - UNMATCHED_SHOWN} more`
+              : ""
+          })`;
     const message =
       `${result.inserted} new, ${result.changed} changed, ${result.unchanged} unchanged ` +
       `official area(s) across ${caseIds.size} case(s); ` +
-      `${skipped} skipped as unusable, ${unmatched.length} J-melding(s) in the register have no case${
-        unmatched.length > 0 ? ` (${unmatched.join(", ")})` : ""
-      }.`;
+      `${skipped} skipped as unusable, ${merged} repeated § merged, ` +
+      `${unmatched.length} J-melding(s) in the register have no case${unmatchedNote}.`;
 
     // Every run, clean or not — a sync that stopped running must not look like
     // one that found nothing new (see the cross-check job for the same rule).
@@ -72,6 +84,7 @@ export function createFiskeridirOfficialAreasSyncJob(
       changed: result.changed,
       unchanged: result.unchanged,
       skipped,
+      merged,
       unmatched: unmatched.length,
     });
 

@@ -233,7 +233,7 @@ type GeoJsonFeature = {
  */
 export async function fetchFiskeridirPolygons(
   signal?: AbortSignal,
-): Promise<{ polygons: OfficialPolygon[]; skipped: number }> {
+): Promise<{ polygons: OfficialPolygon[]; skipped: number; merged: number }> {
   const url = new URL(FISKERIDIR_CLOSURES_WFS);
   url.searchParams.set("where", "1=1");
   url.searchParams.set("outFields", "jmelding_navn,paragraf,navn");
@@ -285,5 +285,50 @@ export async function fetchFiskeridirPolygons(
       vertexCount: polygonVertexCount(typed),
     });
   }
-  return { polygons, skipped };
+  return { ...mergeRepeatedParagraphs(polygons), skipped };
+}
+
+/**
+ * One shape per J-melding and §, whatever the register sends.
+ *
+ * Nothing in the register forbids two features under the same key — it has not
+ * happened (65 features, 65 keys, checked 2026-09-30), but a § naming several
+ * separate waters is exactly how it would. Keeping one would silently drop
+ * geometry; keeping both would break the one-row-per-§ key the review screen
+ * joins on. Their polygons are joined into a single `MultiPolygon` instead,
+ * which loses no coordinate: each part keeps its own rings and holes.
+ */
+export function mergeRepeatedParagraphs(polygons: OfficialPolygon[]): {
+  polygons: OfficialPolygon[];
+  merged: number;
+} {
+  const groups = new Map<string, OfficialPolygon[]>();
+  for (const polygon of polygons) {
+    const key = `${polygon.jmNumber}:${polygon.paragraph}`;
+    const group = groups.get(key);
+    if (group) group.push(polygon);
+    else groups.set(key, [polygon]);
+  }
+  let merged = 0;
+  const result: OfficialPolygon[] = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      result.push(group[0]);
+      continue;
+    }
+    merged += group.length - 1;
+    const parts = group.flatMap((polygon) =>
+      polygon.geometry.type === "Polygon"
+        ? [polygon.geometry.coordinates]
+        : polygon.geometry.coordinates,
+    );
+    result.push({
+      jmNumber: group[0].jmNumber,
+      paragraph: group[0].paragraph,
+      name: group.find((polygon) => polygon.name)?.name ?? null,
+      geometry: { type: "MultiPolygon", coordinates: parts },
+      vertexCount: group.reduce((total, p) => total + p.vertexCount, 0),
+    });
+  }
+  return { polygons: result, merged };
 }

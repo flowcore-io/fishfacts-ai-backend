@@ -165,6 +165,29 @@ describe("OfficialAreaRepository", () => {
     expect(afterChange.geojson).toEqual(SHAPE_B);
   });
 
+  test("a batch repeating a (case, §) is refused up front and stores nothing", async () => {
+    if (!runCtx) return;
+    const { db } = runCtx;
+    const projector = new RegulationCaseProjector(db);
+    const repo = new OfficialAreaRepository(db);
+    const projected = await projector.project(item("j-905-2099"));
+
+    const row = (paragraph: number) => ({
+      caseId: projected.caseId,
+      paragraph,
+      name: null,
+      geojson: SHAPE_A,
+      vertexCount: 4,
+    });
+    // § 1 would insert fine; the repeat of § 2 would hit the primary key. It
+    // must be named before the first write, so the earlier row is not left
+    // behind by a run that then fails.
+    await expect(
+      repo.upsert([row(1), row(2), row(2)], new Date()),
+    ).rejects.toThrow(/more than one shape for case .* § 2/);
+    expect(await repo.listForCase(projected.caseId)).toEqual([]);
+  });
+
   test("the content hash depends on the shape alone", () => {
     expect(contentHashOf(SHAPE_A)).toBe(contentHashOf({ ...SHAPE_A }));
     expect(contentHashOf(SHAPE_A)).not.toBe(contentHashOf(SHAPE_B));
