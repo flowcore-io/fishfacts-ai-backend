@@ -1,3 +1,4 @@
+import { paragraphOf } from "@/closures/geometry-divergence";
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
@@ -283,6 +284,7 @@ export class RegulationQueueReadRepository {
       validations,
       approvals,
       notes,
+      officialAreas,
     ] = await Promise.all([
       this.db
         .select()
@@ -347,6 +349,21 @@ export class RegulationQueueReadRepository {
           desc(schema.regulationCaseNotes.recordedAt),
           asc(schema.regulationCaseNotes.noteId),
         ),
+      // The authority's drawn shape per §, ONCE for the case — not per
+      // revision. A shape can be 500 KB and a case carries several revisions
+      // that all point at the same one.
+      this.db
+        .select({
+          paragraph: schema.regulationCaseOfficialAreas.paragraph,
+          name: schema.regulationCaseOfficialAreas.name,
+          geojson: schema.regulationCaseOfficialAreas.geojson,
+          vertexCount: schema.regulationCaseOfficialAreas.vertexCount,
+          source: schema.regulationCaseOfficialAreas.source,
+          fetchedAt: schema.regulationCaseOfficialAreas.fetchedAt,
+        })
+        .from(schema.regulationCaseOfficialAreas)
+        .where(eq(schema.regulationCaseOfficialAreas.caseId, caseId))
+        .orderBy(asc(schema.regulationCaseOfficialAreas.paragraph)),
     ]);
     const geometriesByRevision = new Map<string, typeof geometries>();
     for (const geometry of geometries) {
@@ -359,7 +376,14 @@ export class RegulationQueueReadRepository {
       revisions: revisions.map((revision) => ({
         ...revision,
         isCurrent: revision.id === caseRow.currentRevisionId,
-        geometries: geometriesByRevision.get(revision.id) ?? [],
+        // `paragraph` is the join key to `officialAreas`: the § an area's name
+        // carries, null when the name has none.
+        geometries: (geometriesByRevision.get(revision.id) ?? []).map(
+          (geometry) => ({
+            ...geometry,
+            paragraph: paragraphOf(geometry.name),
+          }),
+        ),
       })),
       sources,
       links,
@@ -367,6 +391,7 @@ export class RegulationQueueReadRepository {
       validations,
       approvals,
       notes,
+      officialAreas,
     };
   }
 }

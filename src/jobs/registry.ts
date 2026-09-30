@@ -9,6 +9,7 @@ import type { Env } from "@/env";
 import type { VesselDirectory } from "@/fishfacts/vessel-directory";
 import { createEmbedChatReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
+import type { OfficialAreaRepository } from "@/regulations/official-area-repository";
 import type { RegulationPublishedReadRepository } from "@/regulations/published-repository";
 import type {
   RegulationQueueRepository,
@@ -20,6 +21,7 @@ import type { UsableApiClient } from "@/usable/client";
 import { postEmbedChat } from "@/usable/embed-chat";
 import { z } from "zod";
 import { createFiskeridirJMeldingerJob } from "./fiskeridir-jmeldinger";
+import { createFiskeridirOfficialAreasSyncJob } from "./fiskeridir-official-areas-sync";
 import { createFiskeridirWfsCrosscheckJob } from "./fiskeridir-wfs-crosscheck";
 import { createFiskistofaWfsClosuresJob } from "./fiskistofa-wfs-closures";
 import { createGebcoIngestJob } from "./gebco-ingest";
@@ -50,6 +52,7 @@ export function createJobDefinitions(
   regulationQueueRepository: RegulationQueueRepository,
   regulationRawSyncRepository: RegulationRawSyncRepository,
   regulationPublishedReadRepository: RegulationPublishedReadRepository,
+  officialAreaRepository: OfficialAreaRepository,
 ): JobDefinition[] {
   return [
     {
@@ -96,6 +99,17 @@ export function createJobDefinitions(
         refreshExisting: z.coerce.boolean().default(false),
       }),
       execute: createFiskistofaWfsClosuresJob(env, writer),
+    },
+    {
+      id: "fiskeridir-official-areas-sync",
+      name: "Fiskeridirektoratet official closure shapes (Norway)",
+      // Daily, and before the cross-check at 05:40: both read the same register
+      // and the shapes are what a reviewer compares a case against. Nothing
+      // here needs to be fresher than the register itself, which moves when a
+      // J-melding does.
+      schedule: "20 5 * * *",
+      inputSchema: z.object({}),
+      execute: createFiskeridirOfficialAreasSyncJob(officialAreaRepository),
     },
     {
       id: "fiskeridir-wfs-crosscheck",

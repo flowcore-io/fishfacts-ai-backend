@@ -734,6 +734,51 @@ export const regulationCaseGeometries = pgTable(
   }),
 );
 
+/**
+ * The authority's own drawn shape for a closure, per case and §.
+ *
+ * `regulation_case_geometries` holds the vertices a statute PRINTS — a vertex
+ * set, deliberately never closed into a shape (see its `points` comment).
+ * That is not always the whole definition: a closure "bounded by straight
+ * lines, the boundary following the coastline between positions 6 and 7" is
+ * only fully described by geometry the text does not contain. Fiskeridirekto-
+ * ratet publishes that geometry (coastline-clipped, holes for islands), and it
+ * is what a reviewer compares a case against, so it is stored as published —
+ * never simplified, never derived here.
+ *
+ * Kept OUT of the revision model on purpose. It is source data that follows
+ * the register, not an interpretation an admin drafts: a new revision would
+ * reset every validation each time the authority nudged a vertex, and a
+ * polygon can reach 500 KB, which per-revision copies would multiply.
+ *
+ * Never deleted: the register lists closures in force, so a closure that
+ * drops out of it (superseded, or renumbered) keeps the last shape it had,
+ * and `fetched_at` says how stale that is.
+ */
+export const regulationCaseOfficialAreas = pgTable(
+  "regulation_case_official_areas",
+  {
+    caseId: text("case_id").notNull(),
+    // The § the authority files the closure under — the join key to
+    // `regulation_case_geometries` (the § number in an area's name).
+    paragraph: integer("paragraph").notNull(),
+    name: text("name"),
+    // GeoJSON `Polygon` | `MultiPolygon`, verbatim from the register's server.
+    geojson: jsonb("geojson").notNull(),
+    vertexCount: integer("vertex_count").notNull(),
+    // Over `geojson`; an unchanged shape is not rewritten.
+    contentHash: text("content_hash").notNull(),
+    source: text("source").notNull().default("fiskeridir-wfs"),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.caseId, table.paragraph] }),
+  }),
+);
+
 // One row per source that vouches for a case. The primary source creates the
 // case; §9 requires that a second source arriving later (e.g. BarentsWatch
 // after a J-melding) is ATTACHED and compared, never turned into a rival case.

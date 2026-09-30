@@ -1,0 +1,72 @@
+# Groundcover logs monitor — Norwegian official-areas sync liveness
+# ------------------------------------------------------------------
+# `fiskeridir-official-areas-sync` stores Fiskeridirektoratet's drawn shape for
+# each closure so the review screen can show a reviewer the polygon the
+# authority's own map shows. It logs, on EVERY run including one that changed
+# nothing:
+#
+#   [Fiskeridir] official areas sync complete: <summary>
+#
+# Absence of that line for more than a day means the sync did not finish — the
+# scheduler skipped it, gis.fiskeridir.no was unreachable, or it threw before
+# writing. The review screen then keeps showing yesterday's shapes with no
+# signal that they have gone stale, which is worse than not having them.
+#
+# `noDataState: ALERTING` is the point: no logs IS the condition this monitor
+# exists to catch. Same reasoning as no-closure-crosscheck-liveness.monitor.yaml,
+# which covers the sibling job.
+#
+# Ingestion of `console.info` from this workload was verified against live logs
+# on 2026-09-29: it arrives at level `unknown`, not `info`. Do NOT tighten the
+# query below with `level:info` — it would match nothing and the monitor would
+# go quiet exactly when it should fire.
+#
+# The Groundcover MCP is read-only, so this can't be applied via API. Create it
+# in the Groundcover UI (Monitors → New monitor → Logs → "Edit as code") or via
+# your monitors-as-code pipeline. Reconcile the surrounding keys with an
+# existing "[SQL] …" monitor if the schema differs.
+
+title: "[SQL] fishfacts-ai-backend: Norwegian official-areas sync has not run"
+severity: warning
+labels:
+  team: fishfacts
+  service: fishfacts-ai-backend
+  category: liveness
+
+model:
+  queries:
+    - name: completions
+      dataType: logs
+      pipeline: >-
+        workload:fishfacts-ai-backend official areas sync complete
+        | stats count() as hits
+  thresholds:
+    - inputName: completions
+      column: hits
+      # The job runs daily at 05:20; fewer than one completion in the window
+      # below means a run was missed rather than delayed.
+      operator: lt
+      value: 1
+
+evaluationInterval:
+  # 26 h, not 24 h — a day-wide window with a daily job would flap on ordinary
+  # scheduling jitter.
+  interval: 26h
+  pendingFor: 0s
+
+noDataState: ALERTING
+executionErrorState: OK
+
+annotations:
+  summary: >-
+    The Norwegian official-areas sync has not logged a completion in over a day
+    — the shapes reviewers compare against may be stale.
+  description: >-
+    fishfacts-ai-backend has not logged "[Fiskeridir] official areas sync
+    complete" within the evaluation window. Check GET /api/jobs/state for
+    `fiskeridir-official-areas-sync` (last run, last error), then whether
+    gis.fiskeridir.no is reachable — the job fetches
+    J_melding_stengt_wfs/MapServer/0 as GeoJSON and throws on a non-200.
+    gcQL to inspect recent runs:
+    workload:fishfacts-ai-backend official areas sync complete
+    | fields _time, content | sort by (_time desc) | limit 20

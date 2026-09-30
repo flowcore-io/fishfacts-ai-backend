@@ -41,6 +41,7 @@ import { RegulationCaseProjector } from "./regulations/case-projector";
 import { RegulationGroupProjector } from "./regulations/group-projector";
 import { RegulationGroupRepository } from "./regulations/group-repository";
 import { RegulationCaseNoteProjector } from "./regulations/note-projector";
+import { OfficialAreaRepository } from "./regulations/official-area-repository";
 import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import {
   RegulationQueueRepository,
@@ -99,6 +100,7 @@ const regulationCaseProjector = new RegulationCaseProjector(db);
 const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
 const regulationRawSyncRepository = new RegulationRawSyncRepository(db);
+const officialAreaRepository = new OfficialAreaRepository(db);
 const regulationQueueReadRepository = new RegulationQueueReadRepository(db);
 const regulationPublishedReadRepository = new RegulationPublishedReadRepository(
   db,
@@ -174,6 +176,7 @@ const jobs = createJobDefinitions(
   regulationQueueRepository,
   regulationRawSyncRepository,
   regulationPublishedReadRepository,
+  officialAreaRepository,
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
