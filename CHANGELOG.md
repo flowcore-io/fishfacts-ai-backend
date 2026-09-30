@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.15.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.14.0...v2.15.0) (2026-09-30)
+
+
+### Features
+
+* **regulations:** store the authority's drawn shape for each Norwegian closure ([#202](https://github.com/flowcore-io/fishfacts-ai-backend/issues/202)) ([15ce58b](https://github.com/flowcore-io/fishfacts-ai-backend/commit/15ce58b31419421270ae3645887dc4892067d282))
+
 ## [2.14.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.13.2...v2.14.0) (2026-09-29)
 
 
