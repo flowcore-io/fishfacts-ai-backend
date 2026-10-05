@@ -263,6 +263,63 @@ describe("case command delivery and deterministic projection", () => {
     await projector().recoverPending(id);
     expect(await effects(id)).toHaveLength(40);
   });
+  test("seventy reversed pending commands recover after a second-batch crash and restart, including refusals", async () => {
+    const id = caseId();
+    const all: CommandPart[] = [];
+    for (let n = 0; n < 70; n++) {
+      const r = input(id);
+      r.data = { n };
+      await outbox().reserve(r);
+      await outbox().deliver(r.commandId);
+      all.push(...partsOf(r.commandId));
+    }
+    await connection.db
+      .delete(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.caseId, id));
+    let ready = false;
+    let crash = false;
+    const handler: OrderedCommandApplication = async (tx, c) => {
+      if (!ready)
+        return { status: "pending", reason: "missing domain dependency" };
+      if (crash && c.sequence === 33) throw Error("second-batch crash");
+      if (c.sequence === 35 || c.sequence === 69)
+        return { status: "refused", reason: "fixture refusal" };
+      return apply(tx, c);
+    };
+    const tail = async () => {
+      const [row] = await connection.db
+        .select()
+        .from(schema.regulationCommandTails)
+        .where(eq(schema.regulationCommandTails.caseId, id));
+      return row?.sequence ?? 0;
+    };
+    for (const part of [...all].reverse())
+      await projector(handler).handle(part);
+    await projector(handler).recoverPending(id);
+    expect(await tail()).toBe(0);
+    expect(await effects(id)).toHaveLength(0);
+    ready = true;
+    crash = true;
+    await expect(projector(handler).recoverPending(id)).rejects.toThrow(
+      "second-batch crash",
+    );
+    expect(await tail()).toBe(32);
+    expect(await effects(id)).toHaveLength(32);
+    crash = false;
+    const started = performance.now();
+    await projector(handler).recoverPending(id);
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(await tail()).toBe(70);
+    expect(await effects(id)).toHaveLength(68);
+    const receipts = await connection.db
+      .select()
+      .from(schema.regulationCommandReceipts)
+      .where(eq(schema.regulationCommandReceipts.caseId, id));
+    expect(receipts.filter((r) => r.status === "refused")).toHaveLength(2);
+    expect(receipts.filter((r) => r.status === "pending")).toHaveLength(0);
+    await projector(handler).recoverPending(id);
+    expect(await effects(id)).toHaveLength(68);
+  });
   test("durable command UUID binds original actor/input/sequence/bytes after operational cache deletion", async () => {
     const id = caseId();
     const r = input(id);
