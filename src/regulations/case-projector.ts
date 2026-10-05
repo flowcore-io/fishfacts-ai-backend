@@ -1,3 +1,4 @@
+import { quarantineConflict } from "./immutable-conflict";
 /**
  * Regulation cases as a projection of the announcement pathway.
  *
@@ -41,8 +42,11 @@ import { dropClosingRepeats } from "@/jmelding/vorn-ring";
 import { jmeldingFragmentKey } from "@/jobs/jmelding-fragments";
 import { and, eq, sql } from "drizzle-orm";
 import type { RegulationApplicability } from "./applicability";
+import { blockedShapeState } from "./blocked-shape-state";
 import { caseIdFor, geometryIdFor, revisionIdFor } from "./ids";
+import { stageOrderedInput } from "./ordered-inputs";
 import { snapshotOnlyFieldsOf } from "./revision-fields";
+import type { SnapshotTx } from "./snapshot-assembler";
 
 /**
  * Recorded on every revision as `parser_version`. Bump when the projection's
@@ -61,7 +65,13 @@ export type CaseProjectionResult = {
   caseId: string;
   caseKey: string;
   revisionId: string;
-  outcome: "created" | "revised" | "replayed" | "skipped";
+  outcome:
+    | "created"
+    | "revised"
+    | "replayed"
+    | "skipped"
+    | "deferred"
+    | "quarantined";
 };
 
 /**
@@ -94,6 +104,14 @@ export class RegulationCaseProjector {
 
   async project(
     item: JMeldingAnnouncementDiscovered,
+  ): Promise<CaseProjectionResult> {
+    return this.db.transaction((tx) => this.projectInTransaction(tx, item));
+  }
+
+  async projectInTransaction(
+    tx: SnapshotTx,
+    item: JMeldingAnnouncementDiscovered,
+    ordered = false,
   ): Promise<CaseProjectionResult> {
     const sourceType = sourceTypeOf(item);
     // Same fallback identity the geo projector uses, so an announcement is
@@ -136,7 +154,63 @@ export class RegulationCaseProjector {
     const effectiveFrom = instantOf(parseValidityStart(item.validFrom));
     const effectiveTo = instantOf(parseValidityEnd(item.validTo));
 
-    return await this.db.transaction(async (tx) => {
+    {
+      const [existingIdentity] = await tx
+        .select()
+        .from(schema.regulationCaseRevisions)
+        .where(eq(schema.regulationCaseRevisions.id, revisionId));
+      if (
+        existingIdentity &&
+        (existingIdentity.caseId !== caseId ||
+          existingIdentity.snapshotText !== (item.bodyMarkdown || null) ||
+          existingIdentity.snapshotUrl !== item.url)
+      ) {
+        await quarantineConflict(tx, {
+          caseId: existingIdentity.caseId,
+          assemblyId: revisionId,
+          kind: "source-revision",
+          reason: "conflicting immutable source revision",
+          expected: {
+            caseId: existingIdentity.caseId,
+            signature: existingIdentity.sourceEventSignature,
+            snapshotText: existingIdentity.snapshotText,
+            snapshotUrl: existingIdentity.snapshotUrl,
+          },
+          received: {
+            caseId,
+            signature: item.signature,
+            snapshotText: item.bodyMarkdown || null,
+            snapshotUrl: item.url,
+          },
+        });
+        return { caseId, caseKey, revisionId, outcome: "quarantined" };
+      }
+      const [lockedCase] = await tx
+        .select()
+        .from(schema.regulationCases)
+        .where(eq(schema.regulationCases.id, caseId))
+        .for("update");
+      if (
+        (lockedCase?.geometryModelVersion === 1 ||
+          (item.orderedCaseInput && item.region === "NO")) &&
+        !ordered
+      ) {
+        const known = await tx
+          .select({ id: schema.regulationCaseRevisions.id })
+          .from(schema.regulationCaseRevisions)
+          .where(eq(schema.regulationCaseRevisions.id, revisionId));
+        if (known.length)
+          return { caseId, caseKey, revisionId, outcome: "replayed" };
+        await stageOrderedInput(
+          tx,
+          caseId,
+          "source",
+          item.signature,
+          item,
+          item.checkedAt,
+        );
+        return { caseId, caseKey, revisionId, outcome: "deferred" };
+      }
       const existingRevision = await tx
         .select({ id: schema.regulationCaseRevisions.id })
         .from(schema.regulationCaseRevisions)
@@ -241,6 +315,23 @@ export class RegulationCaseProjector {
         changeType,
         author: `collector:${sourceType}`,
         snapshotText: item.bodyMarkdown === "" ? null : item.bodyMarkdown,
+        sourceTextComplete:
+          item.sourceBodyCompleteness === "truncated"
+            ? false
+            : item.sourceBodyCompleteness === "complete"
+              ? true
+              : null,
+        ...(lockedCase?.geometryModelVersion === 1 || item.orderedCaseInput
+          ? {
+              geometryModelVersion: 1,
+              shapeState: blockedShapeState(
+                item.signature,
+                item.bodyMarkdown === "" ? null : item.bodyMarkdown,
+                areas.map((a, position) => ({ position, points: a.points })),
+                item.sourceBodyCompleteness === "truncated" ? false : null,
+              ),
+            }
+          : {}),
         snapshotUrl: item.url,
         snapshotFetchedAt: checkedAt,
         snapshotFragmentId: item.sourceFragmentId ?? null,
@@ -278,6 +369,9 @@ export class RegulationCaseProjector {
         lastCheckedAt: checkedAt,
         // A new text invalidates the old verdict — the queue must re-ask.
         verdictStatus: "pending",
+        ...(lockedCase?.geometryModelVersion === 1 || item.orderedCaseInput
+          ? { geometryModelVersion: 1 }
+          : {}),
       };
 
       if (isNewCase) {
@@ -303,7 +397,21 @@ export class RegulationCaseProjector {
       } else {
         await tx
           .update(schema.regulationCases)
-          .set({ ...caseFields, updatedAt: sql`now()` })
+          .set({
+            ...caseFields,
+            ...(lockedCase?.geometryModelVersion === 1 || item.orderedCaseInput
+              ? {
+                  geometryModelVersion: 1,
+                  regulatoryValidated: false,
+                  geometryValidated: false,
+                  adminStatus: "under_review",
+                  regulationStatus: lockedCase?.publishedRevisionId
+                    ? "published"
+                    : "draft",
+                }
+              : {}),
+            updatedAt: sql`now()`,
+          })
           .where(eq(schema.regulationCases.id, caseId));
         await tx
           .update(schema.regulationCaseSources)
@@ -322,6 +430,6 @@ export class RegulationCaseProjector {
         revisionId,
         outcome: isNewCase ? ("created" as const) : ("revised" as const),
       };
-    });
+    }
   }
 }

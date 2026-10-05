@@ -6,7 +6,7 @@ import {
   createPostgresPumpStateManagerFactory,
 } from "@flowcore/pathways";
 import type { PathwayState } from "@flowcore/pathways";
-import type { z } from "zod";
+import { z } from "zod";
 import type { AisPositionProjector } from "./ais/projector";
 import type { AreasProjector } from "./areas/projector";
 import type { Env } from "./env";
@@ -105,6 +105,16 @@ import {
   sildelagetCatchEntryObservedSchema,
 } from "./events/contracts";
 import { chunkAnnouncement } from "./events/jmelding-chunking";
+import {
+  CASE_COMMAND_PART_EVENT_TYPE,
+  CASE_COMMAND_PART_PATHWAY,
+} from "./events/regulation-case-command";
+import {
+  CASE_COMMAND_BARRIER_EVENT_TYPE,
+  CASE_COMMAND_BARRIER_PATHWAY,
+  SOURCE_OBSERVATION_BARRIER_EVENT_TYPE,
+  commandBarrierSchema,
+} from "./events/regulation-command-barrier";
 import type { GenericEventRepository } from "./events/repository";
 import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
@@ -118,6 +128,8 @@ import {
 } from "./pathway-state";
 import type { PoiFragmentProjector } from "./poi/fragment-projector";
 import type { RegulationCaseActionProjector } from "./regulations/action-projector";
+import { createCommandIngestion } from "./regulations/command-ingestion";
+import type { RegulationCaseCommandRuntime } from "./regulations/command-runtime";
 import type { RegulationGroupProjector } from "./regulations/group-projector";
 import type { RegulationCaseNoteProjector } from "./regulations/note-projector";
 import type { RegulationRevisionProjector } from "./regulations/revision-projector";
@@ -199,6 +211,7 @@ export interface PathwayWriter {
 
 export type PathwayRuntime = {
   writer: PathwayWriter;
+  commands?: RegulationCaseCommandRuntime;
   router: PathwayRouter;
   /** Create the shared pathway-state table; await before serving writes. */
   ensureStateReady(): Promise<void>;
@@ -254,6 +267,219 @@ export function configurePathwayState(
   return state;
 }
 
+/** Shared production registration, exercised with the installed SDK router. */
+export function registerOrderedCommandPathways(
+  pathways: PathwaysBuilder,
+  caseCommands: RegulationCaseCommandRuntime,
+  publishedSyncTrigger: PublishedSyncTrigger,
+) {
+  pathways
+    .register({
+      flowType: ANNOUNCEMENT_FLOW_TYPE,
+      eventType: SOURCE_OBSERVATION_BARRIER_EVENT_TYPE,
+      schema: commandBarrierSchema,
+      flowTypeDescription: "FishFacts source observation events",
+      description:
+        "Committed source-pump catchup receipt before ordered case allocation",
+    })
+    .handle(
+      `${ANNOUNCEMENT_FLOW_TYPE}/${SOURCE_OBSERVATION_BARRIER_EVENT_TYPE}`,
+      async (event) => {
+        await caseCommands.handleSourceBarrier(
+          (event as { payload: unknown }).payload,
+        );
+      },
+    );
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: CASE_COMMAND_PART_EVENT_TYPE,
+      schema: z.object({}).passthrough(),
+      flowTypeDescription: "FishFacts ordered regulation review events",
+      description:
+        "Lossless immutable case command byte part with verified assembly and ordered application",
+    })
+    .handle(CASE_COMMAND_PART_PATHWAY, async (event) => {
+      await caseCommands.handlePart((event as { payload: unknown }).payload);
+      publishedSyncTrigger.schedule("ordered-case-command");
+    });
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: CASE_COMMAND_BARRIER_EVENT_TYPE,
+      schema: commandBarrierSchema,
+      flowTypeDescription: "FishFacts ordered regulation review events",
+      description:
+        "Common regulation pump catchup barrier with committed application receipt",
+    })
+    .handle(CASE_COMMAND_BARRIER_PATHWAY, async (event) => {
+      await caseCommands.handleBarrier((event as { payload: unknown }).payload);
+    });
+}
+
+export function registerLegacyRegulationPathways(
+  pathways: PathwaysBuilder,
+  regulationVerdictProjector: RegulationVerdictProjector,
+  regulationCaseActionProjector: RegulationCaseActionProjector,
+  regulationRevisionProjector: RegulationRevisionProjector,
+  publishedSyncTrigger: PublishedSyncTrigger,
+  caseCommands?: RegulationCaseCommandRuntime,
+) {
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_VERDICT_RECORDED_EVENT_TYPE,
+      schema: regulationVerdictRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "A structured verdict was recorded over one revision of a regulation case",
+    })
+    .handle(REGULATION_VERDICT_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationVerdictRecordedSchema.parse(envelope.payload);
+      if (caseCommands)
+        await caseCommands.adaptLegacy(
+          "verdict",
+          envelope.eventId,
+          parsed,
+          () => regulationVerdictProjector.handleRecorded(parsed),
+        );
+      else await regulationVerdictProjector.handleRecorded(parsed);
+    });
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_ADMIN_ACTION_RECORDED_EVENT_TYPE,
+      schema: regulationAdminActionRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator acted on a queue case (read/assign/urgency/snooze/request-info/reject/duplicate)",
+    })
+    .handle(REGULATION_ADMIN_ACTION_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationAdminActionRecordedSchema.parse(
+        envelope.payload,
+      );
+      if (caseCommands)
+        await caseCommands.adaptLegacy("revoke", envelope.eventId, parsed, () =>
+          regulationCaseActionProjector.handleRecorded(parsed),
+        );
+      else await regulationCaseActionProjector.handleRecorded(parsed);
+      // Declines are the un-publish (stage ③) — the corpus must withdraw
+      // the fragment. No other admin action touches the published set.
+      if (
+        parsed.action.kind === "reject" ||
+        parsed.action.kind === "mark_duplicate"
+      ) {
+        publishedSyncTrigger.schedule(`decline:${parsed.action.kind}`);
+      }
+    });
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_REVISION_PROPOSED_EVENT_TYPE,
+      schema: regulationRevisionProposedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "A redraft of a case's interpretation was proposed against a named base revision, with per-change justification",
+    })
+    .handle(REGULATION_REVISION_PROPOSED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationRevisionProposedSchema.parse(envelope.payload);
+      if (caseCommands)
+        await caseCommands.adaptLegacy(
+          "proposal",
+          envelope.eventId,
+          parsed,
+          () => regulationRevisionProjector.handleProposed(parsed),
+        );
+      else await regulationRevisionProjector.handleProposed(parsed);
+    });
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE,
+      schema: regulationRevisionPointerMovedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "The current-revision pointer of a case moved to an existing revision (undo/redo)",
+    })
+    .handle(REGULATION_REVISION_POINTER_MOVED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationRevisionPointerMovedSchema.parse(
+        envelope.payload,
+      );
+      if (caseCommands)
+        await caseCommands.adaptLegacy(
+          "pointer",
+          envelope.eventId,
+          parsed,
+          () => regulationRevisionProjector.handlePointerMoved(parsed),
+        );
+      else await regulationRevisionProjector.handlePointerMoved(parsed);
+    });
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_VALIDATION_RECORDED_EVENT_TYPE,
+      schema: regulationValidationRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "A legal or per-geometry validation decision was recorded against a named revision",
+      // The scope↔geometryId refine makes this a ZodEffects, which the
+      // builder's type (but not its runtime) rejects — same cast the AIS
+      // registration already uses for its extra options.
+    } as never)
+    .handle(REGULATION_VALIDATION_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationValidationRecordedSchema.parse(envelope.payload);
+      if (caseCommands)
+        await caseCommands.adaptLegacy(
+          "validation",
+          envelope.eventId,
+          parsed,
+          () => regulationRevisionProjector.handleValidationRecorded(parsed),
+        );
+      else await regulationRevisionProjector.handleValidationRecorded(parsed);
+    });
+  pathways
+    .register({
+      flowType: REGULATION_FLOW_TYPE,
+      eventType: REGULATION_APPROVAL_RECORDED_EVENT_TYPE,
+      schema: regulationApprovalRecordedSchema,
+      flowTypeDescription:
+        "FishFacts regulation approval-queue events (verdicts, later approvals)",
+      description:
+        "An administrator approved a named revision of a case (refused at projection if superseded)",
+    })
+    .handle(REGULATION_APPROVAL_RECORDED_PATHWAY, async (event) => {
+      const envelope = event as { eventId: string; payload: unknown };
+      const parsed = regulationApprovalRecordedSchema.parse(envelope.payload);
+      if (caseCommands)
+        await caseCommands.adaptLegacy(
+          "approval",
+          envelope.eventId,
+          parsed,
+          () => regulationRevisionProjector.handleApprovalRecorded(parsed),
+        );
+      else await regulationRevisionProjector.handleApprovalRecorded(parsed);
+      // An applied approval IS the publish. Scheduled even when projection
+      // refused the approval (stale revision) — the sync converges on the
+      // read repository either way, and telling the cases apart here would
+      // duplicate the projector's own rules.
+      publishedSyncTrigger.schedule("approval.recorded");
+    });
+
+  // The admin-defined navigation layer. Four event types rather than one
+  // discriminated union: the payloads share nothing but the actor, and each
+  // has its own idempotency rule under replay.
+}
+
 export function createPathwayRuntime(
   env: Env,
   repository: GenericEventRepository,
@@ -270,6 +496,7 @@ export function createPathwayRuntime(
   regulationRevisionProjector: RegulationRevisionProjector,
   regulationGroupProjector: RegulationGroupProjector,
   publishedSyncTrigger: PublishedSyncTrigger,
+  caseCommands?: RegulationCaseCommandRuntime,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -307,6 +534,24 @@ export function createPathwayRuntime(
     },
   } as ConstructorParameters<typeof PathwaysBuilder>[0]);
 
+  if (caseCommands) {
+    caseCommands.attach(createCommandIngestion(env));
+    registerOrderedCommandPathways(
+      pathways,
+      caseCommands,
+      publishedSyncTrigger,
+    );
+  }
+
+  registerLegacyRegulationPathways(
+    pathways,
+    regulationVerdictProjector,
+    regulationCaseActionProjector,
+    regulationRevisionProjector,
+    publishedSyncTrigger,
+    caseCommands,
+  );
+
   pathways
     .register({
       flowType: GENERIC_FLOW_TYPE,
@@ -331,7 +576,12 @@ export function createPathwayRuntime(
       const parsed = jmeldingAnnouncementDiscoveredSchema.parse(
         (event as { payload: unknown }).payload,
       );
-      await chunkAssembler.handle(parsed);
+      if (caseCommands)
+        await caseCommands.holdProjection(async () => {
+          await chunkAssembler.handle(parsed);
+          await caseCommands.recoverDependencies();
+        });
+      else await chunkAssembler.handle(parsed);
     });
 
   pathways
@@ -395,48 +645,6 @@ export function createPathwayRuntime(
   pathways
     .register({
       flowType: REGULATION_FLOW_TYPE,
-      eventType: REGULATION_VERDICT_RECORDED_EVENT_TYPE,
-      schema: regulationVerdictRecordedSchema,
-      flowTypeDescription:
-        "FishFacts regulation approval-queue events (verdicts, later approvals)",
-      description:
-        "A structured verdict was recorded over one revision of a regulation case",
-    })
-    .handle(REGULATION_VERDICT_RECORDED_PATHWAY, async (event) => {
-      const envelope = event as { eventId: string; payload: unknown };
-      const parsed = regulationVerdictRecordedSchema.parse(envelope.payload);
-      await regulationVerdictProjector.handleRecorded(parsed);
-    });
-
-  pathways
-    .register({
-      flowType: REGULATION_FLOW_TYPE,
-      eventType: REGULATION_ADMIN_ACTION_RECORDED_EVENT_TYPE,
-      schema: regulationAdminActionRecordedSchema,
-      flowTypeDescription:
-        "FishFacts regulation approval-queue events (verdicts, later approvals)",
-      description:
-        "An administrator acted on a queue case (read/assign/urgency/snooze/request-info/reject/duplicate)",
-    })
-    .handle(REGULATION_ADMIN_ACTION_RECORDED_PATHWAY, async (event) => {
-      const envelope = event as { eventId: string; payload: unknown };
-      const parsed = regulationAdminActionRecordedSchema.parse(
-        envelope.payload,
-      );
-      await regulationCaseActionProjector.handleRecorded(parsed);
-      // Declines are the un-publish (stage ③) — the corpus must withdraw
-      // the fragment. No other admin action touches the published set.
-      if (
-        parsed.action.kind === "reject" ||
-        parsed.action.kind === "mark_duplicate"
-      ) {
-        publishedSyncTrigger.schedule(`decline:${parsed.action.kind}`);
-      }
-    });
-
-  pathways
-    .register({
-      flowType: REGULATION_FLOW_TYPE,
       eventType: REGULATION_CASE_NOTE_RECORDED_EVENT_TYPE,
       schema: regulationCaseNoteRecordedSchema,
       flowTypeDescription:
@@ -452,83 +660,6 @@ export function createPathwayRuntime(
       // nothing a reader can see, so the corpus has nothing to catch up on.
     });
 
-  pathways
-    .register({
-      flowType: REGULATION_FLOW_TYPE,
-      eventType: REGULATION_REVISION_PROPOSED_EVENT_TYPE,
-      schema: regulationRevisionProposedSchema,
-      flowTypeDescription:
-        "FishFacts regulation approval-queue events (verdicts, later approvals)",
-      description:
-        "A redraft of a case's interpretation was proposed against a named base revision, with per-change justification",
-    })
-    .handle(REGULATION_REVISION_PROPOSED_PATHWAY, async (event) => {
-      const envelope = event as { eventId: string; payload: unknown };
-      const parsed = regulationRevisionProposedSchema.parse(envelope.payload);
-      await regulationRevisionProjector.handleProposed(parsed);
-    });
-
-  pathways
-    .register({
-      flowType: REGULATION_FLOW_TYPE,
-      eventType: REGULATION_REVISION_POINTER_MOVED_EVENT_TYPE,
-      schema: regulationRevisionPointerMovedSchema,
-      flowTypeDescription:
-        "FishFacts regulation approval-queue events (verdicts, later approvals)",
-      description:
-        "The current-revision pointer of a case moved to an existing revision (undo/redo)",
-    })
-    .handle(REGULATION_REVISION_POINTER_MOVED_PATHWAY, async (event) => {
-      const envelope = event as { eventId: string; payload: unknown };
-      const parsed = regulationRevisionPointerMovedSchema.parse(
-        envelope.payload,
-      );
-      await regulationRevisionProjector.handlePointerMoved(parsed);
-    });
-
-  pathways
-    .register({
-      flowType: REGULATION_FLOW_TYPE,
-      eventType: REGULATION_VALIDATION_RECORDED_EVENT_TYPE,
-      schema: regulationValidationRecordedSchema,
-      flowTypeDescription:
-        "FishFacts regulation approval-queue events (verdicts, later approvals)",
-      description:
-        "A legal or per-geometry validation decision was recorded against a named revision",
-      // The scope↔geometryId refine makes this a ZodEffects, which the
-      // builder's type (but not its runtime) rejects — same cast the AIS
-      // registration already uses for its extra options.
-    } as never)
-    .handle(REGULATION_VALIDATION_RECORDED_PATHWAY, async (event) => {
-      const envelope = event as { eventId: string; payload: unknown };
-      const parsed = regulationValidationRecordedSchema.parse(envelope.payload);
-      await regulationRevisionProjector.handleValidationRecorded(parsed);
-    });
-
-  pathways
-    .register({
-      flowType: REGULATION_FLOW_TYPE,
-      eventType: REGULATION_APPROVAL_RECORDED_EVENT_TYPE,
-      schema: regulationApprovalRecordedSchema,
-      flowTypeDescription:
-        "FishFacts regulation approval-queue events (verdicts, later approvals)",
-      description:
-        "An administrator approved a named revision of a case (refused at projection if superseded)",
-    })
-    .handle(REGULATION_APPROVAL_RECORDED_PATHWAY, async (event) => {
-      const envelope = event as { eventId: string; payload: unknown };
-      const parsed = regulationApprovalRecordedSchema.parse(envelope.payload);
-      await regulationRevisionProjector.handleApprovalRecorded(parsed);
-      // An applied approval IS the publish. Scheduled even when projection
-      // refused the approval (stale revision) — the sync converges on the
-      // read repository either way, and telling the cases apart here would
-      // duplicate the projector's own rules.
-      publishedSyncTrigger.schedule("approval.recorded");
-    });
-
-  // The admin-defined navigation layer. Four event types rather than one
-  // discriminated union: the payloads share nothing but the actor, and each
-  // has its own idempotency rule under replay.
   pathways
     .register({
       flowType: REGULATION_FLOW_TYPE,
@@ -677,6 +808,7 @@ export function createPathwayRuntime(
   const router = new PathwayRouter(pathways, env.FLOWCORE_TRANSFORMER_SECRET);
 
   return {
+    commands: caseCommands,
     writer: {
       async writeGeneric(data) {
         const eventId = await (
@@ -694,7 +826,11 @@ export function createPathwayRuntime(
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeJMeldingAnnouncement(data) {
-        const chunks = chunkAnnouncement(data);
+        const chunks = chunkAnnouncement(
+          (data.region ?? "NO") === "NO"
+            ? { ...data, orderedCaseInput: true }
+            : data,
+        );
         const eventIds: string[] = [];
         for (const chunk of chunks) {
           const eventId = await (
@@ -1209,6 +1345,8 @@ export function createPathwayRuntime(
           default: 8,
           byFlowType: {
             [AIS_FLOW_TYPE]: env.AIS_PUMP_CONCURRENCY,
+            [REGULATION_FLOW_TYPE]: 1,
+            [ANNOUNCEMENT_FLOW_TYPE]: 1,
             // GEBCO is a one-shot ~5,189-event bulk reference load. On the
             // default 8 it drains slowly because the box is dominated by the
             // AIS firehose (shared CPU / pg pool / API / notifier), inflating
@@ -1225,8 +1363,10 @@ export function createPathwayRuntime(
           pathway: true,
         },
       } as never);
+      caseCommands?.start();
     },
     async stopPump() {
+      caseCommands?.stop();
       await pathways.stopPump();
       if (runtimeEnv === "production") {
         await pathways.stopCluster();

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { frontmatterFromContent } from "@/usable/client";
+import fixture from "../../test/regulations/fixtures/complete-shape.json";
+import { verifyShapeState } from "./coastal-state";
 import {
   PUBLISHED_FRAGMENT_RENDER_VERSION,
   buildPublishedCaseFragment,
@@ -52,6 +54,44 @@ function publishedItem(
 function roundTrip(item: PublishedRegulation) {
   return frontmatterFromContent(buildPublishedCaseFragment(item).content);
 }
+
+test("modeled corpus exports shape identity and v2 reference, never raw drawing vertices or GeoJSON", () => {
+  const state = verifyShapeState(fixture.state, fixture.text, fixture.runs);
+  const item = publishedItem({
+    metadataOnly: false,
+    geometryVersion: 2,
+    geometryModelVersion: 1,
+    shapeManifestHash: state.shapeManifestHash,
+    shapes: state.shapes,
+    geometries: fixture.runs,
+  });
+  const content = buildPublishedCaseFragment(item).content;
+  expect(content).toContain(state.shapes[0].id);
+  expect(content).toContain("2 polygon pieces, 2 holes");
+  expect(content).toContain(
+    `GET /api/regulations/published/${item.id}?geometryVersion=2`,
+  );
+  expect(content).not.toContain("  - 60, 10");
+  expect(content).not.toContain('"coordinates"');
+  expect(content).not.toContain('"MultiPolygon"');
+});
+test.each([0, 1] as const)(
+  "metadata-only model%s corpus suppresses every drawing path even with defensive nonempty inputs",
+  (model) => {
+    const state = verifyShapeState(fixture.state, fixture.text, fixture.runs);
+    const item = publishedItem({
+      metadataOnly: true,
+      geometryModelVersion: model,
+      shapes: state.shapes,
+      geometries: fixture.runs,
+    });
+    const content = buildPublishedCaseFragment(item).content;
+    expect(content).toContain("no drawable area is published");
+    expect(content).not.toContain(state.shapes[0].id);
+    expect(content).not.toContain("  - 60, 10");
+    expect(content).not.toContain("Exact approved geometry for drawing");
+  },
+);
 
 describe("published corpus fragment — admin names and groups", () => {
   test("names ride beside the official title, which stays the key, title and heading", () => {

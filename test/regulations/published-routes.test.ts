@@ -136,6 +136,7 @@ describe("published regulations routes", () => {
     );
     expect(ok.status).toBe(200);
     expect(calls.list[0]).toEqual({
+      geometryVersion: 1,
       jurisdiction: ["FO", "NO"],
       status: "all",
       limit: 5,

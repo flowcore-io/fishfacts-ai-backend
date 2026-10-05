@@ -1,7 +1,18 @@
 import { type Database, timestampToIso } from "@/db/client";
-import { type SQL, sql } from "drizzle-orm";
+import * as schema from "@/db/schema";
+import type { sourceSignatureOf } from "@/regulations/coastal-state";
+import { caseIdFor } from "@/regulations/ids";
+import { type SQL, and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 export type GeoBbox = [number, number, number, number];
+export type PublishedGeometryMarker = {
+  caseId: string;
+  publishedRevisionId: string;
+  geometryVersion: 2;
+  geometryModelVersion: 0 | 1;
+  metadataOnly: boolean;
+  liveSourceSignature: ReturnType<typeof sourceSignatureOf>;
+};
 
 export type GeoListRow = {
   jmNumber: string;
@@ -17,6 +28,8 @@ export type GeoListRow = {
   validTo: string | null;
   hasGeo: boolean;
   bbox: GeoBbox | null;
+  publishedGeometry?: PublishedGeometryMarker;
+  drawable?: false;
 };
 
 export type GeoFullRecord = GeoListRow & {
@@ -252,7 +265,10 @@ function statusConditions(status: string): SQL[] {
 export class JMeldingGeoRepository {
   constructor(private readonly db: Database) {}
 
-  async findByJmNumber(key: string): Promise<GeoFullRecord | null> {
+  async findByJmNumber(
+    key: string,
+    evidenceOnly = false,
+  ): Promise<GeoFullRecord | null> {
     const lookup = key.trim();
     if (!lookup) return null;
     const result = await this.db.execute<FullDbRow>(sql`
@@ -266,7 +282,7 @@ export class JMeldingGeoRepository {
       (Array.isArray(result)
         ? (result[0] as FullDbRow | undefined)
         : undefined);
-    return row ? toFullRecord(row) : null;
+    return row ? (await this.gate([toFullRecord(row)], evidenceOnly))[0] : null;
   }
 
   async list(params: ListParams): Promise<PageResult<GeoListRow>> {
@@ -288,7 +304,7 @@ export class JMeldingGeoRepository {
       ORDER BY jm_number DESC
       LIMIT ${limit + 1}
     `);
-    return paginate(rows.map(toListRow), limit);
+    return paginate(await this.gate(rows.map(toListRow)), limit);
   }
 
   /**
@@ -311,6 +327,7 @@ export class JMeldingGeoRepository {
     bbox?: GeoBbox;
     status?: string;
     limit?: number;
+    evidenceOnly?: boolean;
   }): Promise<
     Array<{
       jmNumber: string;
@@ -356,18 +373,21 @@ export class JMeldingGeoRepository {
     const rows = Array.isArray(result)
       ? result
       : ((result as unknown as { rows?: unknown[] }).rows ?? []);
-    return (rows as Array<Record<string, unknown>>).map((r) => ({
-      jmNumber: r.jm_number as string,
-      title: r.title as string,
-      status: r.status as string,
-      region: r.region as string,
-      category: (r.category as string | null) ?? null,
-      url: (r.url as string) ?? "",
-      summary: (r.summary as string | null) ?? null,
-      validFrom: toIso((r.valid_from as Date | string | null) ?? null),
-      validTo: toIso((r.valid_to as Date | string | null) ?? null),
-      areas: r.areas,
-    }));
+    return this.gate(
+      (rows as Array<Record<string, unknown>>).map((r) => ({
+        jmNumber: r.jm_number as string,
+        title: r.title as string,
+        status: r.status as string,
+        region: r.region as string,
+        category: (r.category as string | null) ?? null,
+        url: (r.url as string) ?? "",
+        summary: (r.summary as string | null) ?? null,
+        validFrom: toIso((r.valid_from as Date | string | null) ?? null),
+        validTo: toIso((r.valid_to as Date | string | null) ?? null),
+        areas: r.areas,
+      })),
+      params.evidenceOnly,
+    );
   }
 
   async findInBbox(params: BboxParams): Promise<PageResult<GeoListRow>> {
@@ -388,7 +408,7 @@ export class JMeldingGeoRepository {
       ORDER BY jm_number DESC
       LIMIT ${limit + 1}
     `);
-    return paginate(rows.map(toListRow), limit);
+    return paginate(await this.gate(rows.map(toListRow)), limit);
   }
 
   async findNear(params: NearParams): Promise<PageResult<GeoListRow>> {
@@ -410,7 +430,79 @@ export class JMeldingGeoRepository {
       ORDER BY jm_number DESC
       LIMIT ${limit + 1}
     `);
-    return paginate(rows.map(toListRow), limit);
+    return paginate(await this.gate(rows.map(toListRow)), limit);
+  }
+
+  /** Exact authoritative source identity gates every old drawable surface.
+   * This never consults a current-only/paginated published list. */
+  private async gate<T extends { jmNumber: string; region: string }>(
+    rows: T[],
+    evidenceOnly = false,
+  ): Promise<T[]> {
+    const refs = rows.filter((r) => r.region === "NO").map((r) => r.jmNumber);
+    if (!refs.length) return rows;
+    const pins = await this.db
+      .select({
+        caseId: schema.regulationCases.id,
+        sourceRef: schema.regulationCases.sourceRef,
+        caseKey: schema.regulationCases.caseKey,
+        publishedRevisionId: schema.regulationCases.publishedRevisionId,
+        metadataOnly: schema.regulationCases.publishedMetadataOnly,
+        model: schema.regulationCaseRevisions.geometryModelVersion,
+        liveSourceSignature: schema.jmeldingGeo.liveSourceSignature,
+      })
+      .from(schema.regulationCases)
+      .innerJoin(
+        schema.regulationCaseRevisions,
+        and(
+          eq(
+            schema.regulationCaseRevisions.id,
+            schema.regulationCases.publishedRevisionId,
+          ),
+          eq(schema.regulationCaseRevisions.caseId, schema.regulationCases.id),
+        ),
+      )
+      .leftJoin(
+        schema.jmeldingGeo,
+        eq(schema.jmeldingGeo.jmNumber, schema.regulationCases.sourceRef),
+      )
+      .where(
+        and(
+          eq(schema.regulationCases.sourceType, "fiskeridir-jmelding"),
+          inArray(schema.regulationCases.sourceRef, refs),
+          isNotNull(schema.regulationCases.publishedRevisionId),
+        ),
+      );
+    const byRef = new Map(
+      pins
+        .filter(
+          (p) =>
+            p.caseKey === `fiskeridir-jmelding:${p.sourceRef}` &&
+            p.caseId === caseIdFor(p.caseKey) &&
+            (p.model === 1 || p.metadataOnly),
+        )
+        .map((p) => [p.sourceRef, p]),
+    );
+    return rows.map((row) => {
+      const pin = row.region === "NO" ? byRef.get(row.jmNumber) : undefined;
+      if (!pin) return row;
+      const publishedGeometry: PublishedGeometryMarker = {
+        caseId: pin.caseId,
+        publishedRevisionId: pin.publishedRevisionId as string,
+        geometryVersion: 2,
+        geometryModelVersion: pin.model === 1 ? 1 : 0,
+        metadataOnly: pin.metadataOnly,
+        liveSourceSignature:
+          pin.liveSourceSignature as PublishedGeometryMarker["liveSourceSignature"],
+      };
+      return {
+        ...row,
+        publishedGeometry,
+        ...(evidenceOnly
+          ? { drawable: false as const }
+          : { hasGeo: false, areas: [], geojson: null }),
+      };
+    });
   }
 
   private async execListQuery(query: SQL): Promise<ListDbRow[]> {

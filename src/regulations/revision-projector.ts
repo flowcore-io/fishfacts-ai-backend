@@ -9,6 +9,7 @@ import type {
 import { pointsToMultipointWkt } from "@/jmelding/geo-parser";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { geometryIdFor } from "./ids";
+import { ModeledCaseRequiresOrderError } from "./ordered-inputs";
 import { caseColumnsOfFields, editableFieldsOfCase } from "./revision-fields";
 
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -47,6 +48,15 @@ export class RegulationRevisionProjector {
 
   async handleProposed(payload: RegulationRevisionProposed): Promise<void> {
     await this.db.transaction(async (tx) => {
+      const [orderedCase] = await tx
+        .select({ version: schema.regulationCases.geometryModelVersion })
+        .from(schema.regulationCases)
+        .where(eq(schema.regulationCases.id, payload.caseId))
+        .for("update");
+      if (orderedCase?.version === 1)
+        throw new ModeledCaseRequiresOrderError(
+          "modeled case requires ordered mutation",
+        );
       const existing = await tx
         .select({ id: schema.regulationCaseRevisions.id })
         .from(schema.regulationCaseRevisions)
@@ -184,6 +194,15 @@ export class RegulationRevisionProjector {
     payload: RegulationRevisionPointerMoved,
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
+      const [orderedCase] = await tx
+        .select({ version: schema.regulationCases.geometryModelVersion })
+        .from(schema.regulationCases)
+        .where(eq(schema.regulationCases.id, payload.caseId))
+        .for("update");
+      if (orderedCase?.version === 1)
+        throw new ModeledCaseRequiresOrderError(
+          "modeled case requires ordered mutation",
+        );
       const [target] = await tx
         .select()
         .from(schema.regulationCaseRevisions)
@@ -267,6 +286,15 @@ export class RegulationRevisionProjector {
     payload: RegulationValidationRecorded,
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
+      const [orderedCase] = await tx
+        .select({ version: schema.regulationCases.geometryModelVersion })
+        .from(schema.regulationCases)
+        .where(eq(schema.regulationCases.id, payload.caseId))
+        .for("update");
+      if (orderedCase?.version === 1)
+        throw new ModeledCaseRequiresOrderError(
+          "modeled case requires ordered mutation",
+        );
       const [revision] = await tx
         .select({ id: schema.regulationCaseRevisions.id })
         .from(schema.regulationCaseRevisions)
@@ -351,6 +379,15 @@ export class RegulationRevisionProjector {
     payload: RegulationApprovalRecorded,
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
+      const [orderedCase] = await tx
+        .select({ version: schema.regulationCases.geometryModelVersion })
+        .from(schema.regulationCases)
+        .where(eq(schema.regulationCases.id, payload.caseId))
+        .for("update");
+      if (orderedCase?.version === 1)
+        throw new ModeledCaseRequiresOrderError(
+          "modeled case requires ordered mutation",
+        );
       const [caseRow] = await tx
         .select()
         .from(schema.regulationCases)

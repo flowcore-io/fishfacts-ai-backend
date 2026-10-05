@@ -45,6 +45,8 @@ export const jmeldingAnnouncementDiscoveredSchema = z.object({
    */
   summary: z.string().optional(),
   bodyMarkdown: z.string().default(""),
+  orderedCaseInput: z.literal(true).optional(),
+  sourceBodyCompleteness: z.enum(["complete", "truncated"]).optional(),
   contentHash: z.string().optional(),
   // Points at a fragment that ALREADY exists and that we do not own — the
   // Lógasavn mirror of logir.fo. When set, the announcement projector does not
@@ -599,6 +601,7 @@ export type RegulationRevisionFields = z.infer<
 /** One area of a revision draft — the same shape the case projector writes,
  * minus the server-derived columns (ids, PostGIS geom). */
 export const regulationRevisionGeometrySchema = z.object({
+  position: z.number().int().nonnegative().optional(),
   name: z.string().max(300).nullable().default(null),
   section: z.string().max(200).nullable().default(null),
   kind: z.enum(["closure", "exemption", "other"]).default("closure"),

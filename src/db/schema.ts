@@ -64,6 +64,10 @@ export const jmeldingChunkQueue = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.signature, table.partNumber] }),
+    sourceRefIdx: index("jmelding_chunk_queue_source_ref_idx").on(
+      sql`(${table.payload}->>'jmNumber')`,
+      sql`coalesce(${table.payload}->>'region','NO')`,
+    ),
     createdAtIdx: index("jmelding_chunk_queue_created_at_idx").on(
       table.createdAt,
     ),
@@ -123,6 +127,7 @@ export const jmeldingGeo = pgTable(
     // MUTATING source fragment otherwise means "whatever it says now" rather
     // than "what we actually parsed".
     contentHash: text("content_hash"),
+    liveSourceSignature: jsonb("live_source_signature"),
     // Validity window as published by the source. `status` records what the
     // source called the regulation when we scraped it; these let a read decide
     // whether it is in force NOW, so a stale row stops being reported as
@@ -508,6 +513,11 @@ export const regulationCases = pgTable(
     // Deterministic (derived from `case_key`), so a replay rebuilds the same
     // ids and references from other systems survive the rebuild.
     id: text("id").primaryKey(),
+    // Once modeled, every case mutation uses the ordered command path even
+    // when an older legacy publication remains pinned.
+    geometryModelVersion: integer("geometry_model_version")
+      .notNull()
+      .default(0),
     // `${sourceType}:${sourceRef}` — the source's own identity for the
     // regulation, e.g. `fiskeridir-jmelding:J-39-2026`. The idempotency anchor.
     caseKey: text("case_key").notNull(),
@@ -593,6 +603,7 @@ export const regulationCases = pgTable(
     // Carried from the approval: a metadata-only publish has no geometry by
     // design, and the published read model must say so rather than let an
     // empty area list look like a parse failure.
+    publishedApprovalId: text("published_approval_id"),
     publishedMetadataOnly: boolean("published_metadata_only")
       .notNull()
       .default(false),
@@ -623,6 +634,40 @@ export const regulationCases = pgTable(
   }),
 );
 
+/** Verified common-flow barriers, not SDK processed markers. */
+export const regulationCommandBarriers = pgTable(
+  "regulation_command_barriers",
+  {
+    id: text("id").primaryKey(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+);
+
+/** Pending source/legacy inputs derive ONLY from durable original events.
+ * The live delivery worker may assign an ordered command, never a domain
+ * revision. Replay consumes the same identity from verified commands. */
+export const regulationOrderedInputs = pgTable(
+  "regulation_ordered_inputs",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    kind: text("kind").notNull(),
+    inputHash: text("input_hash").notNull(),
+    payload: jsonb("payload").notNull(),
+    status: text("status").notNull().default("pending"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    orderedPendingIdx: index(
+      "regulation_ordered_inputs_ordered_pending_idx",
+    ).on(table.status, table.recordedAt, table.id),
+    pendingIdx: index("regulation_ordered_inputs_pending_idx").on(
+      table.caseId,
+      table.status,
+    ),
+  }),
+);
+
 export const regulationCaseRevisions = pgTable(
   "regulation_case_revisions",
   {
@@ -645,6 +690,7 @@ export const regulationCaseRevisions = pgTable(
     // in the corpus fragment `snapshot_fragment_id` points at; the text lands
     // here too the first time a reader fetches it.
     snapshotText: text("snapshot_text"),
+    sourceTextComplete: boolean("source_text_complete"),
     snapshotUrl: text("snapshot_url").notNull(),
     snapshotFetchedAt: timestamp("snapshot_fetched_at", { withTimezone: true }),
     snapshotFragmentId: text("snapshot_fragment_id"),
@@ -674,6 +720,10 @@ export const regulationCaseRevisions = pgTable(
     baseRevisionId: text("base_revision_id"),
     changes: jsonb("changes"),
     fields: jsonb("fields"),
+    geometryModelVersion: integer("geometry_model_version")
+      .notNull()
+      .default(0),
+    shapeState: jsonb("shape_state"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -874,6 +924,10 @@ export const regulationCaseValidations = pgTable(
     scope: text("scope").notNull(),
     // Set exactly when scope = geometry: validation is per-area.
     geometryId: text("geometry_id"),
+    shapeId: text("shape_id"),
+    shapeHash: text("shape_hash"),
+    coverageHash: text("coverage_hash"),
+    commandSequence: bigint("command_sequence", { mode: "number" }),
     validated: boolean("validated").notNull(),
     note: text("note"),
     actor: text("actor").notNull(),
@@ -903,6 +957,11 @@ export const regulationCaseApprovals = pgTable(
     id: text("id").primaryKey(),
     caseId: text("case_id").notNull(),
     revisionId: text("revision_id").notNull(),
+    // Immutable sign-off receipt set for this applied pin. Later draft or
+    // validation changes cannot mutate the geometry that was approved.
+    approvalEvidence: jsonb("approval_evidence"),
+    shapeManifestHash: text("shape_manifest_hash"),
+    commandSequence: bigint("command_sequence", { mode: "number" }),
     metadataOnly: boolean("metadata_only").notNull().default(false),
     note: text("note"),
     actor: text("actor").notNull(),
