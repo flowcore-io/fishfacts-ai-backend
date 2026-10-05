@@ -469,4 +469,63 @@ describe("case command delivery and deterministic projection", () => {
     });
     expect(await effects(id)).toHaveLength(1);
   });
+  test.each([true, false])(
+    "restoring later delivery cannot clear earlier replay prefix (earlier header observed=%s)",
+    async (observedEarlier) => {
+      const id = caseId();
+      const a = input(id);
+      const b = input(id);
+      const c = input(id);
+      const d = input(id);
+      for (const command of [a, b]) {
+        await outbox().reserve(command);
+        await outbox().deliver(command.commandId);
+      }
+      const originalA = partsOf(a.commandId);
+      const originalB = partsOf(b.commandId);
+      expect(originalA.length).toBeGreaterThan(1);
+      if (observedEarlier) await projector().handle(originalA[0]);
+      for (const part of originalB) await projector().handle(part);
+      await connection.db
+        .delete(schema.regulationCommandDeliveries)
+        .where(eq(schema.regulationCommandDeliveries.caseId, id));
+      await expect(outbox().reserve(c)).rejects.toThrow("unreconciled");
+      expect(await outbox().reserve(b)).toBe(b.commandId);
+      await outbox().deliver(b.commandId);
+      expect(partsOf(b.commandId)).toEqual(originalB);
+      const attempts = await Promise.allSettled([
+        outbox().reserve(c),
+        outbox().reserve(d),
+      ]);
+      expect(
+        attempts.every(
+          (r) =>
+            r.status === "rejected" &&
+            r.reason instanceof Error &&
+            r.reason.message.includes("unreconciled"),
+        ),
+      ).toBe(true);
+      expect(await effects(id)).toHaveLength(0);
+      // Re-instance and cache loss do not erase the persistent earlier fence.
+      await connection.db
+        .delete(schema.regulationCommandDeliveries)
+        .where(eq(schema.regulationCommandDeliveries.caseId, id));
+      await outbox().reserve(b);
+      await outbox().deliver(b.commandId);
+      await expect(outbox().reserve(c)).rejects.toThrow("unreconciled");
+      // Arrival of the exact original predecessor bytes drains both commands.
+      for (const part of originalA) await projector().handle(part);
+      expect(await effects(id)).toHaveLength(2);
+      await connection.db
+        .delete(schema.regulationCommandDeliveries)
+        .where(eq(schema.regulationCommandDeliveries.caseId, id));
+      expect(await outbox().reserve(c)).toBe(c.commandId);
+      await outbox().deliver(c.commandId);
+      expect(partsOf(c.commandId)[0]).toMatchObject({
+        sequence: 3,
+        predecessorCommandId: b.commandId,
+      });
+    },
+    5000,
+  );
 });

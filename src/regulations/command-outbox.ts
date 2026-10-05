@@ -135,6 +135,48 @@ export class RegulationCommandOutbox {
         .where(eq(schema.regulationCommandEnvelopes.caseId, input.caseId))
         .orderBy(desc(schema.regulationCommandEnvelopes.sequence))
         .limit(1);
+      // Reconcile the entire unprojected prefix, not just its maximum. A
+      // restored later UUID cannot hide an earlier partial/unknown delivery.
+      // EXISTS/range predicates use case-sequence indexes; historical rows
+      // at/below the committed tail are not scanned or materialized.
+      const prefix = await tx.execute(sql`
+        with known as (
+          select sequence, command_id, predecessor_command_id from regulation_command_deliveries
+          where case_id = ${input.caseId} and sequence > ${tail?.sequence ?? 0}
+          union
+          select sequence, command_id, predecessor_command_id from regulation_command_envelopes
+          where case_id = ${input.caseId} and sequence > ${tail?.sequence ?? 0}
+        )
+        select
+          exists (
+            select 1 from regulation_command_envelopes h
+            where h.case_id = ${input.caseId} and h.sequence > ${tail?.sequence ?? 0}
+            and not exists (
+              select 1 from regulation_command_deliveries d
+              where d.case_id = h.case_id and d.command_id = h.command_id
+                and d.sequence = h.sequence and d.payload_hash = h.payload_hash
+                and d.predecessor_command_id is not distinct from h.predecessor_command_id
+                and d.status = 'acknowledged'
+            )
+          ) or exists (
+            select 1 from known k
+            where (k.sequence = ${tail?.sequence ?? 0} + 1
+              and k.predecessor_command_id is distinct from ${tail?.commandId ?? null}::text)
+            or (k.sequence > ${tail?.sequence ?? 0} + 1 and not exists (
+              select 1 from known previous where previous.sequence = k.sequence - 1
+                and previous.command_id = k.predecessor_command_id
+            ))
+          ) as unreconciled,
+          exists (
+            select 1 from regulation_command_deliveries
+            where case_id = ${input.caseId} and sequence > ${tail?.sequence ?? 0}
+              and status <> 'acknowledged'
+          ) as pending
+      `);
+      const fence = prefix[0] as { unreconciled: boolean; pending: boolean };
+      if (fence.unreconciled)
+        throw new Error("unreconciled command delivery prefix");
+      if (fence.pending) throw new Error("case delivery pending");
       // An empty operational outbox is safe only after verified replay catchup.
       // Partial/complete-but-blocked events whose delivery bytes are unavailable
       // fence new allocations; never reuse their sequence or invent a successor.
