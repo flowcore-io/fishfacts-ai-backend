@@ -247,6 +247,94 @@ describe("durable immutable snapshot assembly", () => {
     expect(await countApplied(ids.assemblyId)).toBe(1);
   });
 
+  test("generic concurrent resumes and final handle share the case work bound before byte assembly; retries apply once", async () => {
+    const a = identity();
+    const b = { ...identity(), caseId: a.caseId };
+    const c = { ...identity(), caseId: a.caseId };
+    const all = [a, b, c].map((ids) => splitSnapshot(ids, payload(ids)));
+    let ready = false;
+    let active = 0;
+    let maximum = 0;
+    let enter: () => void = () => {};
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const worker = () =>
+      new RegulationSnapshotAssembler(
+        connection.db,
+        async (tx, snapshot, manifest) => {
+          if (!ready)
+            return { status: "pending", reason: "missing dependency" };
+          active++;
+          maximum = Math.max(maximum, active);
+          enter();
+          try {
+            await blocked;
+            return await apply(tx, snapshot, manifest);
+          } finally {
+            active--;
+          }
+        },
+      );
+    for (const parts of all.slice(0, 2))
+      for (const part of parts) await worker().handle(part);
+    for (const part of all[2].slice(0, -1)) await worker().handle(part);
+    ready = true;
+    const started = performance.now();
+    const first = worker().resume(a.assemblyId);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(Error("resume did not reach callback")),
+        5000,
+      );
+    });
+    const others: Promise<unknown>[] = [];
+    try {
+      await Promise.race([entered, deadline]);
+      others.push(worker().resume(b.assemblyId));
+      let observed = false;
+      const until = performance.now() + 5000;
+      while (performance.now() < until) {
+        const rows = await connection.client<
+          { waiting: boolean }[]
+        >`select exists(select 1 from pg_locks where locktype='advisory' and not granted and objsubid=1 and classid::bigint=((hashtextextended(${`regulation-snapshot-capacity:${a.caseId}`},0)>>32)&4294967295) and objid::bigint=(hashtextextended(${`regulation-snapshot-capacity:${a.caseId}`},0)&4294967295)) waiting`;
+        if (active > 1 || rows[0].waiting) {
+          observed = true;
+          break;
+        }
+      }
+      expect(observed).toBe(true);
+      expect(active).toBe(1);
+
+      // An independent connection proves the work lock is already held while
+      // the generic callback is active, before any command-projector lock.
+      const held = await connection.db.transaction(async (tx) => {
+        const rows = await tx.execute(
+          sql`select pg_try_advisory_xact_lock(hashtextextended(${`regulation-snapshot-capacity:${a.caseId}`},0)) acquired`,
+        );
+        return rows[0] as { acquired: boolean };
+      });
+      expect(held.acquired).toBe(false);
+      others.push(
+        worker().handle(all[2].at(-1)),
+        worker().resume(a.assemblyId),
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
+      release();
+      await Promise.all([first, ...others]);
+    }
+    expect(maximum).toBe(1);
+    expect(performance.now() - started).toBeLessThan(5000);
+    for (const ids of [a, b, c])
+      expect(await countApplied(ids.assemblyId)).toBe(1);
+  });
+
   test("whole-payload mismatch and foreign snapshot identity never invoke application", async () => {
     const ids = identity();
     const parts = splitSnapshot(ids, payload(ids));

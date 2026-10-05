@@ -170,6 +170,17 @@ export class RegulationSnapshotAssembler {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-snapshot:${assemblyId}`},0))`,
       );
+      const [identity] = await tx
+        .select({ caseId: schema.regulationSnapshotAssemblies.caseId })
+        .from(schema.regulationSnapshotAssemblies)
+        .where(eq(schema.regulationSnapshotAssemblies.assemblyId, assemblyId));
+      if (!identity) return { status: "staging" };
+      // Same lock order as handle: assembly -> case work -> domain callback.
+      // Read only identity before the case lock; refresh status afterwards and
+      // never materialize complete bytes while another case payload is active.
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-snapshot-capacity:${identity.caseId}`},0))`,
+      );
       const [assembly] = await tx
         .select()
         .from(schema.regulationSnapshotAssemblies)
