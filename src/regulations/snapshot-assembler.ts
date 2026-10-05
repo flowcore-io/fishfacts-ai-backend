@@ -7,7 +7,7 @@ import {
   manifestOf,
   reconstructSnapshot,
 } from "@/events/regulation-snapshot-parts";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 export type SnapshotTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 export type SnapshotApplication =
@@ -50,39 +50,36 @@ export class RegulationSnapshotAssembler {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-snapshot:${part.assemblyId}`},0))`,
       );
-      // Capacity refusal throws: the durable event is retried, never falsely
-      // acknowledged/discarded. Eight bounded snapshots cap staging at 128MiB
-      // raw bytes per case. Serialize first inserts across assembly identities.
+      // A serial event pump must never be blocked before a predecessor by
+      // future deliveries occupying all active slots. Queue excess valid bytes
+      // durably; each part/assembly remains bounded and hidden from domain reads.
+      // Completion executes under this per-case lock, so at most ONE bounded
+      // payload is assembled/applied per case at a time. Complete/dependent
+      // commands are durable history, not active partial-assembly slots.
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-snapshot-capacity:${part.caseId}`},0))`,
       );
-      const [known] = await tx
-        .select({ id: schema.regulationSnapshotAssemblies.assemblyId })
+      const [capacity] = await tx
+        .select({ count: sql<number>`count(*)::int` })
         .from(schema.regulationSnapshotAssemblies)
         .where(
-          eq(schema.regulationSnapshotAssemblies.assemblyId, part.assemblyId),
+          and(
+            eq(schema.regulationSnapshotAssemblies.caseId, part.caseId),
+            eq(schema.regulationSnapshotAssemblies.status, "staging"),
+          ),
         );
-      if (!known) {
-        const [capacity] = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(schema.regulationSnapshotAssemblies)
-          .where(
-            and(
-              eq(schema.regulationSnapshotAssemblies.caseId, part.caseId),
-              inArray(schema.regulationSnapshotAssemblies.status, [
-                "staging",
-                "complete",
-              ]),
-            ),
-          );
-        if ((capacity?.count ?? 0) >= this.maxIncompletePerCase)
-          throw new Error(
-            "snapshot staging capacity exhausted; retry after pending assemblies resume",
-          );
-      }
+      const initialStatus =
+        (capacity?.count ?? 0) >= this.maxIncompletePerCase
+          ? "queued"
+          : "staging";
       await tx
         .insert(schema.regulationSnapshotAssemblies)
-        .values({ assemblyId: part.assemblyId, caseId: part.caseId, manifest })
+        .values({
+          assemblyId: part.assemblyId,
+          caseId: part.caseId,
+          manifest,
+          status: initialStatus,
+        })
         .onConflictDoNothing();
       const [assembly] = await tx
         .select()
@@ -152,7 +149,11 @@ export class RegulationSnapshotAssembler {
         .select()
         .from(schema.regulationSnapshotAssemblies)
         .where(eq(schema.regulationSnapshotAssemblies.assemblyId, assemblyId));
-      if (!assembly || assembly.status === "staging")
+      if (
+        !assembly ||
+        assembly.status === "staging" ||
+        assembly.status === "queued"
+      )
         return { status: "staging" };
       if (assembly.status === "applied") return { status: "applied" };
       if (assembly.status === "refused") {

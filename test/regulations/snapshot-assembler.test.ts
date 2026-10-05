@@ -244,24 +244,29 @@ describe("durable immutable snapshot assembly", () => {
     expect(await countApplied(foreign.assemblyId)).toBe(0);
   });
 
-  test("bounded per-case staging refuses without acknowledging or deleting durable work; completion releases capacity", async () => {
-    const first = identity();
-    const second = { ...identity(), caseId: first.caseId };
-    const a = splitSnapshot(first, payload(first));
-    const b = splitSnapshot(second, payload(second));
+  test("active partial slots queue excess durable bytes without starving a predecessor or changing visibility", async () => {
+    const future = identity();
+    const predecessor = { ...identity(), caseId: future.caseId };
+    const a = splitSnapshot(future, payload(future));
+    const b = splitSnapshot(predecessor, payload(predecessor));
     const handler = new RegulationSnapshotAssembler(connection.db, apply, 1);
     await handler.handle(a[0]);
-    await expect(handler.handle(b[0])).rejects.toThrow("capacity exhausted");
-    const rows = await connection.db
+    expect(await handler.handle(b[0])).toEqual({ status: "staging" });
+    const [queued] = await connection.db
       .select()
       .from(schema.regulationSnapshotAssemblies)
       .where(
-        eq(schema.regulationSnapshotAssemblies.assemblyId, second.assemblyId),
+        eq(
+          schema.regulationSnapshotAssemblies.assemblyId,
+          predecessor.assemblyId,
+        ),
       );
-    expect(rows).toHaveLength(0);
+    expect(queued.status).toBe("queued");
+    expect(await countApplied(predecessor.assemblyId)).toBe(0);
+    for (const part of b.slice(1)) await handler.handle(part);
+    expect(await countApplied(predecessor.assemblyId)).toBe(1);
     for (const part of a.slice(1)) await handler.handle(part);
-    for (const part of b) await handler.handle(part);
-    expect(await countApplied(second.assemblyId)).toBe(1);
+    expect(await countApplied(future.assemblyId)).toBe(1);
   });
 
   test("clean DB transport replay after staging deletion recreates exact output without geometry recomputation", async () => {
