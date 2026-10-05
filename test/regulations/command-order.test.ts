@@ -1,0 +1,312 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { eq, sql } from "drizzle-orm";
+import { createDb } from "../../src/db/client";
+import { runMigrations } from "../../src/db/migrate";
+import * as schema from "../../src/db/schema";
+import type {
+  CaseCommandInput,
+  CommandPart,
+} from "../../src/events/regulation-case-command";
+import { RegulationCommandOutbox } from "../../src/regulations/command-outbox";
+import {
+  type OrderedCommandApplication,
+  RegulationCommandProjector,
+} from "../../src/regulations/command-projector";
+const connection = createDb(
+  process.env.TEST_DATABASE_URL ??
+    "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test",
+);
+const cases: string[] = [];
+const caseId = () => {
+  const id = randomUUID();
+  cases.push(id);
+  return id;
+};
+const input = (
+  id: string,
+  operation: CaseCommandInput["operation"] = "proposal",
+): CaseCommandInput => ({
+  caseId: id,
+  commandId: randomUUID(),
+  baseRevisionId: randomUUID(),
+  revisionId: randomUUID(),
+  operation,
+  actor: "admin:fixture",
+  data: { text: '😀 Øst \\"'.repeat(5000) },
+});
+const emitted = new Map<string, readonly CommandPart[]>();
+const partsOf = (id: string): readonly CommandPart[] => {
+  const parts = emitted.get(id);
+  if (!parts) throw new Error("fixture command was not emitted");
+  return parts;
+};
+let emissionMode: "success" | "before" | "after" = "success";
+let emissionCount = 0;
+const emit = async (parts: readonly CommandPart[]) => {
+  emissionCount++;
+  if (emissionMode === "before") throw Error("crash before emit");
+  const id = parts[0].part.assemblyId;
+  const known = emitted.get(id);
+  if (known) expect(parts).toEqual(known);
+  emitted.set(id, parts);
+  if (emissionMode === "after")
+    throw Error("lost acknowledgement after durable emission");
+  return { eventIds: parts.map(() => randomUUID()) };
+};
+const caughtup = async () => ({
+  barrierId: "fixture-processed-common-flow-barrier",
+});
+const outbox = () => new RegulationCommandOutbox(connection.db, emit, caughtup);
+const apply: OrderedCommandApplication = async (tx, c) => {
+  if ((c.data as { refuse?: boolean }).refuse)
+    return { status: "refused", reason: "fixture stale base" };
+  await tx.execute(
+    sql`insert into coastal_order_test.effects(case_id,sequence,command_id,operation) values (${c.caseId},${c.sequence},${c.commandId},${c.operation})`,
+  );
+  return { status: "applied" };
+};
+const projector = (handler = apply) =>
+  new RegulationCommandProjector(connection.db, handler);
+const effects = async (id: string) =>
+  connection.client<
+    { sequence: number; operation: string }[]
+  >`select sequence::int,operation from coastal_order_test.effects where case_id=${id} order by sequence`;
+const cleanupProjection = async (id: string) => {
+  const rows = await connection.db
+    .select()
+    .from(schema.regulationCommandEnvelopes)
+    .where(eq(schema.regulationCommandEnvelopes.caseId, id));
+  for (const row of rows) {
+    await connection.db
+      .delete(schema.regulationSnapshotParts)
+      .where(eq(schema.regulationSnapshotParts.assemblyId, row.commandId));
+    await connection.db
+      .delete(schema.regulationSnapshotAssemblies)
+      .where(eq(schema.regulationSnapshotAssemblies.assemblyId, row.commandId));
+  }
+  await connection.db
+    .delete(schema.regulationCommandReceipts)
+    .where(eq(schema.regulationCommandReceipts.caseId, id));
+  await connection.db
+    .delete(schema.regulationCommandEnvelopes)
+    .where(eq(schema.regulationCommandEnvelopes.caseId, id));
+  await connection.db
+    .delete(schema.regulationCommandTails)
+    .where(eq(schema.regulationCommandTails.caseId, id));
+  await connection.client`delete from coastal_order_test.effects where case_id=${id}`;
+};
+beforeAll(async () => {
+  await runMigrations(connection.db, connection.client);
+  await connection.client`create schema if not exists coastal_order_test`;
+  await connection.client`create table if not exists coastal_order_test.effects(case_id text,sequence bigint,command_id text primary key,operation text,unique(case_id,sequence))`;
+});
+afterAll(async () => {
+  for (const id of cases) {
+    await cleanupProjection(id);
+    await connection.db
+      .delete(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.caseId, id));
+  }
+  await connection.client.end();
+});
+describe("case command delivery and deterministic projection", () => {
+  test("producer crash before emit and after emit/before ack retries SAME exact command; reservation is never a domain mutation", async () => {
+    const id = caseId();
+    const request = input(id);
+    await outbox().reserve(request);
+    expect(await effects(id)).toHaveLength(0);
+    emissionMode = "before";
+    await expect(outbox().deliver(request.commandId)).rejects.toThrow(
+      "before emit",
+    );
+    expect(emitted.has(request.commandId)).toBe(false);
+    await expect(outbox().reserve(input(id))).rejects.toThrow(
+      "delivery pending",
+    );
+    emissionMode = "after";
+    await expect(outbox().deliver(request.commandId)).rejects.toThrow(
+      "lost acknowledgement",
+    );
+    const bytes = emitted.get(request.commandId);
+    expect(bytes).toBeDefined();
+    expect(await outbox().reserve(request)).toBe(request.commandId);
+    await expect(
+      outbox().reserve({ ...request, data: { different: true } }),
+    ).rejects.toThrow("id conflict");
+    emissionMode = "success";
+    await outbox().recover();
+    expect(emitted.get(request.commandId)).toEqual(bytes);
+    expect(await effects(id)).toHaveLength(0);
+    const before = emissionCount;
+    await outbox().deliver(request.commandId);
+    expect(emissionCount).toBe(before);
+    for (const part of partsOf(request.commandId))
+      await projector().handle(part);
+    expect([...(await effects(id))]).toEqual([
+      { sequence: 1, operation: "proposal" },
+    ]);
+  });
+  test("two producers serialize reservations; acknowledged-but-unprojected commands have one predecessor and safe staged application", async () => {
+    const id = caseId();
+    const a = input(id, "source");
+    const b = input(id, "approval");
+    const started = performance.now();
+    const result = await Promise.allSettled([
+      outbox().reserve(a),
+      outbox().reserve(b),
+    ]);
+    expect(result.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(5000);
+    const first = result[0].status === "fulfilled" ? a : b;
+    const second = first === a ? b : a;
+    await outbox().deliver(first.commandId);
+    await outbox().reserve(second);
+    await outbox().deliver(second.commandId);
+    const secondParts = partsOf(second.commandId);
+    expect(secondParts[0].sequence).toBe(2);
+    expect(secondParts[0].predecessorCommandId).toBe(first.commandId);
+    for (const p of [...secondParts].reverse()) await projector().handle(p);
+    expect(await effects(id)).toHaveLength(0);
+    for (const p of [...partsOf(first.commandId)].reverse())
+      await projector().handle(p);
+    expect([...(await effects(id))]).toEqual([
+      { sequence: 1, operation: first.operation },
+      { sequence: 2, operation: second.operation },
+    ]);
+  });
+  test("source/proposal/validation/approval/revoke share order; refusal advances chain; shuffled replay with EMPTY operational outbox gives identical outcomes", async () => {
+    const id = caseId();
+    const operations: CaseCommandInput["operation"][] = [
+      "source",
+      "proposal",
+      "validation",
+      "approval",
+      "revoke",
+    ];
+    const all: CommandPart[] = [];
+    const ids: string[] = [];
+    for (const operation of operations) {
+      const r = input(id, operation);
+      if (operation === "proposal") r.data = { refuse: true };
+      ids.push(r.commandId);
+      await outbox().reserve(r);
+      await outbox().deliver(r.commandId);
+      all.push(...partsOf(r.commandId));
+    }
+    const p = projector();
+    for (const part of [...all].reverse()) await p.handle(part);
+    const expected = [
+      { sequence: 1, operation: "source" },
+      { sequence: 3, operation: "validation" },
+      { sequence: 4, operation: "approval" },
+      { sequence: 5, operation: "revoke" },
+    ];
+    expect([...(await effects(id))]).toEqual(expected);
+    const [refusal] = await connection.db
+      .select()
+      .from(schema.regulationCommandReceipts)
+      .where(eq(schema.regulationCommandReceipts.commandId, ids[1]));
+    expect(refusal.status).toBe("refused");
+    await cleanupProjection(id);
+    await connection.db
+      .delete(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.caseId, id));
+    for (const part of [...all].reverse()) await projector().handle(part);
+    expect([...(await effects(id))]).toEqual(expected);
+    const next = input(id);
+    await outbox().reserve(next);
+    await outbox().deliver(next.commandId);
+    expect(partsOf(next.commandId)[0].sequence).toBe(6);
+  });
+  test("startup catchup and unresolved durable partial delivery fence allocation after operational cache loss", async () => {
+    const id = caseId();
+    const r = input(id);
+    const notReady = new RegulationCommandOutbox(
+      connection.db,
+      emit,
+      async () => {
+        throw Error("not caught up");
+      },
+    );
+    await expect(notReady.reserve(r)).rejects.toThrow("not caught up");
+    await outbox().reserve(r);
+    await outbox().deliver(r.commandId);
+    const parts = partsOf(r.commandId);
+    expect(parts.length).toBeGreaterThan(1);
+    await projector().handle(parts[0]);
+    await connection.db
+      .delete(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.caseId, id));
+    await expect(outbox().reserve(input(id))).rejects.toThrow("unreconciled");
+    for (const part of parts.slice(1)) await projector().handle(part);
+    const next = input(id);
+    await outbox().reserve(next);
+    await outbox().deliver(next.commandId);
+    expect(partsOf(next.commandId)[0].sequence).toBe(2);
+  });
+  test("conflicting header/payload or checksum cannot poison a valid sequence; concurrent final-part redelivery applies once", async () => {
+    const id = caseId();
+    const r = input(id);
+    await outbox().reserve(r);
+    await outbox().deliver(r.commandId);
+    const parts = partsOf(r.commandId);
+    await expect(
+      projector().handle({
+        ...parts[0],
+        part: { ...parts[0].part, data: "corrupt" },
+      }),
+    ).rejects.toThrow();
+    const headers = await connection.db
+      .select()
+      .from(schema.regulationCommandEnvelopes)
+      .where(eq(schema.regulationCommandEnvelopes.caseId, id));
+    expect(headers).toHaveLength(0);
+    await projector().handle(parts[0]);
+    await expect(
+      projector().handle({ ...parts[0], sequence: 2 }),
+    ).rejects.toThrow("conflicting");
+    for (const part of parts.slice(1, -1)) await projector().handle(part);
+    const started = performance.now();
+    await Promise.all(
+      Array.from({ length: 4 }, () => projector().handle(parts.at(-1))),
+    );
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(await effects(id)).toHaveLength(1);
+  });
+  test("application crash rolls back domain, ordering tail and final assembly; delayed domain dependency remains pending instead of stale", async () => {
+    const id = caseId();
+    const r = input(id);
+    await outbox().reserve(r);
+    await outbox().deliver(r.commandId);
+    const parts = partsOf(r.commandId);
+    let mode: "crash" | "pending" | "apply" = "crash";
+    const handler: OrderedCommandApplication = async (tx, c) => {
+      if (mode === "pending")
+        return { status: "pending", reason: "base not projected" };
+      const result = await apply(tx, c);
+      if (mode === "crash") throw Error("application crash");
+      return result;
+    };
+    for (const part of parts.slice(0, -1))
+      await projector(handler).handle(part);
+    await expect(projector(handler).handle(parts.at(-1))).rejects.toThrow(
+      "application crash",
+    );
+    expect(await effects(id)).toHaveLength(0);
+    const tails = await connection.db
+      .select()
+      .from(schema.regulationCommandTails)
+      .where(eq(schema.regulationCommandTails.caseId, id));
+    expect(tails).toHaveLength(0);
+    mode = "pending";
+    expect(await projector(handler).handle(parts.at(-1))).toMatchObject({
+      status: "pending",
+    });
+    mode = "apply";
+    expect(await projector(handler).resume(r.commandId)).toEqual({
+      status: "applied",
+    });
+    expect(await effects(id)).toHaveLength(1);
+  });
+});

@@ -211,6 +211,13 @@
       "when": 1791232584957,
       "tag": "0029_regulation_snapshot_transport",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791234185119,
+      "tag": "0030_regulation_case_command_order",
+      "breakpoints": true
     }
   ]
 }
