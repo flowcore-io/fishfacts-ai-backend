@@ -81,10 +81,46 @@ export class RegulationCommandProjector {
         payloadHash: part.payloadSha256,
       });
     });
-    return this.assembler.handle(part);
+    const result = await this.assembler.handle(part);
+    await this.recoverPending(part.caseId);
+    return result;
   }
   async resume(commandId: string) {
-    return this.assembler.resume(commandId);
+    const result = await this.assembler.resume(commandId);
+    const [header] = await this.db
+      .select()
+      .from(schema.regulationCommandEnvelopes)
+      .where(eq(schema.regulationCommandEnvelopes.commandId, commandId));
+    if (header) await this.recoverPending(header.caseId);
+    return result;
+  }
+  /** Each transaction drains at most 32. Continue verified ready work after
+   * that boundary without requiring an unrelated Flowcore event. A genuine
+   * missing domain dependency stops this pass and is retried by recovery. */
+  async recoverPending(caseId: string): Promise<void> {
+    for (;;) {
+      const [before] = await this.db
+        .select()
+        .from(schema.regulationCommandTails)
+        .where(eq(schema.regulationCommandTails.caseId, caseId));
+      const next = (before?.sequence ?? 0) + 1;
+      const [ready] = await this.db
+        .select()
+        .from(schema.regulationCommandReceipts)
+        .where(
+          and(
+            eq(schema.regulationCommandReceipts.caseId, caseId),
+            eq(schema.regulationCommandReceipts.sequence, next),
+          ),
+        );
+      if (!ready || ready.status !== "pending") return;
+      await this.assembler.resume(ready.commandId);
+      const [after] = await this.db
+        .select()
+        .from(schema.regulationCommandTails)
+        .where(eq(schema.regulationCommandTails.caseId, caseId));
+      if ((after?.sequence ?? 0) <= (before?.sequence ?? 0)) return;
+    }
   }
   private async stageComplete(
     tx: SnapshotTx,
@@ -161,6 +197,13 @@ export class RegulationCommandProjector {
         );
       if (!receipt) return;
       const command = caseCommandSchema.parse(receipt.command);
+      if (
+        canonicalDigest(command) !== receipt.payloadHash ||
+        command.commandId !== receipt.commandId ||
+        command.caseId !== caseId ||
+        command.sequence !== next
+      )
+        throw new Error("command receipt integrity mismatch");
       if (command.predecessorCommandId !== (tail?.commandId ?? null))
         throw new Error("command predecessor conflict");
       const result = await this.apply(tx, command);

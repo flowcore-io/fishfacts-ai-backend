@@ -219,6 +219,80 @@ describe("case command delivery and deterministic projection", () => {
     await outbox().deliver(next.commandId);
     expect(partsOf(next.commandId)[0].sequence).toBe(6);
   });
+  test("ten-command reverse replay with empty outbox cannot starve earliest predecessor in an awaited serial pump", async () => {
+    const id = caseId();
+    const all: CommandPart[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = input(id);
+      await outbox().reserve(r);
+      await outbox().deliver(r.commandId);
+      all.push(...partsOf(r.commandId));
+    }
+    await connection.db
+      .delete(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.caseId, id));
+    const started = performance.now();
+    const p = projector();
+    // Installed pump awaits each event. Throw/retry on the ninth command
+    // would prevent the earliest predecessor from ever being delivered.
+    for (const part of [...all].reverse()) await p.handle(part);
+    expect(performance.now() - started).toBeLessThan(10000);
+    expect(await effects(id)).toHaveLength(10);
+  });
+
+  test("forty-command reverse backlog drains across the 32 transaction boundary without another event", async () => {
+    const id = caseId();
+    const all: CommandPart[] = [];
+    for (let n = 0; n < 40; n++) {
+      const r = input(id);
+      r.data = { n };
+      await outbox().reserve(r);
+      await outbox().deliver(r.commandId);
+      all.push(...partsOf(r.commandId));
+    }
+    await connection.db
+      .delete(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.caseId, id));
+    const started = performance.now();
+    for (const part of [...all].reverse()) await projector().handle(part);
+    expect(await effects(id)).toHaveLength(40);
+    expect(performance.now() - started).toBeLessThan(10000);
+    await projector().recoverPending(id);
+    expect(await effects(id)).toHaveLength(40);
+  });
+  test("durable command UUID binds original actor/input/sequence/bytes after operational cache deletion", async () => {
+    const id = caseId();
+    const r = input(id);
+    await outbox().reserve(r);
+    await outbox().deliver(r.commandId);
+    const original = partsOf(r.commandId);
+    await projector().handle(original[0]);
+    await connection.db
+      .delete(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.caseId, id));
+    await expect(outbox().reserve(r)).rejects.toThrow(
+      "known command incomplete",
+    );
+    await expect(
+      outbox().reserve({ ...r, actor: "admin:other" }),
+    ).rejects.toThrow("known command incomplete");
+    for (const part of original.slice(1)) await projector().handle(part);
+    await expect(
+      outbox().reserve({ ...r, actor: "admin:other" }),
+    ).rejects.toThrow("id conflict");
+    await expect(
+      outbox().reserve({ ...r, data: { changed: true } }),
+    ).rejects.toThrow("id conflict");
+    expect(await outbox().reserve(r)).toBe(r.commandId);
+    await outbox().deliver(r.commandId);
+    expect(partsOf(r.commandId)).toEqual(original);
+    for (const part of original) await projector().handle(part);
+    expect(await effects(id)).toHaveLength(1);
+    const next = input(id);
+    await outbox().reserve(next);
+    await outbox().deliver(next.commandId);
+    expect(partsOf(next.commandId)[0].sequence).toBe(2);
+  });
   test("startup catchup and unresolved durable partial delivery fence allocation after operational cache loss", async () => {
     const id = caseId();
     const r = input(id);

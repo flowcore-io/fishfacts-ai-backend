@@ -8,6 +8,9 @@ import {
 } from "@/events/regulation-case-command";
 import {
   SNAPSHOT_EVENT_BUDGET_BYTES,
+  type SnapshotManifest,
+  type SnapshotPart,
+  reconstructSnapshot,
   splitSnapshot,
 } from "@/events/regulation-snapshot-parts";
 import { desc, eq, sql } from "drizzle-orm";
@@ -48,6 +51,73 @@ export class RegulationCommandOutbox {
         if (known.caseId !== input.caseId || known.inputHash !== inputHash)
           throw new Error("command id conflict");
         return known.commandId;
+      }
+      // Event-derived identity survives loss of the operational retry cache.
+      // Never allocate a second sequence/clock under a known command UUID.
+      const [header] = await tx
+        .select()
+        .from(schema.regulationCommandEnvelopes)
+        .where(
+          eq(schema.regulationCommandEnvelopes.commandId, input.commandId),
+        );
+      if (header) {
+        if (header.caseId !== input.caseId)
+          throw new Error("command id conflict");
+        const [assembly] = await tx
+          .select()
+          .from(schema.regulationSnapshotAssemblies)
+          .where(
+            eq(schema.regulationSnapshotAssemblies.assemblyId, input.commandId),
+          );
+        const rows = await tx
+          .select()
+          .from(schema.regulationSnapshotParts)
+          .where(eq(schema.regulationSnapshotParts.assemblyId, input.commandId))
+          .orderBy(schema.regulationSnapshotParts.partNumber);
+        const manifest = assembly?.manifest as SnapshotManifest | undefined;
+        if (!manifest || rows.length !== manifest.totalParts)
+          throw new Error(
+            "known command incomplete; await exact durable replay",
+          );
+        const original = caseCommandSchema.parse(
+          reconstructSnapshot(
+            manifest,
+            rows.map((row) => row.payload as SnapshotPart),
+          ),
+        );
+        const {
+          schemaVersion: _version,
+          sequence: _sequence,
+          predecessorCommandId: _predecessor,
+          recordedAt: _clock,
+          ...originalInput
+        } = original;
+        if (
+          canonicalDigest(originalInput) !== inputHash ||
+          original.commandId !== header.commandId ||
+          original.sequence !== header.sequence ||
+          original.predecessorCommandId !== header.predecessorCommandId ||
+          manifest.payloadSha256 !== header.payloadHash
+        )
+          throw new Error("command id conflict");
+        // Re-emit original byte parts if a caller needs a durable receipt. No
+        // geometry serialization or regenerated recordedAt is permitted here.
+        const parts: CommandPart[] = rows.map((row) => ({
+          schemaVersion: 1,
+          sequence: header.sequence,
+          predecessorCommandId: header.predecessorCommandId,
+          part: row.payload as SnapshotPart,
+        }));
+        await tx.insert(schema.regulationCommandDeliveries).values({
+          commandId: input.commandId,
+          caseId: input.caseId,
+          sequence: header.sequence,
+          predecessorCommandId: header.predecessorCommandId,
+          inputHash,
+          payloadHash: header.payloadHash,
+          parts,
+        });
+        return input.commandId;
       }
       const [tail] = await tx
         .select()
