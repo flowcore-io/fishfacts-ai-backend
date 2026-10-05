@@ -15,8 +15,8 @@ import {
 
 // Own isolated fixture database only. Do not silently skip a failed DB gate.
 const connection = createDb(
-  process.env.REGULATION_CASE_TEST_DATABASE_URL ??
-    "postgres://postgres:postgres@127.0.0.1:15436/fishfacts_ai_backend_test",
+  process.env.TEST_DATABASE_URL ??
+    "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test",
 );
 const testCases: string[] = [];
 const identity = () => {
