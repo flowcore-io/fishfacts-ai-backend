@@ -1088,3 +1088,20 @@ export const regulationCommandReceipts = pgTable(
     ),
   }),
 );
+
+/** Terminal dispositions isolate alien events without modifying the original assembly. */
+export const regulationImmutableConflicts = pgTable(
+  "regulation_immutable_conflicts",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    assemblyId: text("assembly_id").notNull(),
+    kind: text("kind").notNull(),
+    reason: text("reason").notNull(),
+    expected: jsonb("expected").notNull(),
+    received: jsonb("received").notNull(),
+  },
+  (table) => ({
+    caseIdx: index("regulation_immutable_conflicts_case_idx").on(table.caseId),
+  }),
+);

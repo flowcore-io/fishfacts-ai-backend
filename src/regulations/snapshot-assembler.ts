@@ -8,6 +8,11 @@ import {
   reconstructSnapshot,
 } from "@/events/regulation-snapshot-parts";
 import { and, eq, sql } from "drizzle-orm";
+import {
+  type ImmutableConflict,
+  SnapshotPartRejectedError,
+  quarantineConflict,
+} from "./immutable-conflict";
 
 export type SnapshotTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 export type SnapshotApplication =
@@ -41,9 +46,15 @@ export class RegulationSnapshotAssembler {
 
   async handle(
     input: unknown,
-  ): Promise<SnapshotApplication | { status: "staging" }> {
+  ): Promise<SnapshotApplication | ImmutableConflict | { status: "staging" }> {
     // Corrupt encoding/digest is rejected before it can poison valid staging.
-    const { part } = decodePart(input);
+    let decoded: ReturnType<typeof decodePart>;
+    try {
+      decoded = decodePart(input);
+    } catch (cause) {
+      throw new SnapshotPartRejectedError(cause);
+    }
+    const { part } = decoded;
     const manifest = manifestOf(part);
     return this.db.transaction(async (tx) => {
       // Serialize even first-part inserts and redeliveries on different pods.
@@ -91,7 +102,14 @@ export class RegulationSnapshotAssembler {
       if (!sameManifest(assembly.manifest, manifest)) {
         // Do not change a completed/applied immutable snapshot for an alien
         // redelivery. Throw preserves its exact original bytes/state.
-        throw new Error("conflicting snapshot manifest");
+        return quarantineConflict(tx, {
+          caseId: assembly.caseId,
+          assemblyId: part.assemblyId,
+          kind: "snapshot-manifest",
+          reason: "conflicting snapshot manifest",
+          expected: assembly.manifest,
+          received: part,
+        });
       }
       const [existing] = await tx
         .select({ payload: schema.regulationSnapshotParts.payload })
@@ -108,7 +126,14 @@ export class RegulationSnapshotAssembler {
           previous.data !== part.data ||
           previous.partSha256 !== part.partSha256
         ) {
-          throw new Error("conflicting snapshot part");
+          return quarantineConflict(tx, {
+            caseId: assembly.caseId,
+            assemblyId: part.assemblyId,
+            kind: "snapshot-part",
+            reason: "conflicting snapshot part",
+            expected: previous,
+            received: part,
+          });
         }
       } else {
         await tx.insert(schema.regulationSnapshotParts).values({
@@ -140,7 +165,7 @@ export class RegulationSnapshotAssembler {
    * relying on an in-process promise/TTL. */
   async resume(
     assemblyId: string,
-  ): Promise<SnapshotApplication | { status: "staging" }> {
+  ): Promise<SnapshotApplication | ImmutableConflict | { status: "staging" }> {
     return this.db.transaction(async (tx) => {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-snapshot:${assemblyId}`},0))`,

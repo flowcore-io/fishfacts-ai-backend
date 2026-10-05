@@ -93,6 +93,9 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const id of testCases) {
     await connection.db
+      .delete(schema.regulationImmutableConflicts)
+      .where(eq(schema.regulationImmutableConflicts.assemblyId, id));
+    await connection.db
       .delete(schema.regulationSnapshotParts)
       .where(eq(schema.regulationSnapshotParts.assemblyId, id));
     await connection.db
@@ -147,16 +150,40 @@ describe("durable immutable snapshot assembly", () => {
     await handler.handle(parts[0]);
     const changed = Buffer.from(parts[0].data, "base64");
     changed[100] ^= 1;
-    await expect(
-      handler.handle({
-        ...parts[0],
-        data: changed.toString("base64"),
-        partSha256: byteDigest(changed),
-      }),
-    ).rejects.toThrow("conflicting snapshot part");
-    await expect(
-      handler.handle({ ...parts[1], revisionId: randomUUID() }),
-    ).rejects.toThrow("conflicting snapshot manifest");
+    const alienPart = {
+      ...parts[0],
+      data: changed.toString("base64"),
+      partSha256: byteDigest(changed),
+    };
+    const outcome = await handler.handle(alienPart);
+    expect(outcome).toMatchObject({
+      status: "quarantined",
+      reason: "conflicting snapshot part",
+    });
+    expect(await assembler().handle(alienPart)).toEqual(outcome);
+    const alienManifest = { ...parts[1], revisionId: randomUUID() };
+    const manifestOutcome = await handler.handle(alienManifest);
+    expect(manifestOutcome).toMatchObject({
+      status: "quarantined",
+      reason: "conflicting snapshot manifest",
+    });
+    const conflicts = await connection.db
+      .select()
+      .from(schema.regulationImmutableConflicts)
+      .where(
+        eq(schema.regulationImmutableConflicts.assemblyId, ids.assemblyId),
+      );
+    expect(conflicts).toHaveLength(2);
+    expect(conflicts.find((c) => c.kind === "snapshot-part")?.received).toEqual(
+      alienPart,
+    );
+    await connection.db
+      .delete(schema.regulationImmutableConflicts)
+      .where(
+        eq(schema.regulationImmutableConflicts.assemblyId, ids.assemblyId),
+      );
+    expect(await assembler().handle(alienPart)).toEqual(outcome);
+    expect(await assembler().handle(alienManifest)).toEqual(manifestOutcome);
     await expect(
       handler.handle({ ...parts[1], data: "bad" }),
     ).rejects.toThrow();
