@@ -10,6 +10,7 @@ const USABLE_PORT = 4511;
 const FISHFACTS_PORT = 4512;
 const WEBHOOK_PORT = 4513;
 const DB_URL =
+  process.env.TEST_DATABASE_URL ??
   "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test";
 const TRANSFORMER_SECRET = "test-transformer-secret";
 const ADMIN_TOKEN = "433069ad-0dd0-46e5-a832-6960cd6690b5";

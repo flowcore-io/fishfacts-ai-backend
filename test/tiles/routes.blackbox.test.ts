@@ -14,6 +14,7 @@ const fishfacts = new FakeFishfactsServer(FISHFACTS_PORT);
 const app = new AppProcess(APP_PORT, {
   NODE_ENV: "test",
   DATABASE_URL:
+    process.env.TEST_DATABASE_URL ??
     "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test",
   FLOWCORE_TENANT: "jbiskur",
   FLOWCORE_DATA_CORE: "fishfacts-ai-backend",
@@ -72,7 +73,8 @@ describe("MVT tile routes black-box", () => {
 
   beforeAll(async () => {
     cleanupClient = postgres(
-      "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test",
+      process.env.TEST_DATABASE_URL ??
+        "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test",
       { max: 1 },
     );
     await cleanupClient`DELETE FROM jmelding_geo WHERE jm_number = ${TILE_JM_NUMBER}`;

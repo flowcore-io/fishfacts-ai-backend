@@ -15,6 +15,7 @@ import { RegulationRevisionProjector } from "../../src/regulations/revision-proj
 
 const DATABASE_URL =
   process.env.REGULATION_CASE_TEST_DATABASE_URL ??
+  process.env.TEST_DATABASE_URL ??
   "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test";
 
 let runCtx: Awaited<ReturnType<typeof connect>> | null = null;
