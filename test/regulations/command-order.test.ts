@@ -86,6 +86,9 @@ const cleanupProjection = async (id: string) => {
       .where(eq(schema.regulationSnapshotAssemblies.assemblyId, row.commandId));
   }
   await connection.db
+    .delete(schema.regulationImmutableConflicts)
+    .where(eq(schema.regulationImmutableConflicts.caseId, id));
+  await connection.db
     .delete(schema.regulationCommandReceipts)
     .where(eq(schema.regulationCommandReceipts.caseId, id));
   await connection.db
@@ -337,9 +340,35 @@ describe("case command delivery and deterministic projection", () => {
       .where(eq(schema.regulationCommandEnvelopes.caseId, id));
     expect(headers).toHaveLength(0);
     await projector().handle(parts[0]);
-    await expect(
-      projector().handle({ ...parts[0], sequence: 2 }),
-    ).rejects.toThrow("conflicting");
+    const alien = { ...parts[0], sequence: 2 };
+    const conflict = await projector().handle(alien);
+    expect(conflict).toMatchObject({
+      status: "quarantined",
+      reason: "conflicting command order header",
+    });
+    expect(await projector().handle(alien)).toEqual(conflict);
+    const alienId = {
+      ...parts[0],
+      part: { ...parts[0].part, assemblyId: randomUUID() },
+    };
+    const sequenceConflict = await projector().handle(alienId);
+    expect(sequenceConflict).toMatchObject({
+      status: "quarantined",
+      reason: "conflicting command sequence",
+    });
+    const evidence = await connection.db
+      .select()
+      .from(schema.regulationImmutableConflicts)
+      .where(eq(schema.regulationImmutableConflicts.caseId, id));
+    expect(evidence).toHaveLength(2);
+    expect(evidence.find((c) => c.kind === "command-header")?.received).toEqual(
+      alien,
+    );
+    await connection.db
+      .delete(schema.regulationImmutableConflicts)
+      .where(eq(schema.regulationImmutableConflicts.caseId, id));
+    expect(await projector().handle(alien)).toEqual(conflict);
+    expect(await projector().handle(alienId)).toEqual(sequenceConflict);
     for (const part of parts.slice(1, -1)) await projector().handle(part);
     const started = performance.now();
     await Promise.all(

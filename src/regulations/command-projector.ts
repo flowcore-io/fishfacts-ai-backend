@@ -12,6 +12,11 @@ import {
 } from "@/events/regulation-snapshot-parts";
 import { and, eq, sql } from "drizzle-orm";
 import {
+  type ImmutableConflict,
+  SnapshotPartRejectedError,
+  quarantineConflict,
+} from "./immutable-conflict";
+import {
   RegulationSnapshotAssembler,
   type SnapshotApplication,
   type SnapshotTx,
@@ -38,12 +43,19 @@ export class RegulationCommandProjector {
   }
   async handle(
     input: unknown,
-  ): Promise<SnapshotApplication | { status: "staging" }> {
-    const envelope = commandPartSchema.parse(input);
-    const { part } = decodePart(envelope.part);
+  ): Promise<SnapshotApplication | ImmutableConflict | { status: "staging" }> {
+    let envelope: ReturnType<typeof commandPartSchema.parse>;
+    let decoded: ReturnType<typeof decodePart>;
+    try {
+      envelope = commandPartSchema.parse(input);
+      decoded = decodePart(envelope.part);
+    } catch (cause) {
+      throw new SnapshotPartRejectedError(cause);
+    }
+    const { part } = decoded;
     // Persist the ordering fence before bytes assemble. This is a projection of
     // this durable event, not a delivery reservation. No tail moves here.
-    await this.db.transaction(async (tx) => {
+    const conflict = await this.db.transaction(async (tx) => {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-command:${part.caseId}`},0))`,
       );
@@ -60,7 +72,14 @@ export class RegulationCommandProjector {
           known.predecessorCommandId !== envelope.predecessorCommandId ||
           known.payloadHash !== part.payloadSha256
         )
-          throw new Error("conflicting command order header");
+          return quarantineConflict(tx, {
+            caseId: known.caseId,
+            assemblyId: part.assemblyId,
+            kind: "command-header",
+            reason: "conflicting command order header",
+            expected: known,
+            received: envelope,
+          });
         return;
       }
       const [sequence] = await tx
@@ -72,7 +91,15 @@ export class RegulationCommandProjector {
             eq(schema.regulationCommandEnvelopes.sequence, envelope.sequence),
           ),
         );
-      if (sequence) throw new Error("conflicting command sequence");
+      if (sequence)
+        return quarantineConflict(tx, {
+          caseId: sequence.caseId,
+          assemblyId: part.assemblyId,
+          kind: "command-sequence",
+          reason: "conflicting command sequence",
+          expected: sequence,
+          received: envelope,
+        });
       await tx.insert(schema.regulationCommandEnvelopes).values({
         commandId: part.assemblyId,
         caseId: part.caseId,
@@ -81,6 +108,7 @@ export class RegulationCommandProjector {
         payloadHash: part.payloadSha256,
       });
     });
+    if (conflict) return conflict;
     const result = await this.assembler.handle(part);
     await this.recoverPending(part.caseId);
     return result;
