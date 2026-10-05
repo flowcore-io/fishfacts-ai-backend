@@ -14,7 +14,7 @@ CREATE TABLE "regulation_snapshot_parts" (
 	CONSTRAINT "regulation_snapshot_parts_assembly_id_part_number_pk" PRIMARY KEY("assembly_id","part_number")
 );
 --> statement-breakpoint
-CREATE INDEX "regulation_snapshot_assemblies_case_idx" ON "regulation_snapshot_assemblies" USING btree ("case_id");
+CREATE INDEX "regulation_snapshot_assemblies_case_idx" ON "regulation_snapshot_assemblies" USING btree ("case_id","status");
 --> statement-breakpoint
 CREATE TABLE "regulation_immutable_conflicts" (
 	"id" text PRIMARY KEY NOT NULL,

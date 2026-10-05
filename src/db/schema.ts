@@ -1008,7 +1008,10 @@ export const regulationSnapshotAssemblies = pgTable(
     reason: text("reason"),
   },
   (table) => ({
-    caseIdx: index("regulation_snapshot_assemblies_case_idx").on(table.caseId),
+    caseIdx: index("regulation_snapshot_assemblies_case_idx").on(
+      table.caseId,
+      table.status,
+    ),
   }),
 );
 export const regulationSnapshotParts = pgTable(
