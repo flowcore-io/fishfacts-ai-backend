@@ -15,6 +15,7 @@ export const commandOperationSchema = z.enum([
   "revoke",
   "verdict",
   "request",
+  "request-failure",
 ]);
 export const caseCommandSchema = z
   .object({

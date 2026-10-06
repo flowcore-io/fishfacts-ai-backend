@@ -12,6 +12,7 @@ const uuid = z.string().uuid();
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 export const modeledProposalSchema = z
   .object({
+    reconstructionRequestId: uuid.optional(),
     fields: regulationRevisionFieldsSchema,
     geometries: z
       .array(

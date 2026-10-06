@@ -225,6 +225,20 @@
       "when": 1791241435254,
       "tag": "0031_immutable_revision_shapes",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791243185197,
+      "tag": "0032_coastal_reconstruction",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791247610623,
+      "tag": "0033_coastal_requests",
+      "breakpoints": true
     }
   ]
 }

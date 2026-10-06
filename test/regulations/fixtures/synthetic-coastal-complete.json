@@ -1,0 +1,56 @@
+{
+  "synthetic": true,
+  "title": "FICTIONAL complete coastal fixture, NOT LAW",
+  "sourceBodyCompleteness": "complete",
+  "text": "§ 1 FICTIONAL SYNTHETIC NOTICE, NOT LAW\nDet er forbudt å fiske etter sei med not i et område på Fictional channel avgrenset i vest av en rett linje mellom følgende posisjoner:\n- Nord 70 grader 0,0 minutter Øst 25 grader 0,0 minutter\n- Nord 70 grader 6,0 minutter Øst 25 grader 0,0 minutter herfra videre avgrenset i øst av rett linje mellom følgende posisjoner:\n- Nord 70 grader 6,0 minutter Øst 25 grader 6,0 minutter\n- Nord 70 grader 0,0 minutter Øst 25 grader 6,0 minutter",
+  "runs": [
+    {
+      "position": 3,
+      "name": "Fictional west",
+      "section": null,
+      "kind": "closure",
+      "season": null,
+      "verticesQuoted": null,
+      "points": [
+        {
+          "lat": 70,
+          "lon": 25
+        },
+        {
+          "lat": 70.1,
+          "lon": 25
+        }
+      ],
+      "geometrySource": "enumerated",
+      "coordinateSystem": "WGS84",
+      "precision": null
+    },
+    {
+      "position": 8,
+      "name": "Fictional east",
+      "section": null,
+      "kind": "closure",
+      "season": null,
+      "verticesQuoted": null,
+      "points": [
+        {
+          "lat": 70.1,
+          "lon": 25.1
+        },
+        {
+          "lat": 70,
+          "lon": 25.1
+        }
+      ],
+      "geometrySource": "enumerated",
+      "coordinateSystem": "WGS84",
+      "precision": null
+    }
+  ],
+  "landWkts": [
+    "POLYGON((25 70.10005,25.1 70.10005,25.1 70.12,25 70.12,25 70.10005))",
+    "POLYGON((25 69.98,25.1 69.98,25.1 69.99995,25 69.99995,25 69.98))",
+    "POLYGON((25.04 70.04,25.05 70.04,25.05 70.05,25.04 70.05,25.04 70.04))"
+  ],
+  "landCoverage": [[[27, 68], [27, 72], [23, 72], [23, 68], [27, 68]]]
+}

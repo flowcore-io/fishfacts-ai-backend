@@ -9,6 +9,12 @@ import {
 } from "@/events/contracts";
 import type { RegulationRevisionGeometry } from "@/events/contracts";
 import {
+  type ReconstructionIntent,
+  reconstructionFacesSchema,
+  reconstructionJoinsSchema,
+  reconstructionStartSchema,
+} from "@/events/reconstruction-request";
+import {
   API_ERROR,
   API_REASON,
   errorResponse,
@@ -30,6 +36,10 @@ import { type SourceRun, verifyShapeState } from "./coastal-state";
 import type { RegulationCaseCommandRuntime } from "./command-runtime";
 import { type RegulationGroupRepository, groupDto } from "./group-repository";
 import type { RegulationQueueReadRepository } from "./read-repository";
+import {
+  ReconstructionRequestError,
+  type RegulationReconstructionRequests,
+} from "./reconstruction-requests";
 import {
   editableFieldsOfCase,
   fieldValueEquals,
@@ -83,6 +93,7 @@ export type RegulationsRouterDeps = {
   groups: RegulationGroupRepository;
   writer: PathwayWriter;
   commands?: RegulationCaseCommandRuntime;
+  reconstruction?: RegulationReconstructionRequests;
   /** B4 agent-tool deps: the POI gazetteer behind resolve_landmark and the
    * job runner behind verdict recompute. */
   poi: PoiRepository;
@@ -176,6 +187,59 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
           reason: null,
         },
       );
+    } catch {
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    }
+  });
+
+  for (const [suffix, kind, payloadSchema] of [
+    ["reconstruction", "start", reconstructionStartSchema],
+    ["reconstruction/joins", "joins", reconstructionJoinsSchema],
+    ["reconstruction/faces", "faces", reconstructionFacesSchema],
+  ] as const)
+    app.post(`/cases/:id/${suffix}`, async (c) => {
+      const id = c.req.param("id").toLowerCase();
+      if (!CASE_ID.test(id)) return notFound(c);
+      if (!deps.reconstruction)
+        return serviceUnavailable(c, API_ERROR.queueUnavailable);
+      const parsed = payloadSchema.safeParse(
+        await c.req.json().catch(() => null),
+      );
+      if (!parsed.success)
+        return invalidPayload(c, { issues: parsed.error.issues });
+      try {
+        const result = await deps.reconstruction.register(
+          id,
+          `admin:${c.get("auth").user.username}`,
+          { ...parsed.data, kind } as ReconstructionIntent,
+        );
+        return c.json(result, 202);
+      } catch (error) {
+        if (error instanceof ReconstructionRequestError) {
+          if (error.code === "stale_revision")
+            return c.json(
+              await staleRevisionBody(
+                id,
+                String(error.details.currentRevisionId),
+                String(error.details.namedRevisionId),
+              ),
+              409,
+            );
+          return c.json({ error: error.code, ...error.details }, error.status);
+        }
+        return serviceUnavailable(c, API_ERROR.queueUnavailable);
+      }
+    });
+  app.get("/cases/:id/reconstruction-requests/:requestId", async (c) => {
+    const id = c.req.param("id").toLowerCase();
+    const requestId = c.req.param("requestId").toLowerCase();
+    if (!CASE_ID.test(id) || !CASE_ID.test(requestId)) return notFound(c);
+    if (!deps.reconstruction)
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    try {
+      if (!(await deps.queue.getCaseRef(id))) return notFound(c);
+      const result = await deps.reconstruction.status(id, requestId);
+      return result ? c.json(result) : notFound(c);
     } catch {
       return serviceUnavailable(c, API_ERROR.queueUnavailable);
     }
