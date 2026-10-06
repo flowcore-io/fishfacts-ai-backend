@@ -27,6 +27,10 @@ export class RegulationCommandOutbox {
     private readonly db: Database,
     private readonly emit: DurablePartEmitter,
     private readonly catchup: CommandCatchupBarrier,
+    private readonly admission?: (
+      tx: Parameters<Parameters<Database["transaction"]>[0]>[0],
+      input: CaseCommandInput,
+    ) => Promise<void>,
   ) {}
 
   async reserve(input: CaseCommandInput): Promise<string> {
@@ -119,6 +123,7 @@ export class RegulationCommandOutbox {
         });
         return input.commandId;
       }
+      await this.admission?.(tx, input);
       const [tail] = await tx
         .select()
         .from(schema.regulationCommandTails)

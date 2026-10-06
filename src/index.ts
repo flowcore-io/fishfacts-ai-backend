@@ -38,6 +38,7 @@ import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { RegulationCaseActionProjector } from "./regulations/action-projector";
 import { RegulationCaseProjector } from "./regulations/case-projector";
+import { RegulationCaseCommandRuntime } from "./regulations/command-runtime";
 import { RegulationGroupProjector } from "./regulations/group-projector";
 import { RegulationGroupRepository } from "./regulations/group-repository";
 import { RegulationCaseNoteProjector } from "./regulations/note-projector";
@@ -96,6 +97,7 @@ const financialsRepository = new FinancialsRepository(env, db);
 const sildelagetCatchProjector = new SildelagetCatchProjector(
   sildelagetCatchRepository,
 );
+const regulationCaseCommands = new RegulationCaseCommandRuntime(db);
 const regulationCaseProjector = new RegulationCaseProjector(db);
 const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
@@ -158,6 +160,7 @@ const pathways = createPathwayRuntime(
   regulationRevisionProjector,
   regulationGroupProjector,
   publishedSyncTrigger,
+  regulationCaseCommands,
 );
 // Before the pump or any request can race the SDK's lazy CREATE TABLE.
 await pathways.ensureStateReady();

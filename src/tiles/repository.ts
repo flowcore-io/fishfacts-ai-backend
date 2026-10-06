@@ -51,6 +51,16 @@ export class TilesRepository {
         WHERE j.has_geo = true
           AND j.geom IS NOT NULL
           AND j.geom && ST_Transform(env.bbox_3857, 4326)
+          AND NOT EXISTS (
+            SELECT 1 FROM regulation_cases rc
+            JOIN regulation_case_revisions rr ON rr.id = rc.published_revision_id
+              AND rr.case_id = rc.id
+            WHERE rc.source_type = 'fiskeridir-jmelding'
+              AND rc.source_ref = j.jm_number
+              AND rc.case_key = 'fiskeridir-jmelding:' || j.jm_number
+              AND coalesce(j.region, 'NO') = 'NO'
+              AND (rr.geometry_model_version = 1 OR rc.published_metadata_only = true)
+          )
       ),
       hulls AS (
         SELECT

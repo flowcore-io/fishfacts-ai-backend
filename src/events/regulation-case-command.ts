@@ -3,7 +3,8 @@ import { REGULATION_FLOW_TYPE } from "./contracts";
 import { snapshotPartSchema } from "./regulation-snapshot-parts";
 
 export const CASE_COMMAND_PART_EVENT_TYPE = "regulation.case.command.part.1";
-export const CASE_COMMAND_PART_PATHWAY = `${REGULATION_FLOW_TYPE}/${CASE_COMMAND_PART_EVENT_TYPE}`;
+export const CASE_COMMAND_PART_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${CASE_COMMAND_PART_EVENT_TYPE}` as const;
 export const commandOperationSchema = z.enum([
   "source",
   "proposal",

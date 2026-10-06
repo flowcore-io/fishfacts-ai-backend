@@ -2,7 +2,14 @@ import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import type { RegulationRevisionFields } from "@/events/contracts";
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { verifyApprovalEvidence } from "./approval-evidence";
+import {
+  type RevisionShapeState,
+  sourceSignatureOf,
+  verifyShapeState,
+} from "./coastal-state";
 import { RegulationGroupRepository } from "./group-repository";
+import { caseIdFor } from "./ids";
 
 /**
  * Read side of the PUBLISHED lane (stage ③) — what the user-facing 1st mate
@@ -99,7 +106,26 @@ export type PublishedRegulationGeometry = {
   precision: string | null;
 };
 
+export class GeometryClientUpgradeError extends Error {}
+export type PublishedShape = Pick<
+  RevisionShapeState["shapes"][number],
+  | "id"
+  | "position"
+  | "name"
+  | "section"
+  | "kind"
+  | "geojson"
+  | "shapeHash"
+  | "sourceRunPositions"
+  | "provenance"
+>;
 export type PublishedRegulation = {
+  geometryVersion?: 2;
+  geometryModelVersion?: 0 | 1;
+  sourceRef?: string;
+  sourceSignature?: ReturnType<typeof sourceSignatureOf>;
+  shapeManifestHash?: string | null;
+  shapes?: PublishedShape[];
   id: string;
   caseKey: string;
   jurisdiction: string;
@@ -139,6 +165,7 @@ export type PublishedRegulation = {
 };
 
 export type PublishedListFilters = {
+  geometryVersion?: 1 | 2;
   jurisdiction?: string[];
   /** `current` = in force right now (the default consumers want);
    * `all` includes upcoming and expired. */
@@ -177,7 +204,11 @@ export class RegulationPublishedReadRepository {
         desc(schema.regulationCases.publishedToUsersAt),
         asc(schema.regulationCases.id),
       );
-    const resolved = await this.resolve(cases);
+    const eligible =
+      (filters.geometryVersion ?? 1) === 1
+        ? await this.legacyPins(cases)
+        : cases;
+    const resolved = await this.resolve(eligible, filters.geometryVersion ?? 1);
     const matching =
       filters.status === "current"
         ? resolved.filter((item) => item.inForce === "current")
@@ -212,7 +243,10 @@ export class RegulationPublishedReadRepository {
       .where(isNull(schema.regulationCases.publishedRevisionId));
   }
 
-  async getPublished(caseId: string): Promise<PublishedRegulation | null> {
+  async getPublished(
+    caseId: string,
+    geometryVersion: 1 | 2 = 1,
+  ): Promise<PublishedRegulation | null> {
     const [caseRow] = await this.db
       .select()
       .from(schema.regulationCases)
@@ -224,12 +258,50 @@ export class RegulationPublishedReadRepository {
       )
       .limit(1);
     if (!caseRow) return null;
-    const [resolved] = await this.resolve([caseRow]);
+    if (
+      geometryVersion === 1 &&
+      (await this.legacyPins([caseRow])).length === 0
+    )
+      throw new GeometryClientUpgradeError("geometry_client_upgrade_required");
+    const [resolved] = await this.resolve([caseRow], geometryVersion);
     return resolved ?? null;
+  }
+
+  async getPublishedSource(
+    sourceRef: string,
+    geometryVersion: 1 | 2 = 2,
+  ): Promise<PublishedRegulation | null> {
+    const key = `fiskeridir-jmelding:${sourceRef}`;
+    const result = await this.getPublished(caseIdFor(key), geometryVersion);
+    return result?.caseKey === key &&
+      result.sourceType === "fiskeridir-jmelding"
+      ? result
+      : null;
+  }
+
+  private async legacyPins(
+    cases: Array<typeof schema.regulationCases.$inferSelect>,
+  ) {
+    if (!cases.length) return [];
+    const revisions = await this.db
+      .select({ id: schema.regulationCaseRevisions.id })
+      .from(schema.regulationCaseRevisions)
+      .where(
+        and(
+          inArray(
+            schema.regulationCaseRevisions.id,
+            cases.map((c) => c.publishedRevisionId as string),
+          ),
+          eq(schema.regulationCaseRevisions.geometryModelVersion, 0),
+        ),
+      );
+    const ids = new Set(revisions.map((r) => r.id));
+    return cases.filter((c) => ids.has(c.publishedRevisionId as string));
   }
 
   private async resolve(
     cases: Array<typeof schema.regulationCases.$inferSelect>,
+    geometryVersion: 1 | 2,
   ): Promise<PublishedRegulation[]> {
     if (cases.length === 0) return [];
     const revisionIds = cases.map(
@@ -239,33 +311,61 @@ export class RegulationPublishedReadRepository {
     // is always read per jurisdiction, and a retired group is deliberately
     // not fetched — its members fall back to their country default.
     const jurisdictions = [...new Set(cases.map((row) => row.jurisdiction))];
-    const [revisions, geometries, activeGroups] = await Promise.all([
-      this.db
-        .select({
-          id: schema.regulationCaseRevisions.id,
-          fields: schema.regulationCaseRevisions.fields,
-        })
-        .from(schema.regulationCaseRevisions)
-        .where(inArray(schema.regulationCaseRevisions.id, revisionIds)),
-      this.db
-        .select({
-          id: schema.regulationCaseGeometries.id,
-          revisionId: schema.regulationCaseGeometries.revisionId,
-          position: schema.regulationCaseGeometries.position,
-          name: schema.regulationCaseGeometries.name,
-          section: schema.regulationCaseGeometries.section,
-          kind: schema.regulationCaseGeometries.kind,
-          season: schema.regulationCaseGeometries.season,
-          points: schema.regulationCaseGeometries.points,
-          geometrySource: schema.regulationCaseGeometries.geometrySource,
-          coordinateSystem: schema.regulationCaseGeometries.coordinateSystem,
-          precision: schema.regulationCaseGeometries.precision,
-        })
-        .from(schema.regulationCaseGeometries)
-        .where(inArray(schema.regulationCaseGeometries.revisionId, revisionIds))
-        .orderBy(asc(schema.regulationCaseGeometries.position)),
-      this.groups.listActiveForJurisdictions(jurisdictions),
-    ]);
+    const [revisions, geometries, activeGroups, approvals, validations] =
+      await Promise.all([
+        this.db
+          .select({
+            id: schema.regulationCaseRevisions.id,
+            fields: schema.regulationCaseRevisions.fields,
+            caseId: schema.regulationCaseRevisions.caseId,
+            snapshotText: schema.regulationCaseRevisions.snapshotText,
+            snapshotUrl: schema.regulationCaseRevisions.snapshotUrl,
+            geometryModelVersion:
+              schema.regulationCaseRevisions.geometryModelVersion,
+            shapeState: schema.regulationCaseRevisions.shapeState,
+          })
+          .from(schema.regulationCaseRevisions)
+          .where(inArray(schema.regulationCaseRevisions.id, revisionIds)),
+        this.db
+          .select({
+            id: schema.regulationCaseGeometries.id,
+            revisionId: schema.regulationCaseGeometries.revisionId,
+            position: schema.regulationCaseGeometries.position,
+            name: schema.regulationCaseGeometries.name,
+            section: schema.regulationCaseGeometries.section,
+            kind: schema.regulationCaseGeometries.kind,
+            season: schema.regulationCaseGeometries.season,
+            points: schema.regulationCaseGeometries.points,
+            geometrySource: schema.regulationCaseGeometries.geometrySource,
+            coordinateSystem: schema.regulationCaseGeometries.coordinateSystem,
+            precision: schema.regulationCaseGeometries.precision,
+          })
+          .from(schema.regulationCaseGeometries)
+          .where(
+            inArray(schema.regulationCaseGeometries.revisionId, revisionIds),
+          )
+          .orderBy(asc(schema.regulationCaseGeometries.position)),
+        this.groups.listActiveForJurisdictions(jurisdictions),
+        this.db
+          .select()
+          .from(schema.regulationCaseApprovals)
+          .where(
+            and(
+              inArray(schema.regulationCaseApprovals.revisionId, revisionIds),
+              eq(schema.regulationCaseApprovals.applied, true),
+            ),
+          )
+          .orderBy(
+            desc(schema.regulationCaseApprovals.recordedAt),
+            desc(schema.regulationCaseApprovals.commandSequence),
+          ),
+        this.db
+          .select()
+          .from(schema.regulationCaseValidations)
+          .where(
+            inArray(schema.regulationCaseValidations.revisionId, revisionIds),
+          ),
+      ]);
     const groupsById = new Map(
       activeGroups.map((group) => [group.groupId, group]),
     );
@@ -308,6 +408,67 @@ export class RegulationPublishedReadRepository {
 
     return cases.map((caseRow) => {
       const revisionId = caseRow.publishedRevisionId as string;
+      const revision = revisions.find(
+        (r) => r.id === revisionId && r.caseId === caseRow.id,
+      );
+      if (!revision) throw new Error("published revision missing or foreign");
+      const raw = geometriesByRevision.get(revisionId) ?? [];
+      const modeled = revision.geometryModelVersion === 1;
+      let shapeState: RevisionShapeState | null = null;
+      if (modeled) {
+        shapeState = verifyShapeState(
+          revision.shapeState,
+          revision.snapshotText,
+          raw,
+        );
+        const approval = approvals.find(
+          (a) =>
+            a.id === caseRow.publishedApprovalId &&
+            a.caseId === caseRow.id &&
+            a.revisionId === revisionId &&
+            a.metadataOnly === caseRow.publishedMetadataOnly,
+        );
+        if (!approval) throw new Error("published approval missing");
+        const evidence = verifyApprovalEvidence(
+          approval.approvalEvidence,
+          shapeState,
+          caseRow.publishedMetadataOnly,
+        );
+        const receipt = (
+          id: string,
+          scope: string,
+          hash?: string,
+          shapeId?: string,
+        ) =>
+          validations.some(
+            (v) =>
+              v.id === id &&
+              v.caseId === caseRow.id &&
+              v.revisionId === revisionId &&
+              v.validated &&
+              v.scope === scope &&
+              (shapeId === undefined || v.shapeId === shapeId) &&
+              (hash === undefined ||
+                (scope === "shape" ? v.shapeHash : v.coverageHash) === hash) &&
+              v.commandSequence !== null &&
+              approval.commandSequence !== null &&
+              v.commandSequence < approval.commandSequence,
+          );
+        if (
+          !receipt(evidence.legalValidationId, "legal") ||
+          (evidence.kind === "drawable" &&
+            (!receipt(
+              evidence.coverageValidationId,
+              "coverage",
+              evidence.coverageHash,
+            ) ||
+              evidence.shapes.some(
+                (s) =>
+                  !receipt(s.validationId, "shape", s.shapeHash, s.shapeId),
+              )))
+        )
+          throw new Error("published validation receipt missing");
+      }
       const fields = fieldsByRevision.get(revisionId) as
         | RegulationRevisionFields
         | null
@@ -331,7 +492,7 @@ export class RegulationPublishedReadRepository {
         caseKey: caseRow.caseKey,
         jurisdiction: caseRow.jurisdiction,
         sourceType: caseRow.sourceType,
-        sourceUrl: caseRow.sourceUrl,
+        sourceUrl: revision.snapshotUrl,
         title: fields ? fields.title : caseRow.title,
         // No case-column fallback exists (or should): a snapshot-less pin
         // predates the field entirely.
@@ -358,7 +519,45 @@ export class RegulationPublishedReadRepository {
         publishedRevisionId: revisionId,
         metadataOnly: caseRow.publishedMetadataOnly,
         inForce: inForceOf(effectiveFrom, effectiveTo, expiresAt),
-        geometries: geometriesByRevision.get(revisionId) ?? [],
+        geometries: caseRow.publishedMetadataOnly ? [] : raw,
+        ...(geometryVersion === 2
+          ? {
+              geometryVersion: 2 as const,
+              geometryModelVersion: modeled ? (1 as const) : (0 as const),
+              sourceRef: caseRow.sourceRef,
+              sourceSignature: modeled
+                ? sourceSignatureOf(revision.snapshotText, raw)
+                : null,
+              shapeManifestHash: shapeState?.shapeManifestHash ?? null,
+              shapes: caseRow.publishedMetadataOnly
+                ? []
+                : (shapeState?.shapes
+                    .filter((s) => s.geojson !== null)
+                    .map(
+                      ({
+                        id,
+                        position,
+                        name,
+                        section,
+                        kind,
+                        geojson,
+                        shapeHash,
+                        sourceRunPositions,
+                        provenance,
+                      }) => ({
+                        id,
+                        position,
+                        name,
+                        section,
+                        kind,
+                        geojson,
+                        shapeHash,
+                        sourceRunPositions,
+                        provenance,
+                      }),
+                    ) ?? []),
+            }
+          : {}),
       };
     });
   }

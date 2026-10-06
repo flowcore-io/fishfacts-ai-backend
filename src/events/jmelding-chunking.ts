@@ -28,12 +28,21 @@ export function chunkAnnouncement(
   item: JMeldingAnnouncementDiscovered,
 ): JMeldingAnnouncementDiscovered[] {
   const cappedBody = (item.bodyMarkdown ?? "").slice(0, MAX_TOTAL_BODY_CHARS);
-  const single = stripChunkFields({ ...item, bodyMarkdown: cappedBody });
+  const sourceBodyCompleteness =
+    item.sourceBodyCompleteness === "truncated" ||
+    item.bodyMarkdown.length > MAX_TOTAL_BODY_CHARS
+      ? ("truncated" as const)
+      : ("complete" as const);
+  const single = stripChunkFields({
+    ...item,
+    bodyMarkdown: cappedBody,
+    sourceBodyCompleteness,
+  });
   if (eventByteSize(single) <= MAX_EVENT_SIZE_BYTES) return [single];
 
   const bodyChunks = splitBody(cappedBody, CHUNK_BODY_SIZE_CHARS);
   const totalParts = bodyChunks.length;
-  const base = stripChunkFields(item);
+  const base = stripChunkFields({ ...item, sourceBodyCompleteness });
   return bodyChunks.map((chunk, index) => ({
     ...base,
     bodyMarkdown: chunk,

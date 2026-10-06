@@ -1,5 +1,6 @@
 import {
   API_ERROR,
+  errorResponse,
   invalidQuery,
   notFound,
   serviceUnavailable,
@@ -7,9 +8,15 @@ import {
 import { Hono } from "hono";
 import { z } from "zod";
 import type { RegulationPublishedReadRepository } from "./published-repository";
+import { GeometryClientUpgradeError } from "./published-repository";
 import { CASE_ID } from "./routes";
 
+const version = z
+  .enum(["1", "2"])
+  .default("1")
+  .transform((v) => Number(v) as 1 | 2);
 const listQuerySchema = z.object({
+  geometryVersion: version,
   /** `?jurisdiction=FO,NO` — passed through, an unknown code just matches
    * nothing (jurisdictions come from the collectors, not a fixed enum). */
   jurisdiction: z
@@ -63,16 +70,49 @@ export function createPublishedRegulationsRouter(
     }
   });
 
+  app.get("/source/fiskeridir-jmelding/:sourceRef", async (c) => {
+    const parsed = z
+      .object({ geometryVersion: version })
+      .safeParse(c.req.query());
+    if (!parsed.success)
+      return invalidQuery(c, { issues: parsed.error.issues });
+    try {
+      const result = await deps.published.getPublishedSource(
+        c.req.param("sourceRef"),
+        parsed.data.geometryVersion,
+      );
+      return result ? c.json(result) : notFound(c);
+    } catch (error) {
+      if (error instanceof GeometryClientUpgradeError)
+        return errorResponse(c, 409, API_ERROR.geometryClientUpgradeRequired, {
+          requiredGeometryVersion: 2,
+        });
+      return serviceUnavailable(c, API_ERROR.publishedUnavailable);
+    }
+  });
+
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
     if (!CASE_ID.test(id)) return notFound(c);
+    const parsed = z
+      .object({ geometryVersion: version })
+      .safeParse(c.req.query());
+    if (!parsed.success)
+      return invalidQuery(c, { issues: parsed.error.issues });
     try {
       // An un-published or never-published case is a plain 404 — this
       // surface must not reveal that a case exists in the admin queue.
-      const regulation = await deps.published.getPublished(id.toLowerCase());
+      const regulation = await deps.published.getPublished(
+        id.toLowerCase(),
+        parsed.data.geometryVersion,
+      );
       if (!regulation) return notFound(c);
       return c.json(regulation);
     } catch (error) {
+      if (error instanceof GeometryClientUpgradeError)
+        return errorResponse(c, 409, API_ERROR.geometryClientUpgradeRequired, {
+          requiredGeometryVersion: 2,
+        });
       console.error("[Regulations] published detail failed", {
         caseId: id,
         message: error instanceof Error ? error.message : String(error),

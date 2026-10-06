@@ -181,6 +181,7 @@ export function createApp({
       queue: regulationQueueReadRepository,
       groups: regulationGroupRepository,
       writer: pathways.writer,
+      commands: pathways.commands,
       poi: poiRepository,
       jobRunner,
     }),
@@ -254,6 +255,7 @@ export function createApp({
           400,
         );
       const rows = await geoRepository.listForDrawing({
+        evidenceOnly: params.get("evidenceOnly") === "true",
         region,
         status,
         bbox: drawBbox
@@ -437,7 +439,10 @@ export function createApp({
   });
 
   app.get("/api/jmeldinger/:jmNumber", async (c) => {
-    const record = await geoRepository.findByJmNumber(c.req.param("jmNumber"));
+    const record = await geoRepository.findByJmNumber(
+      c.req.param("jmNumber"),
+      c.req.query("evidenceOnly") === "true",
+    );
     if (!record) return c.json({ error: "not_found" }, 404);
     return c.json(record);
   });

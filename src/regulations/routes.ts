@@ -26,6 +26,8 @@ import type { PathwayWriter } from "@/pathways";
 import type { PoiRepository } from "@/poi/repository";
 import { Hono } from "hono";
 import { z } from "zod";
+import { type SourceRun, verifyShapeState } from "./coastal-state";
+import type { RegulationCaseCommandRuntime } from "./command-runtime";
 import { type RegulationGroupRepository, groupDto } from "./group-repository";
 import type { RegulationQueueReadRepository } from "./read-repository";
 import {
@@ -33,6 +35,8 @@ import {
   fieldValueEquals,
   snapshotOnlyFieldsOf,
 } from "./revision-fields";
+import { ShapeCommandRejectedError } from "./shape-rejection";
+import { shapeReview } from "./shape-review";
 import { ADMIN_STATUSES } from "./status";
 
 /** Case ids are deterministic UUIDs (`ids.ts`); anything else is a miss
@@ -78,6 +82,7 @@ export type RegulationsRouterDeps = {
    * projector is the sole writer. */
   groups: RegulationGroupRepository;
   writer: PathwayWriter;
+  commands?: RegulationCaseCommandRuntime;
   /** B4 agent-tool deps: the POI gazetteer behind resolve_landmark and the
    * job runner behind verdict recompute. */
   poi: PoiRepository;
@@ -145,6 +150,33 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         caseId: id,
         message: error instanceof Error ? error.message : String(error),
       });
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    }
+  });
+
+  app.get("/cases/:id/approval-requests/:approvalId", async (c) => {
+    const id = c.req.param("id").toLowerCase();
+    const approvalId = c.req.param("approvalId").toLowerCase();
+    if (!CASE_ID.test(id) || !CASE_ID.test(approvalId)) return notFound(c);
+    if (!deps.commands)
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    try {
+      if (!(await deps.queue.getCaseRef(id))) return notFound(c);
+      const receipt = await deps.commands.approvalReceipt(id, approvalId);
+      if (receipt === undefined) return notFound(c);
+      return c.json(
+        receipt ?? {
+          approvalId,
+          commandId: approvalId,
+          caseId: id,
+          revisionId: null,
+          shapeManifestHash: null,
+          metadataOnly: null,
+          status: "pending",
+          reason: null,
+        },
+      );
+    } catch {
       return serviceUnavailable(c, API_ERROR.queueUnavailable);
     }
   });
@@ -328,7 +360,18 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     fields: regulationRevisionFieldsSchema,
     /** null/omitted = keep the base revision's areas. */
     geometries: z
-      .array(regulationRevisionGeometrySchema)
+      .array(
+        regulationRevisionGeometrySchema.extend({
+          position: z.number().int().nonnegative().optional(),
+        }),
+      )
+      .refine(
+        (runs) =>
+          new Set(
+            runs.filter((r) => r.position !== undefined).map((r) => r.position),
+          ).size === runs.filter((r) => r.position !== undefined).length,
+        { message: "duplicate source run position" },
+      )
       .nullable()
       .default(null),
     /** field → why it changed. Required for exactly the fields that differ. */
@@ -340,7 +383,12 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
   const validationRequestSchema = z
     .object({
       revisionId: z.string().uuid(),
-      scope: z.enum(["legal", "geometry"]),
+      scope: z.enum(["legal", "geometry", "shape"]),
+      shapeId: z.string().uuid().optional(),
+      shapeHash: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
       geometryId: z.string().uuid().nullable().default(null),
       validated: z.boolean(),
       note: z.string().max(2000).nullable().default(null),
@@ -361,6 +409,11 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     /** §12's publish-metadata-only path: legal validation alone suffices
      * when no geometry can be verified. Recorded on the approval. */
     metadataOnly: z.boolean().default(false),
+    shapeManifestHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    acknowledgeUnresolvedGeometry: z.boolean().default(false),
     note: z.string().max(2000).nullable().default(null),
   });
 
@@ -506,6 +559,13 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
 
       const revisionId = randomUUID();
       const recordedAt = new Date().toISOString();
+      if (
+        caseRow.geometryModelVersion === 1 &&
+        parsed.data.geometries?.some((g) => g.position === undefined)
+      )
+        return invalidPayload(c, {
+          reason: API_REASON.sourceRunPositionRequired,
+        });
       const eventId = await deps.writer.writeRegulationRevisionProposed({
         revisionId,
         caseId: caseRow.id,
@@ -568,6 +628,86 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     }
   });
 
+  app.post("/cases/:id/coverage-validations", async (c) => {
+    const id = c.req.param("id");
+    if (!CASE_ID.test(id)) return notFound(c);
+    const parsed = z
+      .object({
+        revisionId: z.string().uuid(),
+        coverageHash: z.string().regex(/^[a-f0-9]{64}$/),
+        validated: z.boolean(),
+        note: z.string().max(2000).nullable().default(null),
+      })
+      .strict()
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success)
+      return invalidPayload(c, { issues: parsed.error.issues });
+    try {
+      const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
+      if (!caseRow) return notFound(c);
+      if (caseRow.currentRevisionId !== parsed.data.revisionId)
+        return c.json(
+          await staleRevisionBody(
+            caseRow.id,
+            caseRow.currentRevisionId,
+            parsed.data.revisionId,
+          ),
+          409,
+        );
+      const revision = await deps.queue.getRevision(parsed.data.revisionId);
+      if (!revision || revision.geometryModelVersion !== 1)
+        return invalidPayload(c, { reason: "modeled_revision_required" });
+      const runs = await deps.queue.getRevisionGeometries(revision.id);
+      const state = verifyShapeState(
+        revision.shapeState,
+        revision.snapshotText,
+        runs as unknown as SourceRun[],
+      );
+      if (parsed.data.coverageHash !== state.coverage.coverageHash)
+        return c.json(
+          {
+            error: "coverage_hash_mismatch",
+            expectedHash: state.coverage.coverageHash,
+            receivedHash: parsed.data.coverageHash,
+          },
+          409,
+        );
+      if (
+        parsed.data.validated &&
+        state.coverage.sourceAvailability !== "complete_snapshot"
+      )
+        return c.json({ error: "source_incomplete" }, 422);
+      if (!deps.commands)
+        return serviceUnavailable(c, API_ERROR.queueUnavailable);
+      const validationId = randomUUID();
+      const recordedAt = new Date().toISOString();
+      const receipt = await deps.commands.submit({
+        commandId: validationId,
+        caseId: caseRow.id,
+        baseRevisionId: revision.id,
+        revisionId: revision.id,
+        operation: "coverage-validation",
+        actor: `admin:${c.get("auth").user.username}`,
+        data: {
+          validationId,
+          scope: "coverage",
+          coverageHash: parsed.data.coverageHash,
+          validated: parsed.data.validated,
+          note: parsed.data.note,
+        },
+      });
+      return c.json(
+        { validationId, eventId: receipt.eventIds.at(-1), recordedAt },
+        202,
+      );
+    } catch (error) {
+      return flowcoreWriteFailed(
+        c,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
   app.post("/cases/:id/validations", async (c) => {
     const auth = c.get("auth");
     if (!isAdmin(auth.user.authorities)) {
@@ -607,12 +747,106 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       }
       const validationId = randomUUID();
       const recordedAt = new Date().toISOString();
+      const revision = await deps.queue.getRevision(parsed.data.revisionId);
+      if (revision?.geometryModelVersion === 1) {
+        if (!deps.commands)
+          return serviceUnavailable(c, API_ERROR.queueUnavailable);
+        if (
+          parsed.data.scope === "geometry" ||
+          (parsed.data.scope === "shape" &&
+            (!parsed.data.shapeId || !parsed.data.shapeHash))
+        )
+          return invalidPayload(c, {
+            reason: "exact_shape_validation_required",
+          });
+        const runs = await deps.queue.getRevisionGeometries(revision.id);
+        const state = verifyShapeState(
+          revision.shapeState,
+          revision.snapshotText,
+          runs as unknown as SourceRun[],
+        );
+        if (parsed.data.scope === "shape") {
+          const shape = state.shapes.find((s) => s.id === parsed.data.shapeId);
+          if (!shape)
+            return invalidPayload(c, { reason: API_REASON.shapeNotOfRevision });
+          if (shape.shapeHash !== parsed.data.shapeHash)
+            return c.json(
+              {
+                error: "shape_hash_mismatch",
+                expectedHash: shape?.shapeHash ?? null,
+                receivedHash: parsed.data.shapeHash,
+              },
+              409,
+            );
+          if (
+            parsed.data.validated &&
+            (!shape.geojson ||
+              shape.status !== "proposed" ||
+              shape.blockingReasons.length)
+          )
+            return c.json(
+              {
+                error: "reconstruction_blocked",
+                reasons: shape.blockingReasons.length
+                  ? shape.blockingReasons
+                  : ["empty_geometry"],
+              },
+              422,
+            );
+        }
+        if (parsed.data.scope === "shape" && parsed.data.validated) {
+          const selected = state.shapes.find(
+            (s) => s.id === parsed.data.shapeId,
+          );
+          if (selected) {
+            try {
+              await deps.commands.validateOutput({
+                ...state,
+                shapes: [selected],
+              });
+            } catch (error) {
+              if (!(error instanceof ShapeCommandRejectedError)) throw error;
+              return c.json(
+                {
+                  error: "reconstruction_blocked",
+                  reasons: ["invalid_topology"],
+                },
+                422,
+              );
+            }
+          }
+        }
+        const data = {
+          validationId,
+          scope: parsed.data.scope,
+          validated: parsed.data.validated,
+          note: parsed.data.note,
+          ...(parsed.data.scope === "shape"
+            ? { shapeId: parsed.data.shapeId, shapeHash: parsed.data.shapeHash }
+            : {}),
+        };
+        const receipt = await deps.commands.submit({
+          commandId: validationId,
+          caseId: caseRow.id,
+          baseRevisionId: revision.id,
+          revisionId: revision.id,
+          operation: "validation",
+          actor: `admin:${auth.user.username}`,
+          data,
+        });
+        return c.json(
+          { validationId, eventId: receipt.eventIds.at(-1), recordedAt },
+          202,
+        );
+      }
+      if (parsed.data.scope === "shape")
+        return invalidPayload(c, { reason: "modeled_revision_required" });
       const eventId = await deps.writer.writeRegulationValidationRecorded({
         validationId,
         caseId: caseRow.id,
         caseKey: caseRow.caseKey,
         revisionId: parsed.data.revisionId,
-        scope: parsed.data.scope,
+        scope: parsed.data.scope as "legal" | "geometry",
         geometryId: parsed.data.geometryId,
         validated: parsed.data.validated,
         note: parsed.data.note,
@@ -656,6 +890,69 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
             parsed.data.revisionId,
           ),
           409,
+        );
+      }
+      const revision = await deps.queue.getRevision(parsed.data.revisionId);
+      if (revision?.geometryModelVersion === 1) {
+        if (!deps.commands)
+          return serviceUnavailable(c, API_ERROR.queueUnavailable);
+        const detail = await deps.queue.getCaseDetail(caseRow.id);
+        const runs = await deps.queue.getRevisionGeometries(revision.id);
+        const review = shapeReview(
+          revision,
+          runs as unknown as SourceRun[],
+          detail?.validations ?? [],
+        );
+        if (
+          !parsed.data.shapeManifestHash ||
+          parsed.data.shapeManifestHash !== review.shapeManifestHash
+        )
+          return c.json(
+            {
+              error: "shape_manifest_mismatch",
+              expectedHash: review.shapeManifestHash,
+              receivedHash: parsed.data.shapeManifestHash ?? null,
+            },
+            409,
+          );
+        if (
+          !review.regulatoryValidated ||
+          (!parsed.data.metadataOnly && review.approvalBlockers?.missing.length)
+        )
+          return c.json(
+            { error: "validation_missing", ...review.approvalBlockers },
+            409,
+          );
+        if (
+          parsed.data.metadataOnly &&
+          review.approvalBlockers?.missing.length &&
+          !parsed.data.acknowledgeUnresolvedGeometry
+        )
+          return c.json(
+            { error: "unresolved_geometry_acknowledgement_required" },
+            422,
+          );
+        const approvalId = randomUUID();
+        const recordedAt = new Date().toISOString();
+        const receipt = await deps.commands.submit({
+          commandId: approvalId,
+          caseId: caseRow.id,
+          baseRevisionId: revision.id,
+          revisionId: revision.id,
+          operation: "approval",
+          actor: `admin:${auth.user.username}`,
+          data: {
+            approvalId,
+            shapeManifestHash: parsed.data.shapeManifestHash,
+            metadataOnly: parsed.data.metadataOnly,
+            acknowledgeUnresolvedGeometry:
+              parsed.data.acknowledgeUnresolvedGeometry,
+            note: parsed.data.note,
+          },
+        });
+        return c.json(
+          { approvalId, eventId: receipt.eventIds.at(-1), recordedAt },
+          202,
         );
       }
       const missing: string[] = [];
@@ -912,7 +1209,16 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
           caseRow,
           snapshotOnlyFieldsOf(currentRevision?.fields),
         ),
-        geometries: proposedGeometries,
+        geometries: proposedGeometries.map((g, index) => ({
+          ...g,
+          ...(caseRow.geometryModelVersion === 1
+            ? {
+                position:
+                  current[index]?.position ??
+                  Math.max(-1, ...current.map((r) => r.position)) + 1 + index,
+              }
+            : {}),
+        })),
         actor: `admin:${auth.user.username}`,
         recordedAt,
       });

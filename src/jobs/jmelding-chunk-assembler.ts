@@ -6,7 +6,7 @@ import {
 import { isChunked, reassembleAnnouncement } from "@/events/jmelding-chunking";
 import type { JMeldingGeoProjector } from "@/jmelding/geo-projector";
 import type { RegulationCaseProjector } from "@/regulations/case-projector";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/postgres-js";
 import type { JMeldingFragmentProjector } from "./jmelding-fragments";
 
@@ -65,6 +65,8 @@ export class JMeldingChunkAssembler {
   }
 
   private async runProjectors(item: JMeldingAnnouncementDiscovered) {
+    // Stage source ordering before any remote fragment/network work.
+    if (this.caseProjector) await this.caseProjector.project(item);
     let fragmentId: string | null = null;
     if (item.sourceFragmentId) {
       // The source already lives in Usable and we do not own it (Lógasavn).
@@ -96,24 +98,18 @@ export class JMeldingChunkAssembler {
         });
       }
     }
-    if (this.caseProjector) {
-      try {
-        await this.caseProjector.project(item);
-      } catch (error) {
-        console.error("[RegulationCase] projection failed", {
-          jmNumber: item.jmNumber,
-          url: item.url,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
   }
 
   async cleanupExpired(now: Date = new Date()) {
     const cutoff = new Date(now.getTime() - QUEUE_TTL_MS);
     const deleted = await this.db
       .delete(schema.jmeldingChunkQueue)
-      .where(lt(schema.jmeldingChunkQueue.createdAt, cutoff))
+      .where(
+        and(
+          lt(schema.jmeldingChunkQueue.createdAt, cutoff),
+          sql`coalesce(${schema.jmeldingChunkQueue.payload}->>'region','NO') <> 'NO'`,
+        ),
+      )
       .returning({ signature: schema.jmeldingChunkQueue.signature });
     return deleted.length;
   }

@@ -1,0 +1,202 @@
+{
+  "text": "§ 1 Synthetic test notice 😀\nBoth listed areas are closed. The interior island in each area is excluded. This is the complete synthetic notice.",
+  "runs": [
+    {
+      "id": "85787844-1774-43ad-a692-02026f5817a8",
+      "position": 0,
+      "name": "Area 1",
+      "section": "§ 1",
+      "kind": "closure",
+      "season": null,
+      "verticesQuoted": null,
+      "points": [
+        {
+          "lat": 60,
+          "lon": 10
+        },
+        {
+          "lat": 60,
+          "lon": 11
+        },
+        {
+          "lat": 61,
+          "lon": 11
+        },
+        {
+          "lat": 61,
+          "lon": 10
+        }
+      ],
+      "geometrySource": "enumerated",
+      "coordinateSystem": "WGS84",
+      "precision": null,
+      "geometryValidated": false
+    },
+    {
+      "id": "326d3be0-ce43-4d2f-a95e-be54e37e5caf",
+      "position": 1,
+      "name": "Area 2",
+      "section": "§ 1",
+      "kind": "closure",
+      "season": null,
+      "verticesQuoted": null,
+      "points": [
+        {
+          "lat": 60,
+          "lon": 12
+        },
+        {
+          "lat": 60,
+          "lon": 13
+        },
+        {
+          "lat": 61,
+          "lon": 13
+        },
+        {
+          "lat": 61,
+          "lon": 12
+        }
+      ],
+      "geometrySource": "enumerated",
+      "coordinateSystem": "WGS84",
+      "precision": null,
+      "geometryValidated": false
+    }
+  ],
+  "state": {
+    "geometryModelVersion": 1,
+    "coverage": {
+      "sourceSnapshotHash": "8884107189799526c9fbd518a8dede14171c0da1a5efe41c34a0b0ebc0085629",
+      "sourceAvailability": "complete_snapshot",
+      "clauses": [
+        {
+          "id": "fdc6fb15-42d3-4c41-a47f-35ab09051ff4",
+          "sourceSpan": {
+            "start": 0,
+            "end": 143,
+            "quote": "§ 1 Synthetic test notice 😀\nBoth listed areas are closed. The interior island in each area is excluded. This is the complete synthetic notice."
+          },
+          "required": true,
+          "shapeIds": ["bc5c1721-69ba-4aa2-a8c3-22ea600083ed"],
+          "issues": []
+        }
+      ],
+      "coverageHash": "398923ba2404e8466e1e4552791c36619367cf07028c49f341dd5c91ac2978c7"
+    },
+    "shapes": [
+      {
+        "id": "bc5c1721-69ba-4aa2-a8c3-22ea600083ed",
+        "position": 0,
+        "name": null,
+        "section": "§ 1",
+        "kind": "closure",
+        "sourceRunPositions": [0, 1],
+        "boundary": {
+          "mode": "straight-ring",
+          "parserVersion": "synthetic-contract-fixture/1",
+          "sourceSpans": [
+            {
+              "start": 0,
+              "end": 143,
+              "quote": "§ 1 Synthetic test notice 😀\nBoth listed areas are closed. The interior island in each area is excluded. This is the complete synthetic notice."
+            }
+          ],
+          "interpretation": "Synthetic complete-source contract fixture; not proof of corpus parser support.",
+          "straightRuns": [
+            [
+              {
+                "runPosition": 0,
+                "pointIndex": 0
+              },
+              {
+                "runPosition": 0,
+                "pointIndex": 1
+              },
+              {
+                "runPosition": 0,
+                "pointIndex": 2
+              },
+              {
+                "runPosition": 0,
+                "pointIndex": 3
+              }
+            ],
+            [
+              {
+                "runPosition": 1,
+                "pointIndex": 0
+              },
+              {
+                "runPosition": 1,
+                "pointIndex": 1
+              },
+              {
+                "runPosition": 1,
+                "pointIndex": 2
+              },
+              {
+                "runPosition": 1,
+                "pointIndex": 3
+              }
+            ]
+          ],
+          "coastEdges": []
+        },
+        "status": "proposed",
+        "blockingReasons": [],
+        "geojson": {
+          "type": "MultiPolygon",
+          "coordinates": [
+            [
+              [[10, 60], [11, 60], [11, 61], [10, 61], [10, 60]],
+              [
+                [10.2, 60.2],
+                [10.2, 60.3],
+                [10.3, 60.3],
+                [10.3, 60.2],
+                [10.2, 60.2]
+              ]
+            ],
+            [
+              [[12, 60], [13, 60], [13, 61], [12, 61], [12, 60]],
+              [
+                [12.2, 60.2],
+                [12.2, 60.3],
+                [12.3, 60.3],
+                [12.3, 60.2],
+                [12.2, 60.2]
+              ]
+            ]
+          ]
+        },
+        "requiredEndpoints": [],
+        "joinCandidates": [],
+        "candidateEnumerationComplete": true,
+        "selectedJoinCandidateIds": [],
+        "joinConfigurationHash": null,
+        "faceCandidates": [],
+        "faceEnumerationComplete": true,
+        "selectedFaceIds": [],
+        "provenance": {
+          "sourceSnapshotHash": "8884107189799526c9fbd518a8dede14171c0da1a5efe41c34a0b0ebc0085629",
+          "landDatasetId": null,
+          "algorithmVersion": "synthetic-contract-fixture/1",
+          "engineVersions": {
+            "postgis": "3.4.3",
+            "geos": "3.12.2",
+            "proj": "9.4.0"
+          },
+          "frame": null,
+          "parameters": {
+            "fixtureOnly": true,
+            "sourceRunManifestHash": "7ff01e2b0570e6880fec56f0b91e9e941a27cc806caa6013f2f1ae651f32cfa9"
+          },
+          "justification": "Synthetic local transport/publication/FE fixture; no legal source claim."
+        },
+        "shapeHash": "225dd4f6dfdaf06f947f217ec43a28a3ffd31a19ee4d1b7b297b0df8af2d0440"
+      }
+    ],
+    "shapeManifestHash": "cfbe9723c09d482699f707cdaa744b785b1abbd4d12801083e7cafe4b81d7b1a"
+  }
+}

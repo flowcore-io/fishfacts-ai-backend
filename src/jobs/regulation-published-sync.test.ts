@@ -80,6 +80,7 @@ function harness(options: {
   collectionUnset?: boolean;
 }) {
   const calls: Array<{ kind: "create" | "update"; input: unknown }> = [];
+  const listCalls: unknown[] = [];
   const usable: RegulationPublishedSyncUsable = {
     getFragmentByKey: async (_workspaceId, key) => {
       const existing = options.existingByKey?.[key];
@@ -97,10 +98,13 @@ function harness(options: {
     },
   };
   const repository = {
-    listPublished: async () => ({
-      regulations: options.published,
-      total: options.publishedTotal ?? options.published.length,
-    }),
+    listPublished: async (filters: unknown) => {
+      listCalls.push(filters);
+      return {
+        regulations: options.published,
+        total: options.publishedTotal ?? options.published.length,
+      };
+    },
     listWithdrawn: async () => options.withdrawn ?? [],
   } as never as RegulationPublishedReadRepository;
   const run = createRegulationPublishedSyncJob(
@@ -115,13 +119,18 @@ function harness(options: {
     isStopRequested: () => false,
     reportProgress: () => {},
   };
-  return { calls, run, context };
+  return { calls, listCalls, run, context };
 }
 
 describe("regulation-published-sync job", () => {
   test("creates a fragment in the PUBLISHED collection carrying the pinned revision", async () => {
-    const { calls, run, context } = harness({ published: [publishedItem()] });
+    const { calls, listCalls, run, context } = harness({
+      published: [publishedItem()],
+    });
     const result = await run(undefined, {}, context);
+    expect(listCalls).toEqual([
+      { status: "all", limit: 200, offset: 0, geometryVersion: 2 },
+    ]);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.kind).toBe("create");
     const input = calls[0]?.input as Record<string, unknown>;

@@ -35,8 +35,9 @@ import type { PublishedRegulation } from "./published-repository";
  *
  * 1 — implicit: every fragment written before the key existed.
  * 2 — the `## Applicability` section.
+ * 3 — immutable modeled shape summaries/v2 drawing reference; metadata-only suppression.
  */
-export const PUBLISHED_FRAGMENT_RENDER_VERSION = 2;
+export const PUBLISHED_FRAGMENT_RENDER_VERSION = 3;
 
 /** `fiskeridir-jmelding:J-39-2026` → `regulation-published-fiskeridir-jmelding-J-39-2026`. */
 export function publishedFragmentKeyFor(caseKey: string): string {
@@ -207,13 +208,36 @@ export function buildPublishedCaseFragment(
   // publish stamp only) — so the claim carries its as-of date and defers to
   // the window, instead of an absolute "current" that can quietly go wrong.
   const inForceLine = `In force as of ${now.toISOString().slice(0, 10)}: ${item.inForce} (see validity)`;
-  const geometrySections = item.geometries.map((geometry) => {
+  const geometrySections = (
+    item.metadataOnly || item.geometryModelVersion === 1 ? [] : item.geometries
+  ).map((geometry) => {
     const heading = `### ${geometry.name ?? `Area ${geometry.position + 1}`} (${geometry.kind}${geometry.season ? `, ${geometry.season}` : ""})`;
     const points = geometry.points
       .map((point) => `  - ${point.lat}, ${point.lon}`)
       .join("\n");
     return `${heading}\n\n${points || "  (no vertices)"}`;
   });
+
+  const shapeSections = item.metadataOnly
+    ? []
+    : (item.shapes ?? []).map((shape) => {
+        const polygons =
+          shape.geojson?.type === "MultiPolygon"
+            ? shape.geojson.coordinates
+            : shape.geojson
+              ? [shape.geojson.coordinates]
+              : [];
+        const holes = polygons.reduce((n, p) => n + p.length - 1, 0);
+        return `- ${oneLine(shape.name ?? shape.section ?? "Reviewed shape")} (${shape.kind}): shape ID ${shape.id}; ${polygons.length} polygon pieces, ${holes} holes. Source runs ${shape.sourceRunPositions.join(", ")} identify grouped evidence, not separate drawable rings.`;
+      });
+  const areas = item.metadataOnly
+    ? "Metadata-only regulation — no drawable area is published."
+    : item.geometryModelVersion === 1
+      ? `Approved immutable full shapes (manifest ${item.shapeManifestHash}):\n\n${shapeSections.join("\n")}\n\nUse the pinned v2 response for complete holes and pieces. Printed point runs are source evidence; never close them into substitute polygons.`
+      : geometrySections.join("\n\n") || "No areas on the approved revision.";
+  const drawing = item.metadataOnly
+    ? "No drawing is authorized for this metadata-only record."
+    : `Exact approved geometry for drawing: GET /api/regulations/published/${item.id}?geometryVersion=2 (published revision ${item.publishedRevisionId}).`;
 
   const content = `---
 caseKey: ${item.caseKey}
@@ -243,9 +267,9 @@ ${applicabilitySection(item.applicability)}
 
 ## Areas
 
-${geometrySections.join("\n\n") || (item.metadataOnly ? "Metadata-only regulation — it defines no drawable area." : "No areas on the approved revision.")}
+${areas}
 
-*Exact geometry for drawing: \`GET /api/regulations/published/${item.id}\`.*
+*${drawing}*
 `;
 
   return {

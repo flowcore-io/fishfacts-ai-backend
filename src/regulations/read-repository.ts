@@ -2,6 +2,8 @@ import { paragraphOf } from "@/closures/geometry-divergence";
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import type { SourceRun } from "./coastal-state";
+import { shapeReview } from "./shape-review";
 
 /**
  * Read side of the regulations approval queue (stage ② B1) — what the admin
@@ -373,18 +375,27 @@ export class RegulationQueueReadRepository {
     }
     return {
       case: caseRow,
-      revisions: revisions.map((revision) => ({
-        ...revision,
-        isCurrent: revision.id === caseRow.currentRevisionId,
-        // `paragraph` is the join key to `officialAreas`: the § an area's name
-        // carries, null when the name has none.
-        geometries: (geometriesByRevision.get(revision.id) ?? []).map(
-          (geometry) => ({
-            ...geometry,
-            paragraph: paragraphOf(geometry.name),
-          }),
-        ),
-      })),
+      revisions: revisions.map((revision) => {
+        const { shapeState: _storedState, ...fields } = revision;
+        return {
+          ...fields,
+          ...shapeReview(
+            revision,
+            (geometriesByRevision.get(revision.id) ??
+              []) as unknown as SourceRun[],
+            validations,
+          ),
+          isCurrent: revision.id === caseRow.currentRevisionId,
+          // `paragraph` is the join key to `officialAreas`: the § an area's name
+          // carries, null when the name has none.
+          geometries: (geometriesByRevision.get(revision.id) ?? []).map(
+            (geometry) => ({
+              ...geometry,
+              paragraph: paragraphOf(geometry.name),
+            }),
+          ),
+        };
+      }),
       sources,
       links,
       actions,

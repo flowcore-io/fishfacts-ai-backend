@@ -1,6 +1,7 @@
 import type { Database } from "@/db/client";
 import type { JMeldingAnnouncementDiscovered } from "@/events/contracts";
 import { jmeldingFragmentKey } from "@/jobs/jmelding-fragments";
+import { sourceSignatureOf } from "@/regulations/coastal-state";
 import { sql } from "drizzle-orm";
 import {
   areasToFeatureCollection,
@@ -112,15 +113,22 @@ export class JMeldingGeoProjector {
     const geomExpr = wkt
       ? sql`ST_GeomFromText(${wkt}, 4326)`
       : sql`NULL::geometry`;
+    const sourceSignature =
+      !item.bodyMarkdown || item.sourceBodyCompleteness === "truncated"
+        ? null
+        : sourceSignatureOf(
+            item.bodyMarkdown,
+            parsed.areas.map((a, position) => ({ position, points: a.points })),
+          );
 
     await this.db.execute(sql`
       INSERT INTO jmelding_geo (
-        jm_number, fragment_key, fragment_id, title, status, region, category, url, summary, signature, content_hash,
+        jm_number, fragment_key, fragment_id, title, status, region, category, url, summary, signature, content_hash, live_source_signature,
         valid_from, valid_to,
         has_geo, areas, geojson, geom, min_lat, max_lat, min_lon, max_lon, updated_at
       )
       VALUES (
-        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.category ?? null}, ${item.url}, ${item.summary ?? null}, ${item.signature}, ${item.contentHash ?? null},
+        ${jmNumber}, ${fragmentKey}, ${fragmentId}, ${item.title}, ${item.status}, ${item.region ?? "NO"}, ${item.category ?? null}, ${item.url}, ${item.summary ?? null}, ${item.signature}, ${item.contentHash ?? null}, ${JSON.stringify(sourceSignature)}::jsonb,
         ${validFrom}::timestamptz, ${validTo}::timestamptz,
         ${parsed.hasGeo}, ${areasJson}::jsonb, ${geojsonJson}::jsonb,
         ${geomExpr},
@@ -138,6 +146,7 @@ export class JMeldingGeoProjector {
         summary      = EXCLUDED.summary,
         signature    = EXCLUDED.signature,
         content_hash = EXCLUDED.content_hash,
+        live_source_signature = EXCLUDED.live_source_signature,
         valid_from   = EXCLUDED.valid_from,
         valid_to     = EXCLUDED.valid_to,
         has_geo      = EXCLUDED.has_geo,

@@ -5,6 +5,7 @@ import type {
   RegulationAdminActionRecorded,
 } from "@/events/contracts";
 import { and, eq } from "drizzle-orm";
+import { ModeledCaseRequiresOrderError } from "./ordered-inputs";
 
 /**
  * Projects `regulation.case.admin-action.recorded.0` twice over: an
@@ -24,6 +25,15 @@ export class RegulationCaseActionProjector {
     // never reflects. Atomic, both re-land together on redelivery, which is
     // what makes the onConflictDoNothing dedup safe to rely on at all.
     await this.db.transaction(async (tx) => {
+      const [orderedCase] = await tx
+        .select({ version: schema.regulationCases.geometryModelVersion })
+        .from(schema.regulationCases)
+        .where(eq(schema.regulationCases.id, payload.caseId))
+        .for("update");
+      if (orderedCase?.version === 1)
+        throw new ModeledCaseRequiresOrderError(
+          "modeled case requires ordered action",
+        );
       // Existence first, before anything is written: an action for a case
       // the projection has never seen must commit NOTHING — a log row
       // without its effect is exactly the trail/state disagreement this
@@ -96,7 +106,7 @@ export class RegulationCaseActionProjector {
 }
 
 /** The columns an action writes on the case row; null = log-only action. */
-function caseEffectOf(
+export function caseEffectOf(
   action: RegulationAdminAction,
   isPublished: boolean,
 ): Partial<typeof schema.regulationCases.$inferInsert> | null {
@@ -133,6 +143,7 @@ function unpublished(): Partial<typeof schema.regulationCases.$inferInsert> {
   return {
     regulationStatus: "draft",
     publishedRevisionId: null,
+    publishedApprovalId: null,
     publishedToUsersAt: null,
     publishedToUsersBy: null,
     publishedMetadataOnly: false,

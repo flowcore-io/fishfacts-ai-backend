@@ -89,7 +89,12 @@ export function createRegulationPublishedSyncJob(
     const limit = args.limit ?? 200;
     const [{ regulations, total: publishedTotal }, withdrawn] =
       await Promise.all([
-        repository.listPublished({ status: "all", limit, offset: 0 }),
+        repository.listPublished({
+          status: "all",
+          limit,
+          offset: 0,
+          geometryVersion: 2,
+        }),
         repository.listWithdrawn(),
       ]);
     // A capped "sync everything" run must not truncate silently: say so, so
