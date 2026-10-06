@@ -33,6 +33,12 @@ import {
 import { geometryIdFor } from "./ids";
 import { caseIdFor, revisionIdFor } from "./ids";
 import { pendingCaseInput } from "./pending-source";
+import {
+  finishReconstruction,
+  projectReconstructionFailure,
+  projectReconstructionIntent,
+  reconstructionParent,
+} from "./reconstruction-request-projector";
 import { caseColumnsOfFields } from "./revision-fields";
 import {
   ShapeCommandRejectedError,
@@ -53,14 +59,23 @@ export class RegulationShapeCommandProjector {
     tx: SnapshotTx,
     command: CaseCommand,
   ): Promise<SnapshotApplication> {
+    let outcome: SnapshotApplication;
     try {
-      return await this.applyVerified(tx, command);
+      outcome = await this.applyVerified(tx, command);
     } catch (error) {
-      if (error instanceof ShapeCommandRejectedError)
-        return refused(error.message);
-      throw error;
+      if (!(error instanceof ShapeCommandRejectedError)) throw error;
+      outcome = refused(error.message);
     }
+    const requestId =
+      command.operation === "proposal"
+        ? (command.data as { reconstructionRequestId?: string })
+            ?.reconstructionRequestId
+        : undefined;
+    if (requestId && (await reconstructionParent(tx, command, requestId)))
+      await finishReconstruction(tx, requestId, outcome);
+    return outcome;
   }
+
   private async applyVerified(
     tx: SnapshotTx,
     command: CaseCommand,
@@ -136,6 +151,14 @@ export class RegulationShapeCommandProjector {
       );
     if (!base)
       return { status: "pending", reason: "base revision not projected" };
+    if (command.operation === "request")
+      return projectReconstructionIntent(
+        tx,
+        command,
+        caseRow.currentRevisionId,
+      );
+    if (command.operation === "request-failure")
+      return projectReconstructionFailure(tx, command);
     // UUIDs are immutable across cases and commands. A duplicate domain ID
     // is a terminal refusal, never an endless SQL uniqueness retry.
     const dataIds = command.data as Record<string, unknown>;
@@ -199,8 +222,14 @@ export class RegulationShapeCommandProjector {
           .where(eq(schema.regulationCases.id, command.caseId));
       return { status: "applied" };
     }
-    if (command.operation === "proposal")
-      return this.proposal(tx, command, caseRow, base);
+    if (command.operation === "proposal") {
+      const requestId = (command.data as { reconstructionRequestId?: string })
+        ?.reconstructionRequestId;
+      if (requestId && !(await reconstructionParent(tx, command, requestId)))
+        return refused("reconstruction result identity mismatch");
+      const outcome = await this.proposal(tx, command, caseRow, base);
+      return outcome;
+    }
     const [revision] = await tx
       .select()
       .from(schema.regulationCaseRevisions)

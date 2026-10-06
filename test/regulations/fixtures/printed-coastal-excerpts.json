@@ -1,0 +1,74 @@
+{
+  "source": {
+    "p1": "§ 1 Lafjorden og Magerøysundet i Finnmark\n\nDet er forbudt å fiske etter sei med not i et område på Lafjorden og Magerøysundet i Finnmark avgrenset i vest av en rett linje mellom følgende posisjoner: \n\n- Nord 70 grader 58,8 minutter Øst 25 grader 20,1 minutter \n- Nord 70 grader 59,6 minutter Øst 25 grader 23,5 minutter  herfra videre avgrenset i øst av rett linje mellom følgende posisjoner: \n- Nord 70 grader 56,5 minutter Øst 25 grader 41,3 minutter \n- Nord 70 grader 54,6 minutter Øst 25 grader 41,1 minutter",
+    "p6": "§ 6 Sværholt, Porsanger og Laksefjorden i Finnmark\n\nDet er forbudt å fiske etter sei med not i et område på Sværholt, Porsanger og Laksefjorden i Finnmark, avgrenset av rette linjer mellom følgende posisjoner:\n\n- Nord 71 grader 6.850 minutter. Øst 026 grader 2.500 minutter.\n- Nord 71 grader 8.500 minutter. Øst 026 grader 7.600 minutter.\n- Nord 71 grader 7.100 minutter. Øst 026 grader 12.800 minutter.\n- Nord 71 grader 11.400 minutter. Øst 026 grader 32.400 minutter.\n- Nord 71 grader 8.400 minutter. Øst 026 grader 44.400 minutter.\n- Nord 71 grader 8.000 minutter. Øst 027 grader 39.400 minutter.\n- Nord 70 grader 54.600 minutter. Øst 025 grader 41.100 minutter.\n- Nord 70 grader 56.500 minutter. Øst 025 grader 41.300 minutter. Mellom posisjon 6 og 7 og mellom 8 og 1 følger grensen kystlinjen»"
+  },
+  "runs": [
+    {
+      "position": 0,
+      "paragraph": 1,
+      "points": [
+        {
+          "lon": 25.335,
+          "lat": 70.98
+        },
+        {
+          "lon": 25.391667,
+          "lat": 70.993333
+        }
+      ]
+    },
+    {
+      "position": 1,
+      "paragraph": 1,
+      "points": [
+        {
+          "lon": 25.688333,
+          "lat": 70.941667
+        },
+        {
+          "lon": 25.685,
+          "lat": 70.91
+        }
+      ]
+    },
+    {
+      "position": 6,
+      "paragraph": 6,
+      "points": [
+        {
+          "lon": 26.041667,
+          "lat": 71.114167
+        },
+        {
+          "lon": 26.126667,
+          "lat": 71.141667
+        },
+        {
+          "lon": 26.213333,
+          "lat": 71.118333
+        },
+        {
+          "lon": 26.54,
+          "lat": 71.19
+        },
+        {
+          "lon": 26.74,
+          "lat": 71.14
+        },
+        {
+          "lon": 27.656667,
+          "lat": 71.133333
+        },
+        {
+          "lon": 25.685,
+          "lat": 70.91
+        },
+        {
+          "lon": 25.688333,
+          "lat": 70.941667
+        }
+      ]
+    }
+  ]
+}

@@ -1110,6 +1110,9 @@ export const regulationCommandDeliveries = pgTable(
     eventIds: jsonb("event_ids"),
   },
   (t) => ({
+    uuidSpelling: index("regulation_command_deliveries_uuid_spelling_idx").on(
+      sql`lower(${t.commandId})`,
+    ),
     caseSequence: uniqueIndex("regulation_command_deliveries_sequence_idx").on(
       t.caseId,
       t.sequence,
@@ -1128,6 +1131,9 @@ export const regulationCommandEnvelopes = pgTable(
     payloadHash: text("payload_hash").notNull(),
   },
   (t) => ({
+    uuidSpelling: index("regulation_command_envelopes_uuid_spelling_idx").on(
+      sql`lower(${t.commandId})`,
+    ),
     caseSequence: uniqueIndex("regulation_command_envelopes_sequence_idx").on(
       t.caseId,
       t.sequence,
@@ -1174,5 +1180,58 @@ export const regulationImmutableConflicts = pgTable(
   },
   (table) => ({
     caseIdx: index("regulation_immutable_conflicts_case_idx").on(table.caseId),
+  }),
+);
+
+/** Immutable operator-installed reference data; never an approved-output reader. */
+export const regulationLandDatasets = pgTable("regulation_land_datasets", {
+  id: text("id").primaryKey(),
+  manifest: jsonb("manifest").notNull(),
+  coverage: geometryGeneric("coverage").notNull(),
+});
+export const regulationLandFeatures = pgTable(
+  "regulation_land_features",
+  {
+    datasetId: text("dataset_id")
+      .notNull()
+      .references(() => regulationLandDatasets.id),
+    sourceFid: bigint("source_fid", { mode: "number" }).notNull(),
+    wkbHex: text("wkb_hex").notNull(),
+    geom: geometryGeneric("geom").notNull(),
+  },
+  (t) => ({
+    key: primaryKey({ columns: [t.datasetId, t.sourceFid] }),
+    spatial: index("regulation_land_features_geometry_idx").using(
+      "gist",
+      t.geom,
+    ),
+  }),
+);
+
+/** Domain request/status derives only from verified ordered Flowcore commands.
+ * Live worker locks/retry bytes are operational; no direct status mutation. */
+export const regulationReconstructionRequests = pgTable(
+  "regulation_reconstruction_requests",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    baseRevisionId: text("base_revision_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    actor: text("actor").notNull(),
+    inputHash: text("input_hash").notNull(),
+    intent: jsonb("intent").notNull(),
+    status: text("status").notNull().default("pending"),
+    error: jsonb("error"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  },
+  (table) => ({
+    pendingIdx: index("regulation_reconstruction_requests_pending_idx").on(
+      table.status,
+      table.id,
+    ),
+    caseIdx: index("regulation_reconstruction_requests_case_idx").on(
+      table.caseId,
+      table.id,
+    ),
   }),
 );
