@@ -115,6 +115,11 @@ import {
   SOURCE_OBSERVATION_BARRIER_EVENT_TYPE,
   commandBarrierSchema,
 } from "./events/regulation-command-barrier";
+import {
+  SNAPSHOT_PART_EVENT_TYPE,
+  SNAPSHOT_PART_PATHWAY,
+  snapshotPartSchema,
+} from "./events/regulation-snapshot-parts";
 import type { GenericEventRepository } from "./events/repository";
 import type { GebcoProjector } from "./gebco/projector";
 import type { GillnetProjector } from "./gillnet/projector";
@@ -133,6 +138,7 @@ import type { RegulationCaseCommandRuntime } from "./regulations/command-runtime
 import type { RegulationGroupProjector } from "./regulations/group-projector";
 import type { RegulationCaseNoteProjector } from "./regulations/note-projector";
 import type { RegulationRevisionProjector } from "./regulations/revision-projector";
+import type { RegulationRevisionSnapshotRuntime } from "./regulations/revision-snapshot-runtime";
 import type { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import type { SildelagetCatchProjector } from "./sildelaget/projector";
 
@@ -212,6 +218,7 @@ export interface PathwayWriter {
 export type PathwayRuntime = {
   writer: PathwayWriter;
   commands?: RegulationCaseCommandRuntime;
+  revisionSnapshots?: RegulationRevisionSnapshotRuntime;
   router: PathwayRouter;
   /** Create the shared pathway-state table; await before serving writes. */
   ensureStateReady(): Promise<void>;
@@ -497,6 +504,7 @@ export function createPathwayRuntime(
   regulationGroupProjector: RegulationGroupProjector,
   publishedSyncTrigger: PublishedSyncTrigger,
   caseCommands?: RegulationCaseCommandRuntime,
+  revisionSnapshots?: RegulationRevisionSnapshotRuntime,
 ): PathwayRuntime {
   const runtimeEnv =
     env.NODE_ENV === "production"
@@ -541,6 +549,22 @@ export function createPathwayRuntime(
       caseCommands,
       publishedSyncTrigger,
     );
+  }
+
+  if (revisionSnapshots) {
+    revisionSnapshots.attach(createCommandIngestion(env));
+    pathways
+      .register({
+        flowType: REGULATION_FLOW_TYPE,
+        eventType: SNAPSHOT_PART_EVENT_TYPE,
+        schema: snapshotPartSchema,
+        description: "Exact immutable revision snapshot bytes",
+      })
+      .handle(SNAPSHOT_PART_PATHWAY, async (event) => {
+        await revisionSnapshots.handlePart(
+          (event as { payload: unknown }).payload,
+        );
+      });
   }
 
   registerLegacyRegulationPathways(
@@ -809,6 +833,7 @@ export function createPathwayRuntime(
 
   return {
     commands: caseCommands,
+    revisionSnapshots,
     writer: {
       async writeGeneric(data) {
         const eventId = await (
@@ -826,11 +851,7 @@ export function createPathwayRuntime(
         return Array.isArray(eventId) ? eventId[0] : eventId;
       },
       async writeJMeldingAnnouncement(data) {
-        const chunks = chunkAnnouncement(
-          (data.region ?? "NO") === "NO"
-            ? { ...data, orderedCaseInput: true }
-            : data,
-        );
+        const chunks = chunkAnnouncement(data);
         const eventIds: string[] = [];
         for (const chunk of chunks) {
           const eventId = await (
@@ -958,6 +979,14 @@ export function createPathwayRuntime(
           .eventId;
       },
       async writeRegulationRevisionProposedDetailed(data) {
+        if (
+          revisionSnapshots &&
+          (data.geometries.some(
+            (g) => g.geometrySource === "official-vector",
+          ) ||
+            Buffer.byteLength(JSON.stringify(data), "utf8") > 55_000)
+        )
+          return revisionSnapshots.submit(data);
         return awaitWrite("revision.proposed", () =>
           (
             pathways.write as never as (
@@ -1364,9 +1393,11 @@ export function createPathwayRuntime(
         },
       } as never);
       caseCommands?.start();
+      revisionSnapshots?.start();
     },
     async stopPump() {
       caseCommands?.stop();
+      revisionSnapshots?.stop();
       await pathways.stopPump();
       if (runtimeEnv === "production") {
         await pathways.stopCluster();

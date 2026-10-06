@@ -2,12 +2,14 @@ import { type Database, timestampToIso } from "@/db/client";
 import * as schema from "@/db/schema";
 import type { sourceSignatureOf } from "@/regulations/coastal-state";
 import { caseIdFor } from "@/regulations/ids";
-import { type SQL, and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { pinnedSnapshotManifests } from "@/regulations/official-vector";
+import { type SQL, and, eq, inArray, sql } from "drizzle-orm";
 
 export type GeoBbox = [number, number, number, number];
 export type PublishedGeometryMarker = {
   caseId: string;
   publishedRevisionId: string;
+  snapshotManifestHash?: string | null;
   geometryVersion: 2;
   geometryModelVersion: 0 | 1;
   metadataOnly: boolean;
@@ -449,10 +451,11 @@ export class JMeldingGeoRepository {
         publishedRevisionId: schema.regulationCases.publishedRevisionId,
         metadataOnly: schema.regulationCases.publishedMetadataOnly,
         model: schema.regulationCaseRevisions.geometryModelVersion,
+        unpublishedOfficial: sql<boolean>`${schema.regulationCases.publishedRevisionId} is null and exists (select 1 from regulation_case_geometries g where g.case_id = ${schema.regulationCases.id} and g.revision_id = ${schema.regulationCases.currentRevisionId} and g.geometry_source = 'official-vector')`,
         liveSourceSignature: schema.jmeldingGeo.liveSourceSignature,
       })
       .from(schema.regulationCases)
-      .innerJoin(
+      .leftJoin(
         schema.regulationCaseRevisions,
         and(
           eq(
@@ -470,34 +473,53 @@ export class JMeldingGeoRepository {
         and(
           eq(schema.regulationCases.sourceType, "fiskeridir-jmelding"),
           inArray(schema.regulationCases.sourceRef, refs),
-          isNotNull(schema.regulationCases.publishedRevisionId),
         ),
       );
+    const manifests = await pinnedSnapshotManifests(
+      this.db,
+      pins.flatMap((p) =>
+        p.publishedRevisionId ? [p.publishedRevisionId] : [],
+      ),
+    );
     const byRef = new Map(
       pins
         .filter(
           (p) =>
             p.caseKey === `fiskeridir-jmelding:${p.sourceRef}` &&
             p.caseId === caseIdFor(p.caseKey) &&
-            (p.model === 1 || p.metadataOnly),
+            (p.unpublishedOfficial ||
+              (p.publishedRevisionId &&
+                (p.model === 1 ||
+                  p.metadataOnly ||
+                  manifests.has(p.publishedRevisionId)))),
         )
         .map((p) => [p.sourceRef, p]),
     );
     return rows.map((row) => {
       const pin = row.region === "NO" ? byRef.get(row.jmNumber) : undefined;
       if (!pin) return row;
-      const publishedGeometry: PublishedGeometryMarker = {
-        caseId: pin.caseId,
-        publishedRevisionId: pin.publishedRevisionId as string,
-        geometryVersion: 2,
-        geometryModelVersion: pin.model === 1 ? 1 : 0,
-        metadataOnly: pin.metadataOnly,
-        liveSourceSignature:
-          pin.liveSourceSignature as PublishedGeometryMarker["liveSourceSignature"],
-      };
+      const publishedGeometry: PublishedGeometryMarker | undefined =
+        pin.publishedRevisionId
+          ? {
+              caseId: pin.caseId,
+              publishedRevisionId: pin.publishedRevisionId as string,
+              ...(manifests.has(pin.publishedRevisionId as string)
+                ? {
+                    snapshotManifestHash: manifests.get(
+                      pin.publishedRevisionId as string,
+                    ),
+                  }
+                : {}),
+              geometryVersion: 2,
+              geometryModelVersion: pin.model === 1 ? 1 : 0,
+              metadataOnly: pin.metadataOnly,
+              liveSourceSignature:
+                pin.liveSourceSignature as PublishedGeometryMarker["liveSourceSignature"],
+            }
+          : undefined;
       return {
         ...row,
-        publishedGeometry,
+        ...(publishedGeometry ? { publishedGeometry } : {}),
         ...(evidenceOnly
           ? { drawable: false as const }
           : { hasGeo: false, areas: [], geojson: null }),

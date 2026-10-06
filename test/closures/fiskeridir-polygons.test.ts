@@ -20,10 +20,27 @@ const RING = [
 ];
 
 function respondWith(body: unknown, status = 200) {
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify(body), {
-      status,
-    })) as unknown as typeof fetch;
+  const content = body as { features?: Array<Record<string, unknown>> };
+  const features = content.features?.map((f, i) => ({ ...f, id: i + 1 }));
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = new URL(
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url,
+    );
+    return new Response(
+      JSON.stringify(
+        url.searchParams.has("returnIdsOnly") && features
+          ? { objectIds: features.map((f) => f.id) }
+          : features
+            ? { ...content, features }
+            : body,
+      ),
+      { status },
+    );
+  }) as unknown as typeof fetch;
 }
 
 function feature(
@@ -262,4 +279,61 @@ describe("one shape per J-melding and §", () => {
     expect(result.merged).toBe(0);
     expect(result.polygons).toHaveLength(2);
   });
+});
+
+test("refuses a truncated feature observation instead of freezing a partial inventory", async () => {
+  let n = 0;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify(
+        ++n === 1
+          ? { objectIds: [1, 2] }
+          : {
+              features: [
+                {
+                  ...feature(
+                    { jmelding_navn: "J-1-2026", paragraf: 1 },
+                    { type: "Polygon", coordinates: [RING] },
+                  ),
+                  id: 1,
+                },
+              ],
+            },
+      ),
+    )) as unknown as typeof fetch;
+  await expect(fetchFiskeridirPolygons()).rejects.toThrow(
+    "incomplete feature inventory",
+  );
+});
+test("refuses duplicate inventory ids and transfer-limit responses", async () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({ objectIds: [1, 1] }),
+    )) as unknown as typeof fetch;
+  await expect(fetchFiskeridirPolygons()).rejects.toThrow(
+    "inventory missing or invalid",
+  );
+  let n = 0;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify(
+        ++n === 1
+          ? { objectIds: [1] }
+          : {
+              exceededTransferLimit: true,
+              features: [
+                {
+                  ...feature(
+                    { jmelding_navn: "J-1-2026", paragraf: 1 },
+                    { type: "Polygon", coordinates: [RING] },
+                  ),
+                  id: 1,
+                },
+              ],
+            },
+      ),
+    )) as unknown as typeof fetch;
+  await expect(fetchFiskeridirPolygons()).rejects.toThrow(
+    "incomplete feature inventory",
+  );
 });

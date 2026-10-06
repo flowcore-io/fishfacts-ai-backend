@@ -4,6 +4,7 @@ export class AppProcess {
   constructor(
     private readonly port: number,
     private readonly env: Record<string, string>,
+    private readonly startupTimeoutMs = 20000,
   ) {}
 
   get baseUrl() {
@@ -22,15 +23,19 @@ export class AppProcess {
         PORT: String(this.port),
       },
     });
-    const deadline = Date.now() + 8000;
+    const deadline = Date.now() + this.startupTimeoutMs;
     while (Date.now() < deadline) {
       try {
-        const response = await fetch(`${this.baseUrl}/health`);
+        const response = await fetch(`${this.baseUrl}/health`, {
+          signal: AbortSignal.timeout(1000),
+        });
         if (response.ok) return;
       } catch {
         await Bun.sleep(100);
       }
     }
+    this.proc.kill();
+    await this.proc.exited.catch(() => undefined);
     const stderr = this.proc.stderr
       ? await new Response(this.proc.stderr).text().catch(() => "")
       : "";

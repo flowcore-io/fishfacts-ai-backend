@@ -155,7 +155,14 @@ export class RegulationSnapshotAssembler {
         manifest,
         rows.map((row) => row.payload as SnapshotPart),
       );
-      assertSnapshotIdentity(snapshot, manifest);
+      try {
+        assertSnapshotIdentity(snapshot, manifest);
+      } catch (error) {
+        throw new SnapshotPartRejectedError(
+          error,
+          error instanceof Error ? error.message : undefined,
+        );
+      }
       return this.applyComplete(tx, snapshot, manifest);
     });
   }
@@ -205,7 +212,14 @@ export class RegulationSnapshotAssembler {
         manifest,
         parts.map((row) => row.payload as SnapshotPart),
       );
-      assertSnapshotIdentity(snapshot, manifest);
+      try {
+        assertSnapshotIdentity(snapshot, manifest);
+      } catch (error) {
+        throw new SnapshotPartRejectedError(
+          error,
+          error instanceof Error ? error.message : undefined,
+        );
+      }
       return this.applyComplete(tx, snapshot, manifest);
     });
   }

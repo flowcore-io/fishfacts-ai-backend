@@ -776,6 +776,9 @@ export const regulationCaseGeometries = pgTable(
     geometrySource: text("geometry_source").notNull().default("preparsed"),
     coordinateSystem: text("coordinate_system").notNull().default("WGS84"),
     precision: text("precision"),
+    paragraph: integer("paragraph"),
+    officialSnapshotId: text("official_snapshot_id"),
+    evidenceRuns: jsonb("evidence_runs"),
     geometryValidated: boolean("geometry_validated").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -828,6 +831,7 @@ export const regulationCaseOfficialAreas = pgTable(
     // Over `geojson`; an unchanged shape is not rewritten.
     contentHash: text("content_hash").notNull(),
     source: text("source").notNull().default("fiskeridir-wfs"),
+    sourceMetadata: jsonb("source_metadata"),
     fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
@@ -933,6 +937,8 @@ export const regulationCaseValidations = pgTable(
     scope: text("scope").notNull(),
     // Set exactly when scope = geometry: validation is per-area.
     geometryId: text("geometry_id"),
+    officialSnapshotId: text("official_snapshot_id"),
+    geometryHash: text("geometry_hash"),
     shapeId: text("shape_id"),
     shapeHash: text("shape_hash"),
     coverageHash: text("coverage_hash"),
@@ -1234,4 +1240,39 @@ export const regulationReconstructionRequests = pgTable(
       table.id,
     ),
   }),
+);
+
+/** Immutable, content-addressed authority payloads. Revision geometry rows
+ * reference these; the mutable official-area cache is never a published read. */
+export const regulationOfficialSnapshots = pgTable(
+  "regulation_official_snapshots",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    payload: jsonb("payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+);
+
+/** Stable multipart bytes survive uncertain ingestion acknowledgments/restarts.
+ * This is an emission cache; applied domain state comes only from Flowcore. */
+export const regulationRevisionDeliveries = pgTable(
+  "regulation_revision_deliveries",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    baseRevisionId: text("base_revision_id").notNull(),
+    revisionId: text("revision_id").notNull(),
+    actor: text("actor").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    parts: jsonb("parts").notNull(),
+    eventIds: jsonb("event_ids"),
+    status: text("status").notNull().default("pending"),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
 );

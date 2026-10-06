@@ -46,7 +46,7 @@ export class WebhookTestFixture {
       fetch: async (request) => {
         const url = new URL(request.url);
         const match = url.pathname.match(
-          /^\/event\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/,
+          /^\/events?\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)$/,
         );
         if (!match)
           return Response.json({ error: "not_found" }, { status: 404 });
@@ -55,57 +55,68 @@ export class WebhookTestFixture {
         if (!this.routes.has(routeKey)) {
           return Response.json({ error: "unknown_event" }, { status: 404 });
         }
-        const payload = await request.json().catch(() => null);
-        const eventId = randomUUID();
-        const validTime =
-          request.headers.get("x-flowcore-valid-time") ??
-          new Date().toISOString();
-        const metadata = request.headers.get("x-flowcore-metadata-json")
-          ? JSON.parse(
-              Buffer.from(
-                request.headers.get("x-flowcore-metadata-json") as string,
-                "base64",
-              ).toString("utf-8"),
-            )
-          : {};
-        const event = {
-          eventId,
-          flowType,
-          dataCoreId: dataCore,
-          tenant,
-          timeBucket: validTime.slice(0, 13).replace(/\D/g, "").padEnd(14, "0"),
-          eventType,
-          validTime,
-          payload,
-          metadata,
-        };
-        if (this.routes.get(routeKey)) {
-          const response = await fetch(this.options.transformerUrl, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "x-secret": this.options.secret,
-            },
-            body: JSON.stringify(event),
-          });
-          if (!response.ok) {
-            return Response.json(
-              { error: "transformer_failed", body: await response.text() },
-              { status: 500 },
-            );
+        const input = await request.json().catch(() => null);
+        const batch = url.pathname.startsWith("/events/");
+        const payloads = batch ? input : [input];
+        if (!Array.isArray(payloads))
+          return Response.json({ error: "invalid_batch" }, { status: 400 });
+        const eventIds: string[] = [];
+        for (const payload of payloads) {
+          const eventId = randomUUID();
+          const validTime =
+            request.headers.get("x-flowcore-valid-time") ??
+            new Date().toISOString();
+          const metadata = request.headers.get("x-flowcore-metadata-json")
+            ? JSON.parse(
+                Buffer.from(
+                  request.headers.get("x-flowcore-metadata-json") as string,
+                  "base64",
+                ).toString("utf-8"),
+              )
+            : {};
+          const event = {
+            eventId,
+            flowType,
+            dataCoreId: dataCore,
+            tenant,
+            timeBucket: validTime
+              .slice(0, 13)
+              .replace(/\D/g, "")
+              .padEnd(14, "0"),
+            eventType,
+            validTime,
+            payload,
+            metadata,
+          };
+          if (this.routes.get(routeKey)) {
+            const response = await fetch(this.options.transformerUrl, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-secret": this.options.secret,
+              },
+              body: JSON.stringify(event),
+            });
+            if (!response.ok) {
+              return Response.json(
+                { error: "transformer_failed", body: await response.text() },
+                { status: 500 },
+              );
+            }
           }
+          this.events.push({
+            eventId,
+            tenant,
+            dataCore,
+            flowType,
+            eventType,
+            payload,
+            metadata,
+          });
+          this.spies.get(routeKey)?.(payload, metadata);
+          eventIds.push(eventId);
         }
-        this.events.push({
-          eventId,
-          tenant,
-          dataCore,
-          flowType,
-          eventType,
-          payload,
-          metadata,
-        });
-        this.spies.get(routeKey)?.(payload, metadata);
-        return Response.json({ eventId });
+        return Response.json(batch ? { eventIds } : { eventId: eventIds[0] });
       },
     });
   }

@@ -13,7 +13,7 @@ import {
   reconstructSnapshot,
   splitSnapshot,
 } from "@/events/regulation-snapshot-parts";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 
 export type DurablePartEmitter = (
   parts: readonly CommandPart[],
@@ -23,6 +23,7 @@ export type DurablePartEmitter = (
 export type CommandCatchupBarrier = () => Promise<{ barrierId: string }>;
 
 export class RegulationCommandOutbox {
+  private recoveryCursor = "";
   constructor(
     private readonly db: Database,
     private readonly emit: DurablePartEmitter,
@@ -293,9 +294,26 @@ export class RegulationCommandOutbox {
     const rows = await this.db
       .select({ commandId: schema.regulationCommandDeliveries.commandId })
       .from(schema.regulationCommandDeliveries)
-      .where(eq(schema.regulationCommandDeliveries.status, "reserved"))
-      .orderBy(schema.regulationCommandDeliveries.sequence)
+      .where(
+        and(
+          eq(schema.regulationCommandDeliveries.status, "reserved"),
+          gt(schema.regulationCommandDeliveries.commandId, this.recoveryCursor),
+        ),
+      )
+      .orderBy(asc(schema.regulationCommandDeliveries.commandId))
       .limit(Math.max(1, Math.min(limit, 32)));
-    for (const row of rows) await this.deliver(row.commandId);
+    this.recoveryCursor = rows.at(-1)?.commandId ?? "";
+    const failures: unknown[] = [];
+    for (const row of rows)
+      try {
+        await this.deliver(row.commandId);
+      } catch (error) {
+        failures.push(error);
+      }
+    if (failures.length)
+      throw new AggregateError(
+        failures,
+        "command deliveries remain unconfirmed",
+      );
   }
 }

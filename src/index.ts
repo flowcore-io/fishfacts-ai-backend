@@ -38,20 +38,20 @@ import { PoiFragmentProjector } from "./poi/fragment-projector";
 import { PoiRepository } from "./poi/repository";
 import { RegulationCaseActionProjector } from "./regulations/action-projector";
 import { RegulationCaseProjector } from "./regulations/case-projector";
-import { CoastalReconstruction } from "./regulations/coastal-reconstruction";
 import { RegulationCaseCommandRuntime } from "./regulations/command-runtime";
 import { RegulationGroupProjector } from "./regulations/group-projector";
 import { RegulationGroupRepository } from "./regulations/group-repository";
 import { RegulationCaseNoteProjector } from "./regulations/note-projector";
 import { OfficialAreaRepository } from "./regulations/official-area-repository";
+import { OfficialVectorPreparation } from "./regulations/official-vector-preparation";
 import { RegulationPublishedReadRepository } from "./regulations/published-repository";
 import {
   RegulationQueueRepository,
   RegulationRawSyncRepository,
 } from "./regulations/queue-repository";
 import { RegulationQueueReadRepository } from "./regulations/read-repository";
-import { RegulationReconstructionRequests } from "./regulations/reconstruction-requests";
 import { RegulationRevisionProjector } from "./regulations/revision-projector";
+import { RegulationRevisionSnapshotRuntime } from "./regulations/revision-snapshot-runtime";
 import { RegulationVerdictProjector } from "./regulations/verdict-projector";
 import { makeReportsClient, reportsConfigFromEnv } from "./reports/client";
 import { SildelagetAisAnchorRepository } from "./sildelaget/ais-anchor-repository";
@@ -100,11 +100,6 @@ const sildelagetCatchProjector = new SildelagetCatchProjector(
   sildelagetCatchRepository,
 );
 const regulationCaseCommands = new RegulationCaseCommandRuntime(db);
-const regulationReconstructionRequests = new RegulationReconstructionRequests(
-  db,
-  regulationCaseCommands,
-  new CoastalReconstruction(client),
-);
 const regulationCaseProjector = new RegulationCaseProjector(db);
 const regulationVerdictProjector = new RegulationVerdictProjector(db);
 const regulationQueueRepository = new RegulationQueueRepository(db);
@@ -117,6 +112,15 @@ const regulationPublishedReadRepository = new RegulationPublishedReadRepository(
 const regulationCaseActionProjector = new RegulationCaseActionProjector(db);
 const regulationCaseNoteProjector = new RegulationCaseNoteProjector(db);
 const regulationRevisionProjector = new RegulationRevisionProjector(db);
+const regulationRevisionSnapshots = new RegulationRevisionSnapshotRuntime(
+  db,
+  regulationRevisionProjector,
+);
+const officialVectorPreparation = new OfficialVectorPreparation(
+  regulationQueueReadRepository,
+  officialAreaRepository,
+  regulationRevisionSnapshots,
+);
 const regulationGroupProjector = new RegulationGroupProjector(db);
 const regulationGroupRepository = new RegulationGroupRepository(db);
 const chunkAssembler = new JMeldingChunkAssembler(
@@ -168,6 +172,7 @@ const pathways = createPathwayRuntime(
   regulationGroupProjector,
   publishedSyncTrigger,
   regulationCaseCommands,
+  regulationRevisionSnapshots,
 );
 // Before the pump or any request can race the SDK's lazy CREATE TABLE.
 await pathways.ensureStateReady();
@@ -187,6 +192,7 @@ const jobs = createJobDefinitions(
   regulationRawSyncRepository,
   regulationPublishedReadRepository,
   officialAreaRepository,
+  officialVectorPreparation,
 );
 const jobStateStore = new JobStateStore(db, jobs);
 const jobRunner = new JobRunner(jobs, jobStateStore, env);
@@ -234,12 +240,11 @@ const app = createApp({
   regulationQueueReadRepository,
   regulationPublishedReadRepository,
   regulationGroupRepository,
-  regulationReconstructionRequests,
+  officialVectorPreparation,
   db,
 });
 
 await pathways.startPump();
-regulationReconstructionRequests.start();
 // One-time migration of legacy Usable job-state fragments → Postgres. MUST run
 // before the scheduler/supervisor so resume-dependent jobs don't start on empty
 // state. Idempotent (only seeds jobs missing a row) and best-effort.
@@ -274,7 +279,6 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     clearInterval(chunkCleanupInterval);
     jobScheduler.stop();
     aisBackfillSupervisor.stop();
-    await regulationReconstructionRequests.stop();
     await pathways.stopPump();
     await aisChRepo.close().catch((error) => {
       console.error("[AIS] ClickHouse flush/close failed", {

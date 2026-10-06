@@ -7,7 +7,10 @@ import {
 } from "@/http/errors";
 import { Hono } from "hono";
 import { z } from "zod";
-import type { RegulationPublishedReadRepository } from "./published-repository";
+import type {
+  PublishedRegulation,
+  RegulationPublishedReadRepository,
+} from "./published-repository";
 import { GeometryClientUpgradeError } from "./published-repository";
 import { CASE_ID } from "./routes";
 
@@ -45,6 +48,22 @@ export function createPublishedRegulationsRouter(
   deps: PublishedRegulationsRouterDeps,
 ): Hono {
   const app = new Hono();
+  const exactQuery = z.object({
+    geometryVersion: version,
+    expectedPublishedRevisionId: z.string().uuid().toLowerCase().optional(),
+    expectedSnapshotManifestHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+  });
+  const changed = (
+    result: PublishedRegulation,
+    expected: z.infer<typeof exactQuery>,
+  ) =>
+    (expected.expectedPublishedRevisionId &&
+      result.publishedRevisionId !== expected.expectedPublishedRevisionId) ||
+    (expected.expectedSnapshotManifestHash &&
+      result.snapshotManifestHash !== expected.expectedSnapshotManifestHash);
 
   app.get("/", async (c) => {
     const parsed = listQuerySchema.safeParse(c.req.query());
@@ -71,9 +90,7 @@ export function createPublishedRegulationsRouter(
   });
 
   app.get("/source/fiskeridir-jmelding/:sourceRef", async (c) => {
-    const parsed = z
-      .object({ geometryVersion: version })
-      .safeParse(c.req.query());
+    const parsed = exactQuery.safeParse(c.req.query());
     if (!parsed.success)
       return invalidQuery(c, { issues: parsed.error.issues });
     try {
@@ -81,6 +98,15 @@ export function createPublishedRegulationsRouter(
         c.req.param("sourceRef"),
         parsed.data.geometryVersion,
       );
+      if (result && changed(result, parsed.data))
+        return c.json(
+          {
+            error: "published_snapshot_changed",
+            currentPublishedRevisionId: result.publishedRevisionId,
+            currentSnapshotManifestHash: result.snapshotManifestHash ?? null,
+          },
+          409,
+        );
       return result ? c.json(result) : notFound(c);
     } catch (error) {
       if (error instanceof GeometryClientUpgradeError)
@@ -94,9 +120,7 @@ export function createPublishedRegulationsRouter(
   app.get("/:id", async (c) => {
     const id = c.req.param("id");
     if (!CASE_ID.test(id)) return notFound(c);
-    const parsed = z
-      .object({ geometryVersion: version })
-      .safeParse(c.req.query());
+    const parsed = exactQuery.safeParse(c.req.query());
     if (!parsed.success)
       return invalidQuery(c, { issues: parsed.error.issues });
     try {
@@ -107,6 +131,16 @@ export function createPublishedRegulationsRouter(
         parsed.data.geometryVersion,
       );
       if (!regulation) return notFound(c);
+      if (changed(regulation, parsed.data))
+        return c.json(
+          {
+            error: "published_snapshot_changed",
+            currentPublishedRevisionId: regulation.publishedRevisionId,
+            currentSnapshotManifestHash:
+              regulation.snapshotManifestHash ?? null,
+          },
+          409,
+        );
       return c.json(regulation);
     } catch (error) {
       if (error instanceof GeometryClientUpgradeError)

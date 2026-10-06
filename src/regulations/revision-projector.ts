@@ -6,9 +6,17 @@ import type {
   RegulationRevisionProposed,
   RegulationValidationRecorded,
 } from "@/events/contracts";
+import { canonicalDigest } from "@/events/json-digest";
 import { pointsToMultipointWkt } from "@/jmelding/geo-parser";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { geometryIdFor } from "./ids";
+import {
+  OfficialVectorRejectedError,
+  hydrateOfficialGeometries,
+  snapshotManifestHash,
+  storeOfficialVector,
+  verifyOfficialVector,
+} from "./official-vector";
 import { ModeledCaseRequiresOrderError } from "./ordered-inputs";
 import { caseColumnsOfFields, editableFieldsOfCase } from "./revision-fields";
 
@@ -47,147 +55,185 @@ export class RegulationRevisionProjector {
   constructor(private readonly db: Database) {}
 
   async handleProposed(payload: RegulationRevisionProposed): Promise<void> {
-    await this.db.transaction(async (tx) => {
-      const [orderedCase] = await tx
-        .select({ version: schema.regulationCases.geometryModelVersion })
-        .from(schema.regulationCases)
-        .where(eq(schema.regulationCases.id, payload.caseId))
-        .for("update");
-      if (orderedCase?.version === 1)
-        throw new ModeledCaseRequiresOrderError(
-          "modeled case requires ordered mutation",
-        );
-      const existing = await tx
-        .select({ id: schema.regulationCaseRevisions.id })
-        .from(schema.regulationCaseRevisions)
-        .where(eq(schema.regulationCaseRevisions.id, payload.revisionId))
-        .limit(1);
-      if (existing.length > 0) return; // redelivery, fully projected
+    await this.db.transaction((tx) => this.applyProposed(tx, payload));
+  }
 
-      const [caseRow] = await tx
-        .select({
-          id: schema.regulationCases.id,
-          currentRevisionId: schema.regulationCases.currentRevisionId,
-          adminStatus: schema.regulationCases.adminStatus,
-          publishedRevisionId: schema.regulationCases.publishedRevisionId,
-        })
-        .from(schema.regulationCases)
-        .where(eq(schema.regulationCases.id, payload.caseId))
-        .limit(1);
-      if (!caseRow) {
-        console.warn("[RegulationRevision] no such case", {
-          caseId: payload.caseId,
-          caseKey: payload.caseKey,
-        });
-        return;
-      }
-      // The edit-after-source-change race, decided by stream order: a draft
-      // built against a base that is no longer current (a collector revision
-      // or another redraft landed first) must not overwrite the newer state.
-      // The route already refused the obvious case; this catches the write
-      // that was in flight when the base moved.
-      if (caseRow.currentRevisionId !== payload.baseRevisionId) {
-        console.warn("[RegulationRevision] stale base, draft not landed", {
-          caseId: payload.caseId,
-          baseRevisionId: payload.baseRevisionId,
-          currentRevisionId: caseRow.currentRevisionId,
-        });
-        return;
-      }
+  async applyProposed(
+    tx: Tx,
+    payload: RegulationRevisionProposed,
+  ): Promise<void> {
+    const [orderedCase] = await tx
+      .select({ version: schema.regulationCases.geometryModelVersion })
+      .from(schema.regulationCases)
+      .where(eq(schema.regulationCases.id, payload.caseId))
+      .for("update");
+    if (orderedCase?.version === 1)
+      throw new ModeledCaseRequiresOrderError(
+        "modeled case requires ordered mutation",
+      );
+    const existing = await tx
+      .select({ id: schema.regulationCaseRevisions.id })
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, payload.revisionId))
+      .limit(1);
+    if (existing.length > 0) return; // redelivery, fully projected
 
-      const [base] = await tx
-        .select()
-        .from(schema.regulationCaseRevisions)
-        .where(eq(schema.regulationCaseRevisions.id, payload.baseRevisionId))
-        .limit(1);
-      if (!base) {
-        console.warn("[RegulationRevision] base revision missing", {
-          baseRevisionId: payload.baseRevisionId,
-        });
-        return;
-      }
-      const positionRows = await tx
-        .select({
-          max: sql<
-            number | null
-          >`max(${schema.regulationCaseRevisions.position})`,
-        })
-        .from(schema.regulationCaseRevisions)
-        .where(eq(schema.regulationCaseRevisions.caseId, payload.caseId));
-      const position = (positionRows[0]?.max ?? -1) + 1;
-
-      // The snapshot and its verdict carry over verbatim: a redraft changes
-      // the INTERPRETATION, never the source text, and the verdict judged
-      // the text.
-      await tx.insert(schema.regulationCaseRevisions).values({
-        id: payload.revisionId,
+    const [caseRow] = await tx
+      .select({
+        id: schema.regulationCases.id,
+        caseKey: schema.regulationCases.caseKey,
+        sourceRef: schema.regulationCases.sourceRef,
+        sourceType: schema.regulationCases.sourceType,
+        jurisdiction: schema.regulationCases.jurisdiction,
+        currentRevisionId: schema.regulationCases.currentRevisionId,
+        adminStatus: schema.regulationCases.adminStatus,
+        publishedRevisionId: schema.regulationCases.publishedRevisionId,
+      })
+      .from(schema.regulationCases)
+      .where(eq(schema.regulationCases.id, payload.caseId))
+      .limit(1);
+    if (!caseRow) {
+      console.warn("[RegulationRevision] no such case", {
         caseId: payload.caseId,
-        position,
-        contentHash: base.contentHash,
-        changeType: base.changeType,
-        author: payload.actor,
-        snapshotText: base.snapshotText,
-        snapshotUrl: base.snapshotUrl,
-        snapshotFetchedAt: base.snapshotFetchedAt,
-        snapshotFragmentId: base.snapshotFragmentId,
-        parserVersion: base.parserVersion,
-        parseStatus: base.parseStatus,
-        parseError: base.parseError,
-        verdictStatus: base.verdictStatus,
-        verdict: base.verdict,
-        verdictError: base.verdictError,
-        verdictModel: base.verdictModel,
-        verdictConfidence: base.verdictConfidence,
-        verdictRecordedAt: base.verdictRecordedAt,
-        sourceEventSignature: `revision-proposed:${payload.revisionId}`,
-        baseRevisionId: payload.baseRevisionId,
-        changes: payload.changes,
-        fields: payload.fields,
+        caseKey: payload.caseKey,
       });
+      return;
+    }
+    // The edit-after-source-change race, decided by stream order: a draft
+    // built against a base that is no longer current (a collector revision
+    // or another redraft landed first) must not overwrite the newer state.
+    // The route already refused the obvious case; this catches the write
+    // that was in flight when the base moved.
+    if (caseRow.currentRevisionId !== payload.baseRevisionId) {
+      console.warn("[RegulationRevision] stale base, draft not landed", {
+        caseId: payload.caseId,
+        baseRevisionId: payload.baseRevisionId,
+        currentRevisionId: caseRow.currentRevisionId,
+      });
+      return;
+    }
 
-      for (const [index, area] of payload.geometries.entries()) {
-        const wkt = pointsToMultipointWkt(area.points);
-        await tx.insert(schema.regulationCaseGeometries).values({
-          id: geometryIdFor(payload.revisionId, index),
-          caseId: payload.caseId,
-          revisionId: payload.revisionId,
-          position: index,
-          name: area.name,
-          section: area.section,
-          kind: area.kind,
-          season: area.season,
-          verticesQuoted: area.verticesQuoted,
-          points: area.points,
-          geom: wkt ? (sql`ST_GeomFromText(${wkt}, 4326)` as never) : null,
-          geometrySource: area.geometrySource,
-          coordinateSystem: area.coordinateSystem,
-          precision: area.precision,
-          // A redrafted area is a NEW area: validation names geometry ids,
-          // and this id did not exist when any earlier validation happened.
-          geometryValidated: false,
-        });
+    const [base] = await tx
+      .select()
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, payload.baseRevisionId))
+      .limit(1);
+    if (!base) {
+      console.warn("[RegulationRevision] base revision missing", {
+        baseRevisionId: payload.baseRevisionId,
+      });
+      return;
+    }
+    if (base.caseId !== payload.caseId || caseRow.caseKey !== payload.caseKey)
+      throw new Error("foreign revision proposal");
+    for (const area of payload.geometries) {
+      if (area.geometrySource !== "official-vector") continue;
+      if (
+        caseRow.jurisdiction !== "NO" ||
+        caseRow.sourceType !== "fiskeridir-jmelding"
+      )
+        throw new OfficialVectorRejectedError(
+          "official geometry on unrelated source",
+        );
+      if (area.officialVector) {
+        const vector = verifyOfficialVector(area.officialVector);
+        if (
+          vector.provenance.sourceRef.toLowerCase() !==
+            caseRow.sourceRef.toLowerCase() ||
+          vector.provenance.sourceContentHash !==
+            canonicalDigest(base.snapshotText)
+        )
+          throw new OfficialVectorRejectedError(
+            "official geometry legal source mismatch",
+          );
+        await storeOfficialVector(tx, payload.caseId, vector);
       }
+    }
+    const positionRows = await tx
+      .select({
+        max: sql<
+          number | null
+        >`max(${schema.regulationCaseRevisions.position})`,
+      })
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.caseId, payload.caseId));
+    const position = (positionRows[0]?.max ?? -1) + 1;
 
-      await tx
-        .update(schema.regulationCases)
-        .set({
-          ...caseColumnsOfFields(payload.fields),
-          currentRevisionId: payload.revisionId,
-          // A new draft invalidates both validations — they are statements
-          // about a revision, and this is a different revision.
-          regulatoryValidated: false,
-          geometryValidated: false,
-          // An approved/published case whose draft moves is back under
-          // review: the approval named a revision that is no longer current.
-          // The approval row keeps what was approved; the case state must
-          // not keep claiming it. The PUBLISHED pointer stays pinned — the
-          // regulation the 1st mate shows is still the approved revision,
-          // and it only changes on the next approval (or a decline).
-          ...demotionOf(caseRow.adminStatus, caseRow.publishedRevisionId),
-          updatedAt: new Date(payload.recordedAt),
-        })
-        .where(eq(schema.regulationCases.id, payload.caseId));
+    // The snapshot and its verdict carry over verbatim: a redraft changes
+    // the INTERPRETATION, never the source text, and the verdict judged
+    // the text.
+    await tx.insert(schema.regulationCaseRevisions).values({
+      id: payload.revisionId,
+      caseId: payload.caseId,
+      position,
+      contentHash: base.contentHash,
+      changeType: base.changeType,
+      author: payload.actor,
+      snapshotText: base.snapshotText,
+      sourceTextComplete: base.sourceTextComplete,
+      snapshotUrl: base.snapshotUrl,
+      snapshotFetchedAt: base.snapshotFetchedAt,
+      snapshotFragmentId: base.snapshotFragmentId,
+      parserVersion: base.parserVersion,
+      parseStatus: base.parseStatus,
+      parseError: base.parseError,
+      verdictStatus: base.verdictStatus,
+      verdict: base.verdict,
+      verdictError: base.verdictError,
+      verdictModel: base.verdictModel,
+      verdictConfidence: base.verdictConfidence,
+      verdictRecordedAt: base.verdictRecordedAt,
+      sourceEventSignature: `revision-proposed:${payload.revisionId}`,
+      baseRevisionId: payload.baseRevisionId,
+      changes: payload.changes,
+      fields: payload.fields,
     });
+
+    for (const [index, area] of payload.geometries.entries()) {
+      const wkt = pointsToMultipointWkt(area.points);
+      await tx.insert(schema.regulationCaseGeometries).values({
+        id: geometryIdFor(payload.revisionId, index),
+        caseId: payload.caseId,
+        revisionId: payload.revisionId,
+        position: index,
+        name: area.name,
+        section: area.section,
+        kind: area.kind,
+        season: area.season,
+        verticesQuoted: area.verticesQuoted,
+        points: area.points,
+        geom: wkt ? (sql`ST_GeomFromText(${wkt}, 4326)` as never) : null,
+        geometrySource: area.geometrySource,
+        coordinateSystem: area.coordinateSystem,
+        precision: area.precision,
+        paragraph: area.paragraph ?? null,
+        officialSnapshotId: area.officialVector?.snapshotId ?? null,
+        evidenceRuns: area.evidenceRuns ?? null,
+        // A redrafted area is a NEW area: validation names geometry ids,
+        // and this id did not exist when any earlier validation happened.
+        geometryValidated: false,
+      });
+    }
+
+    await tx
+      .update(schema.regulationCases)
+      .set({
+        ...caseColumnsOfFields(payload.fields),
+        currentRevisionId: payload.revisionId,
+        // A new draft invalidates both validations — they are statements
+        // about a revision, and this is a different revision.
+        regulatoryValidated: false,
+        geometryValidated: false,
+        // An approved/published case whose draft moves is back under
+        // review: the approval named a revision that is no longer current.
+        // The approval row keeps what was approved; the case state must
+        // not keep claiming it. The PUBLISHED pointer stays pinned — the
+        // regulation the 1st mate shows is still the approved revision,
+        // and it only changes on the next approval (or a decline).
+        ...demotionOf(caseRow.adminStatus, caseRow.publishedRevisionId),
+        updatedAt: new Date(payload.recordedAt),
+      })
+      .where(eq(schema.regulationCases.id, payload.caseId));
   }
 
   async handlePointerMoved(
@@ -312,6 +358,66 @@ export class RegulationRevisionProjector {
         });
         return;
       }
+      if (payload.scope === "geometry" && payload.geometryId) {
+        const [geometry] = await tx
+          .select()
+          .from(schema.regulationCaseGeometries)
+          .where(
+            and(
+              eq(schema.regulationCaseGeometries.id, payload.geometryId),
+              eq(
+                schema.regulationCaseGeometries.revisionId,
+                payload.revisionId,
+              ),
+              eq(schema.regulationCaseGeometries.caseId, payload.caseId),
+            ),
+          );
+        if (!geometry) return;
+        if (
+          geometry.geometrySource === "official-vector" &&
+          payload.validated
+        ) {
+          if (
+            !geometry.officialSnapshotId ||
+            payload.snapshotId !== geometry.officialSnapshotId
+          )
+            return;
+          const [snapshot] = await tx
+            .select()
+            .from(schema.regulationOfficialSnapshots)
+            .where(
+              and(
+                eq(
+                  schema.regulationOfficialSnapshots.id,
+                  geometry.officialSnapshotId,
+                ),
+                eq(schema.regulationOfficialSnapshots.caseId, payload.caseId),
+              ),
+            );
+          if (
+            !snapshot ||
+            verifyOfficialVector(snapshot.payload).geometryHash !==
+              payload.geometryHash
+          )
+            return;
+        }
+      }
+      const [officialGeometry] = await tx
+        .select({ id: schema.regulationCaseGeometries.id })
+        .from(schema.regulationCaseGeometries)
+        .where(
+          and(
+            eq(schema.regulationCaseGeometries.revisionId, payload.revisionId),
+            eq(
+              schema.regulationCaseGeometries.geometrySource,
+              "official-vector",
+            ),
+          ),
+        )
+        .limit(1);
+      const commandSequence = officialGeometry
+        ? await nextDecisionSequence(tx, payload.caseId)
+        : null;
       const inserted = await tx
         .insert(schema.regulationCaseValidations)
         .values({
@@ -320,6 +426,9 @@ export class RegulationRevisionProjector {
           revisionId: payload.revisionId,
           scope: payload.scope,
           geometryId: payload.geometryId,
+          commandSequence,
+          officialSnapshotId: payload.snapshotId ?? null,
+          geometryHash: payload.geometryHash ?? null,
           validated: payload.validated,
           note: payload.note,
           actor: payload.actor,
@@ -405,14 +514,112 @@ export class RegulationRevisionProjector {
       // diff; here they run again under stream order, because a revision may
       // have landed between the route's read and this projection. A refusal
       // is RECORDED, not dropped — the audit trail keeps the race losers.
+      const geometryRows = await tx
+        .select()
+        .from(schema.regulationCaseGeometries)
+        .where(
+          eq(schema.regulationCaseGeometries.revisionId, payload.revisionId),
+        )
+        .orderBy(schema.regulationCaseGeometries.position);
+      const isOfficial = geometryRows.some(
+        (g) => g.geometrySource === "official-vector",
+      );
+      const commandSequence = isOfficial
+        ? await nextDecisionSequence(tx, payload.caseId)
+        : null;
+      const flags = isOfficial
+        ? await this.validationFlagsOf(tx, payload.revisionId)
+        : null;
+      const officialRows = isOfficial
+        ? await hydrateOfficialGeometries(tx, geometryRows, payload.caseId)
+        : [];
+      const [legal] = isOfficial
+        ? await tx
+            .select()
+            .from(schema.regulationCaseValidations)
+            .where(
+              and(
+                eq(
+                  schema.regulationCaseValidations.revisionId,
+                  payload.revisionId,
+                ),
+                eq(schema.regulationCaseValidations.scope, "legal"),
+              ),
+            )
+            .orderBy(
+              sql`${schema.regulationCaseValidations.commandSequence} desc nulls last`,
+              desc(schema.regulationCaseValidations.recordedAt),
+            )
+            .limit(1)
+        : [];
+      const validations = isOfficial
+        ? await tx
+            .select()
+            .from(schema.regulationCaseValidations)
+            .where(
+              and(
+                eq(
+                  schema.regulationCaseValidations.revisionId,
+                  payload.revisionId,
+                ),
+                eq(schema.regulationCaseValidations.scope, "geometry"),
+              ),
+            )
+            .orderBy(
+              sql`${schema.regulationCaseValidations.commandSequence} desc nulls last`,
+            )
+        : [];
+      const geometryEvidence = officialRows
+        .filter((g) => g.geometrySource === "official-vector")
+        .map((g) => {
+          const exact = g as typeof g & {
+            snapshotId: string | null;
+            geometryHash: string | null;
+          };
+          const receipt = validations.find((v) => v.geometryId === g.id);
+          return {
+            geometryId: g.id,
+            snapshotId: exact.snapshotId,
+            geometryHash: exact.geometryHash,
+            validationId: receipt?.id ?? null,
+            valid:
+              receipt?.validated === true &&
+              receipt.officialSnapshotId === exact.snapshotId &&
+              receipt.geometryHash === exact.geometryHash &&
+              receipt.commandSequence !== null &&
+              receipt.commandSequence < (commandSequence ?? 0),
+          };
+        });
+      const exactEvidence =
+        !isOfficial ||
+        (legal?.validated &&
+          legal.caseId === payload.caseId &&
+          legal.commandSequence !== null &&
+          legal.commandSequence < (commandSequence ?? 0) &&
+          (payload.metadataOnly ||
+            (geometryEvidence.length > 0 &&
+              geometryEvidence.every((g) => g.snapshotId && g.valid))));
+      const approvalEvidence = isOfficial
+        ? {
+            kind: "official-vector",
+            snapshotManifestHash: snapshotManifestHash(officialRows),
+            legalValidationId: legal?.id ?? null,
+            geometries: payload.metadataOnly
+              ? []
+              : geometryEvidence.map(({ valid: _valid, ...g }) => g),
+          }
+        : null;
       const refusalReason =
         caseRow.currentRevisionId !== payload.revisionId
           ? `stale revision: current is ${caseRow.currentRevisionId}`
-          : !caseRow.regulatoryValidated
+          : !(flags?.regulatoryValidated ?? caseRow.regulatoryValidated)
             ? "legal validation missing"
-            : !payload.metadataOnly && !caseRow.geometryValidated
+            : !payload.metadataOnly &&
+                !(flags?.geometryValidated ?? caseRow.geometryValidated)
               ? "geometry validation missing"
-              : null;
+              : !exactEvidence
+                ? "exact official validation evidence missing"
+                : null;
 
       const inserted = await tx
         .insert(schema.regulationCaseApprovals)
@@ -421,6 +628,8 @@ export class RegulationRevisionProjector {
           caseId: payload.caseId,
           revisionId: payload.revisionId,
           metadataOnly: payload.metadataOnly,
+          commandSequence,
+          approvalEvidence,
           note: payload.note,
           actor: payload.actor,
           recordedAt: new Date(payload.recordedAt),
@@ -479,6 +688,7 @@ export class RegulationRevisionProjector {
           adminStatus: "published",
           regulationStatus: "published",
           publishedRevisionId: payload.revisionId,
+          ...(isOfficial ? { publishedApprovalId: payload.approvalId } : {}),
           publishedToUsersAt: new Date(payload.recordedAt),
           publishedToUsersBy: payload.actor,
           publishedMetadataOnly: payload.metadataOnly,
@@ -509,12 +719,15 @@ export class RegulationRevisionProjector {
           eq(schema.regulationCaseValidations.scope, "legal"),
         ),
       )
-      .orderBy(desc(schema.regulationCaseValidations.recordedAt))
+      .orderBy(
+        sql`${schema.regulationCaseValidations.commandSequence} desc nulls last`,
+        desc(schema.regulationCaseValidations.recordedAt),
+      )
       .limit(1);
     const [geometryTotals] = await tx
       .select({
         total: sql<number>`count(*)::int`,
-        validated: sql<number>`count(*) filter (where ${schema.regulationCaseGeometries.geometryValidated})::int`,
+        validated: sql<number>`count(*) filter (where ${schema.regulationCaseGeometries.geometryValidated} and (${schema.regulationCaseGeometries.geometrySource} <> 'official-vector' or ${schema.regulationCaseGeometries.officialSnapshotId} is not null))::int`,
       })
       .from(schema.regulationCaseGeometries)
       .where(eq(schema.regulationCaseGeometries.revisionId, revisionId));
@@ -572,4 +785,15 @@ function laneOf(
     return "awaiting_regulatory_validation";
   }
   return current;
+}
+
+/** Projection order is the authority for new official decisions; producer
+ * clocks cannot resurrect an older validation. The case row is locked. */
+async function nextDecisionSequence(tx: Tx, caseId: string): Promise<number> {
+  const [row] =
+    await tx.execute(sql`select coalesce(max(sequence),0)::int + 1 as next from (
+    select command_sequence sequence from regulation_case_validations where case_id = ${caseId}
+    union all select command_sequence sequence from regulation_case_approvals where case_id = ${caseId}
+  ) decisions`);
+  return Number(row.next);
 }

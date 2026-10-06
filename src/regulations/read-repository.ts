@@ -3,6 +3,7 @@ import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { SourceRun } from "./coastal-state";
+import { hydrateOfficialGeometries } from "./official-vector";
 import { shapeReview } from "./shape-review";
 
 /**
@@ -244,9 +245,13 @@ export class RegulationQueueReadRepository {
    * proposal copies when geometry is untouched, and the membership check for
    * per-area validation. */
   async getRevisionGeometries(revisionId: string) {
-    return await this.db
+    const rows = await this.db
       .select({
         id: schema.regulationCaseGeometries.id,
+        caseId: schema.regulationCaseGeometries.caseId,
+        officialSnapshotId: schema.regulationCaseGeometries.officialSnapshotId,
+        paragraph: schema.regulationCaseGeometries.paragraph,
+        evidenceRuns: schema.regulationCaseGeometries.evidenceRuns,
         position: schema.regulationCaseGeometries.position,
         name: schema.regulationCaseGeometries.name,
         section: schema.regulationCaseGeometries.section,
@@ -262,14 +267,9 @@ export class RegulationQueueReadRepository {
       .from(schema.regulationCaseGeometries)
       .where(eq(schema.regulationCaseGeometries.revisionId, revisionId))
       .orderBy(asc(schema.regulationCaseGeometries.position));
+    return hydrateOfficialGeometries(this.db, rows);
   }
 
-  /**
-   * Everything the case-detail screen shows: the case, its revision history
-   * (each revision with its own geometries — validation is per-area, so the
-   * areas stay addressable), attached sources and replacement links. The
-   * revision list IS the B1 audit trail; the action events land in B2/B3.
-   */
   async getCaseDetail(caseId: string) {
     const [caseRow] = await this.db
       .select()
@@ -296,6 +296,11 @@ export class RegulationQueueReadRepository {
       this.db
         .select({
           id: schema.regulationCaseGeometries.id,
+          caseId: schema.regulationCaseGeometries.caseId,
+          officialSnapshotId:
+            schema.regulationCaseGeometries.officialSnapshotId,
+          paragraph: schema.regulationCaseGeometries.paragraph,
+          evidenceRuns: schema.regulationCaseGeometries.evidenceRuns,
           revisionId: schema.regulationCaseGeometries.revisionId,
           position: schema.regulationCaseGeometries.position,
           name: schema.regulationCaseGeometries.name,
@@ -367,8 +372,13 @@ export class RegulationQueueReadRepository {
         .where(eq(schema.regulationCaseOfficialAreas.caseId, caseId))
         .orderBy(asc(schema.regulationCaseOfficialAreas.paragraph)),
     ]);
-    const geometriesByRevision = new Map<string, typeof geometries>();
-    for (const geometry of geometries) {
+    const hydrated = await hydrateOfficialGeometries(
+      this.db,
+      geometries,
+      caseId,
+    );
+    const geometriesByRevision = new Map<string, typeof hydrated>();
+    for (const geometry of hydrated) {
       const list = geometriesByRevision.get(geometry.revisionId) ?? [];
       list.push(geometry);
       geometriesByRevision.set(geometry.revisionId, list);
@@ -386,13 +396,20 @@ export class RegulationQueueReadRepository {
             validations,
           ),
           isCurrent: revision.id === caseRow.currentRevisionId,
-          // `paragraph` is the join key to `officialAreas`: the § an area's name
-          // carries, null when the name has none.
+          // Official paragraph identity comes from the revision binding.
+          // Legacy rows retain their existing display-name fallback.
           geometries: (geometriesByRevision.get(revision.id) ?? []).map(
-            (geometry) => ({
-              ...geometry,
-              paragraph: paragraphOf(geometry.name),
-            }),
+            (geometry) => {
+              const { officialVector: _payload, ...dto } =
+                geometry as typeof geometry & { officialVector?: unknown };
+              return {
+                ...dto,
+                paragraph:
+                  geometry.geometrySource === "official-vector"
+                    ? (geometry.paragraph ?? null)
+                    : (geometry.paragraph ?? paragraphOf(geometry.name)),
+              };
+            },
           ),
         };
       }),

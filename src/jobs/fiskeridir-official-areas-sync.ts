@@ -1,33 +1,19 @@
 import { fetchFiskeridirPolygons } from "@/closures/fiskeridir-wfs";
 import type { OfficialAreaRepository } from "@/regulations/official-area-repository";
+import type { OfficialVectorPreparation } from "@/regulations/official-vector-preparation";
 import type { JobExecutionResult, JobState } from "./types";
 
-/**
- * 🗺 Stores Fiskeridirektoratet's drawn shape for every closure that belongs to
- * a case we hold, so the review screen can show a reviewer the same polygon
- * the authority's own map shows.
- *
- * Why this exists: a statute's coordinates are not always its whole shape.
- * § 6 of the seinot forskrift lists eight positions and then says the boundary
- * follows the coastline between two pairs of them; the text carries no
- * coordinates for that. The authority resolves it into a coastline-clipped
- * polygon with holes for islands, and no text reader can — so the reviewer
- * compares against theirs, and this is where it comes from. The vertices we
- * read out of the prose stay exactly as they are; this is a second, separate
- * thing shown beside them.
- *
- * Writes only `regulation_case_official_areas`. Touches no revision, so it
- * cannot reset a validation or demote an approved case. Stores the shape as
- * published: nothing simplified, nothing repaired, and a shape that fails the
- * plausibility check is skipped and counted rather than fixed.
- *
- * The register lists closures IN FORCE. A closure that drops out of it (J-155
- * became J-158, for one) keeps the last shape stored, stamped with when it was
- * last seen.
+/** Refresh the diagnostic authority cache, then prepare immutable revision
+ * candidates through the durable multipart event path. Preparation never
+ * approves or replaces a published pin. Geometry and printed evidence remain
+ * separate; all coordinate rings/parts are preserved without repair.
+ * Closures absent from the current register retain their last fetched cache
+ * entry and its timestamp; the register is not a historical archive.
  */
 
 export function createFiskeridirOfficialAreasSyncJob(
   repository: OfficialAreaRepository,
+  preparation?: OfficialVectorPreparation,
 ) {
   return async (
     _previous: JobState | undefined,
@@ -53,12 +39,31 @@ export function createFiskeridirOfficialAreasSyncJob(
               name: polygon.name,
               geojson: polygon.geometry,
               vertexCount: polygon.vertexCount,
+              sourceMetadata: {
+                sourceRef: polygon.jmNumber,
+                featureIds: polygon.featureIds ?? [],
+              },
             },
           ]
         : [];
     });
 
     const result = await repository.upsert(inputs, checkedAt);
+    if (preparation)
+      for (const caseId of caseIds.values()) {
+        if (context.signal.aborted) throw context.signal.reason;
+        try {
+          await preparation.prepare(
+            caseId,
+            "job:fiskeridir-official-areas-sync",
+          );
+        } catch (error) {
+          console.warn("[Fiskeridir] official revision candidate unavailable", {
+            caseId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
     // The register lists every closure in force nationally while we hold a
     // subset, so this list is long every run. Name a few, count the rest.

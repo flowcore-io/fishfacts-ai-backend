@@ -9,6 +9,7 @@ export type OfficialAreaInput = {
   name: string | null;
   geojson: unknown;
   vertexCount: number;
+  sourceMetadata?: { sourceRef: string; featureIds: string[] };
 };
 
 export type OfficialArea = {
@@ -18,6 +19,7 @@ export type OfficialArea = {
   vertexCount: number;
   source: string;
   fetchedAt: Date;
+  sourceMetadata: unknown;
 };
 
 export type OfficialAreaUpsertResult = {
@@ -123,6 +125,7 @@ export class OfficialAreaRepository {
             geojson: input.geojson,
             vertexCount: input.vertexCount,
             contentHash,
+            sourceMetadata: input.sourceMetadata ?? null,
             fetchedAt,
           });
           result.inserted++;
@@ -134,6 +137,7 @@ export class OfficialAreaRepository {
               geojson: input.geojson,
               vertexCount: input.vertexCount,
               contentHash,
+              sourceMetadata: input.sourceMetadata ?? null,
               fetchedAt,
             })
             .where(
@@ -149,7 +153,11 @@ export class OfficialAreaRepository {
         } else {
           await tx
             .update(schema.regulationCaseOfficialAreas)
-            .set({ fetchedAt })
+            .set({
+              fetchedAt,
+              name: input.name,
+              sourceMetadata: input.sourceMetadata ?? null,
+            })
             .where(
               and(
                 eq(schema.regulationCaseOfficialAreas.caseId, input.caseId),
@@ -175,6 +183,7 @@ export class OfficialAreaRepository {
         vertexCount: schema.regulationCaseOfficialAreas.vertexCount,
         source: schema.regulationCaseOfficialAreas.source,
         fetchedAt: schema.regulationCaseOfficialAreas.fetchedAt,
+        sourceMetadata: schema.regulationCaseOfficialAreas.sourceMetadata,
       })
       .from(schema.regulationCaseOfficialAreas)
       .where(eq(schema.regulationCaseOfficialAreas.caseId, caseId))

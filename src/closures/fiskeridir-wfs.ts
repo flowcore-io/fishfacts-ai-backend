@@ -1,25 +1,11 @@
 /**
- * Fiskeridirektoratet's own register of closed areas, as published geodata.
- *
- * Every closure we read out of a J-melding's prose, the authority also
- * publishes as a feature here, keyed by the same J-melding number and paragraph
- * — including `geom_original`, its vertex list in the statute's own
- * degrees-and-decimal-minutes notation. That is the thing our coordinate
- * grammar reconstructs from the text, so it is the comparison that can tell a
- * parser defect from a source defect.
- *
- * Two things the layer is NOT:
- *
- * - An archive. It carries closures in force, so a superseded amendment
- *   (J-144-2026, rolled up into J-153-2026) is simply absent. A J-melding with
- *   no features here has not necessarily diverged — it may just be historic.
- * - The statute's vertices. `geom_original` is what the text prints; the polygon
- *   the authority DRAWS is a different thing, clipped to the coastline, which
- *   for a fjord closure runs to five figures of vertices. The two are read by
- *   two functions on purpose: `fetchFiskeridirClosures` asks for the vertex
- *   lists only (`returnGeometry=false`, a few tens of KB) to check that we read
- *   the statute correctly; `fetchFiskeridirPolygons` asks for the drawn shapes
- *   (~0.6 MB) so a reviewer can see what the authority's map shows.
+ * Fiskeridirektoratet's current closure register, keyed by J-number and paragraph.
+ * Full authority polygons preserve coastline details, holes and separate parts.
+ * `geom_original` is supplementary register evidence and may contain points
+ * absent from the printed law, including show:true points. It cannot establish
+ * statutory vertices or substitute for parsing the actual legal text.
+ * This service is not a historical archive; reviewed versions are frozen by
+ * the regulation snapshot pipeline rather than read from this mutable source.
  */
 
 const FISKERIDIR_CLOSURES_WFS =
@@ -164,6 +150,7 @@ export type OfficialPolygon = {
   /** GeoJSON, exactly as the register's server returned it. */
   geometry: GeoJsonPolygon | GeoJsonMultiPolygon;
   vertexCount: number;
+  featureIds?: string[];
 };
 
 export type GeoJsonPolygon = { type: "Polygon"; coordinates: number[][][] };
@@ -210,11 +197,13 @@ export function polygonIsPlausible(
 }
 
 type GeoJsonFeature = {
+  id?: string | number;
   geometry?: { type?: string; coordinates?: unknown } | null;
   properties?: {
     jmelding_navn?: string | null;
     paragraf?: number | null;
     navn?: string | null;
+    iid?: number;
   } | null;
 };
 
@@ -234,41 +223,86 @@ type GeoJsonFeature = {
 export async function fetchFiskeridirPolygons(
   signal?: AbortSignal,
 ): Promise<{ polygons: OfficialPolygon[]; skipped: number; merged: number }> {
-  const url = new URL(FISKERIDIR_CLOSURES_WFS);
-  url.searchParams.set("where", "1=1");
-  url.searchParams.set("outFields", "jmelding_navn,paragraf,navn");
-  url.searchParams.set("returnGeometry", "true");
-  url.searchParams.set("outSR", "4326");
-  url.searchParams.set("f", "geojson");
-
-  const response = await fetch(url, {
+  const idsUrl = new URL(FISKERIDIR_CLOSURES_WFS);
+  idsUrl.searchParams.set("where", "1=1");
+  idsUrl.searchParams.set("returnIdsOnly", "true");
+  idsUrl.searchParams.set("f", "json");
+  const idsResponse = await fetch(idsUrl, {
     headers: { "user-agent": UA },
     signal,
   });
-  if (!response.ok) {
+  if (!idsResponse.ok)
     throw new Error(
-      `Fiskeridirektoratet closure register returned ${response.status}`,
+      `Fiskeridirektoratet closure register returned ${idsResponse.status}`,
     );
-  }
-  const json = (await response.json()) as {
-    features?: GeoJsonFeature[];
+  const idsJson = (await idsResponse.json()) as {
+    objectIds?: number[];
     error?: { message?: string };
   };
-  if (json.error) {
+  if (idsJson.error)
     throw new Error(
-      `Fiskeridirektoratet closure register error: ${json.error.message ?? "unknown"}`,
+      `Fiskeridirektoratet closure register error: ${idsJson.error.message ?? "unknown"}`,
     );
+  if (
+    !Array.isArray(idsJson.objectIds) ||
+    idsJson.objectIds.some((id) => !Number.isSafeInteger(id)) ||
+    new Set(idsJson.objectIds).size !== idsJson.objectIds.length
+  )
+    throw new Error("Fiskeridirektoratet feature inventory missing or invalid");
+  const features: GeoJsonFeature[] = [];
+  // Explicit object-id inventory avoids transfer-limit truncation and paging
+  // shifts. Any disappeared/duplicate/new alien member refuses the observation.
+  for (let i = 0; i < idsJson.objectIds.length; i += 100) {
+    const ids = idsJson.objectIds.slice(i, i + 100);
+    const url = new URL(FISKERIDIR_CLOSURES_WFS);
+    url.searchParams.set("objectIds", ids.join(","));
+    url.searchParams.set("outFields", "iid,jmelding_navn,paragraf,navn");
+    url.searchParams.set("returnGeometry", "true");
+    url.searchParams.set("outSR", "4326");
+    url.searchParams.set("f", "geojson");
+    const response = await fetch(url, {
+      headers: { "user-agent": UA },
+      signal,
+    });
+    if (!response.ok)
+      throw new Error(
+        `Fiskeridirektoratet closure register returned ${response.status}`,
+      );
+    const json = (await response.json()) as {
+      features?: GeoJsonFeature[];
+      exceededTransferLimit?: boolean;
+      error?: { message?: string };
+    };
+    if (json.error)
+      throw new Error(
+        `Fiskeridirektoratet closure register error: ${json.error.message ?? "unknown"}`,
+      );
+    const returned =
+      json.features?.map((f) => Number(f.properties?.iid ?? f.id)) ?? [];
+    if (
+      json.exceededTransferLimit ||
+      returned.length !== ids.length ||
+      new Set(returned).size !== ids.length ||
+      returned.some((id) => !ids.includes(id))
+    )
+      throw new Error("Fiskeridirektoratet incomplete feature inventory");
+    features.push(...(json.features ?? []));
   }
-
   const polygons: OfficialPolygon[] = [];
   let skipped = 0;
-  for (const feature of json.features ?? []) {
+  for (const feature of features) {
     const jmNumber = feature.properties?.jmelding_navn?.trim();
     const paragraph = feature.properties?.paragraf;
     const geometry = feature.geometry;
     const isPolygon =
       geometry?.type === "Polygon" || geometry?.type === "MultiPolygon";
-    if (!jmNumber || typeof paragraph !== "number" || !isPolygon) {
+    if (
+      !jmNumber ||
+      typeof paragraph !== "number" ||
+      !Number.isInteger(paragraph) ||
+      paragraph < 1 ||
+      !isPolygon
+    ) {
       skipped++;
       continue;
     }
@@ -283,6 +317,7 @@ export async function fetchFiskeridirPolygons(
       name: feature.properties?.navn?.trim() ?? null,
       geometry: typed,
       vertexCount: polygonVertexCount(typed),
+      featureIds: [String(feature.properties?.iid ?? feature.id)],
     });
   }
   return { ...mergeRepeatedParagraphs(polygons), skipped };
@@ -328,6 +363,7 @@ export function mergeRepeatedParagraphs(polygons: OfficialPolygon[]): {
       name: group.find((polygon) => polygon.name)?.name ?? null,
       geometry: { type: "MultiPolygon", coordinates: parts },
       vertexCount: group.reduce((total, p) => total + p.vertexCount, 0),
+      featureIds: group.flatMap((p) => p.featureIds ?? []),
     });
   }
   return { polygons: result, merged };
