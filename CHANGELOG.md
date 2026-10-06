@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.16.0...v2.16.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **regulations:** publish immutable Norwegian authority vectors ([#209](https://github.com/flowcore-io/fishfacts-ai-backend/issues/209)) ([f94eb18](https://github.com/flowcore-io/fishfacts-ai-backend/commit/f94eb18db724184441f982c8151b9e580dcb1194))
+
 ## [2.16.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.15.0...v2.16.0) (2026-10-06)
 
 
