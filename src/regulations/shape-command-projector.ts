@@ -9,7 +9,10 @@ import {
   modeledValidationSchema,
   modeledVerdictSchema,
 } from "@/events/coastal-commands";
-import { regulationRevisionFieldsSchema } from "@/events/contracts";
+import {
+  regulationRevisionFieldsSchema,
+  regulationRevisionGeometrySchema,
+} from "@/events/contracts";
 import { canonicalDigest } from "@/events/json-digest";
 import type { CaseCommand } from "@/events/regulation-case-command";
 import { pointsToMultipointWkt } from "@/jmelding/geo-parser";
@@ -24,6 +27,7 @@ import { type RegulationCaseProjector, sourceTypeOf } from "./case-projector";
 import {
   type RevisionShapeState,
   normalApprovalBlockers,
+  sourceRunManifestHashOf,
   verifyShapeState,
 } from "./coastal-state";
 import { geometryIdFor } from "./ids";
@@ -343,12 +347,13 @@ export class RegulationShapeCommandProjector {
       .from(schema.regulationCaseGeometries)
       .where(eq(schema.regulationCaseGeometries.revisionId, base.id))
       .orderBy(asc(schema.regulationCaseGeometries.position));
-    const signature = (runs: Array<{ position: number; points: unknown }>) =>
-      canonicalDigest(
-        runs.map((r) => ({ position: r.position, points: r.points })),
-      );
     if (
-      signature(rawBase) !== signature(data.geometries) &&
+      sourceRunManifestHashOf(
+        rawBase.map((r) => ({
+          position: r.position,
+          points: regulationRevisionGeometrySchema.parse(r).points,
+        })),
+      ) !== sourceRunManifestHashOf(data.geometries) &&
       state.shapes.some((s) => s.geojson !== null)
     )
       return refused("changed source points require blocked reconstruction");

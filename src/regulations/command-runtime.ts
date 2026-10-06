@@ -450,6 +450,58 @@ export class RegulationCaseCommandRuntime {
       this.recovering = false;
     }
   }
+  /** The source may satisfy an earlier blocked ancestor across ready decisions.
+   * Traverse original intake links, never timestamps or UUID ordering. A ready
+   * intervening decision stays behind its ancestor after the source applies. */
+  private async sourceSuppliesEarlierDependency(
+    input: typeof schema.regulationOrderedInputs.$inferSelect,
+    ancestor: typeof schema.regulationOrderedInputs.$inferSelect,
+  ): Promise<boolean> {
+    const parsed = modeledSourceSchema.parse({
+      inputId: input.id,
+      item: input.payload,
+    });
+    const target = revisionIdFor(parsed.item.signature);
+    const [exists] = await this.db
+      .select({ id: schema.regulationCases.id })
+      .from(schema.regulationCases)
+      .where(eq(schema.regulationCases.id, input.caseId));
+    if (!exists) return true; // Only source can establish case genesis.
+    const seen = new Set<string>();
+    let current: typeof ancestor | undefined = ancestor;
+    while (current) {
+      if (current.caseId !== input.caseId || seen.has(current.id))
+        throw Error("invalid original intake predecessor chain");
+      seen.add(current.id);
+      if (current.status === "consumed") return false;
+      const data = current.payload as Record<string, unknown>;
+      const needed =
+        current.kind === "proposal"
+          ? data.baseRevisionId
+          : current.kind === "pointer"
+            ? data.toRevisionId
+            : data.revisionId;
+      if (
+        needed === target &&
+        !(await this.legacyDependencies(
+          current.kind,
+          current.caseId,
+          current.payload,
+        ))
+      )
+        return true;
+      if (!current.predecessorInputId) return false;
+      const [previous] = await this.db
+        .select()
+        .from(schema.regulationOrderedInputs)
+        .where(
+          eq(schema.regulationOrderedInputs.id, current.predecessorInputId),
+        );
+      if (!previous) throw Error("original intake predecessor missing");
+      current = previous;
+    }
+    return false;
+  }
   private async recoverInput(
     input: typeof schema.regulationOrderedInputs.$inferSelect,
   ) {
@@ -501,33 +553,9 @@ export class RegulationCaseCommandRuntime {
           // Event-only replay may observe an old decision before the source
           // that creates its named revision. Only that exact dependency may
           // precede the decision; never reorder two ready decisions by clocks.
-          let suppliesDependency = false;
-          if (
+          const suppliesDependency =
             input.kind === "source" &&
-            !(await this.legacyDependencies(
-              previous.kind,
-              previous.caseId,
-              previous.payload,
-            ))
-          ) {
-            const parsed = modeledSourceSchema.parse({
-              inputId: input.id,
-              item: input.payload,
-            });
-            const data = previous.payload as Record<string, unknown>;
-            const needed =
-              previous.kind === "proposal"
-                ? data.baseRevisionId
-                : previous.kind === "pointer"
-                  ? data.toRevisionId
-                  : data.revisionId;
-            const [exists] = await this.db
-              .select({ id: schema.regulationCases.id })
-              .from(schema.regulationCases)
-              .where(eq(schema.regulationCases.id, input.caseId));
-            suppliesDependency =
-              !exists || needed === revisionIdFor(parsed.item.signature);
-          }
+            (await this.sourceSuppliesEarlierDependency(input, previous));
           if (!suppliesDependency) return;
         }
       }

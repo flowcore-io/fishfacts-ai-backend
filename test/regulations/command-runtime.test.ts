@@ -24,7 +24,10 @@ import {
   registerOrderedCommandPathways,
 } from "../../src/pathways";
 import { RegulationCaseActionProjector } from "../../src/regulations/action-projector";
-import type { RevisionShapeState } from "../../src/regulations/coastal-state";
+import {
+  type RevisionShapeState,
+  sourceRunManifestHashOf,
+} from "../../src/regulations/coastal-state";
 import { RegulationCaseCommandRuntime } from "../../src/regulations/command-runtime";
 import { caseIdFor, geometryIdFor } from "../../src/regulations/ids";
 import { RegulationPublishedReadRepository } from "../../src/regulations/published-repository";
@@ -1733,56 +1736,169 @@ test("manual route rejects duplicate and invalid explicit global run identities 
   expect(h.recorded).toHaveLength(0);
 }, 5000);
 
-test("same-case delayed original decision waits for its exact source revision without deadlocking causal intake", async () => {
+for (const intervening of [0, 1, 10])
+  test(`same-case delayed original decision recovers across ${intervening} ready decisions`, async () => {
+    const h = await harness();
+    const { revisionIdFor } = await import("../../src/regulations/ids");
+    const { RegulationCaseProjector } = await import(
+      "../../src/regulations/case-projector"
+    );
+    const signature = randomUUID();
+    const target = revisionIdFor(signature);
+    const payload = {
+      caseId: h.caseId,
+      caseKey: `fiskeridir-jmelding:${h.sourceRef}`,
+      revisionId: target,
+      validationId: randomUUID(),
+      scope: "legal" as const,
+      geometryId: null,
+      validated: true,
+      note: null,
+      actor: "admin:fixture",
+      recordedAt: "2026-10-06T12:00:00.000Z",
+    };
+    await h.process("regulation.case.validation.recorded.0", payload);
+    const followers: string[] = [];
+    for (let i = 0; i < intervening; i++) {
+      const validationId = randomUUID();
+      followers.push(validationId);
+      await h.process("regulation.case.validation.recorded.0", {
+        ...payload,
+        validationId,
+        revisionId: h.revisionId,
+        validated: false,
+      });
+    }
+    await h.runtime.recover();
+    expect(h.recorded).toHaveLength(0);
+    await new RegulationCaseProjector(db).project({
+      signature,
+      jmNumber: h.sourceRef,
+      title: "Exact delayed source dependency",
+      url: "https://example.test/dependency",
+      status: "current",
+      region: "NO",
+      checkedAt: new Date().toISOString(),
+      bodyMarkdown: fixture.text,
+      sourceBodyCompleteness: "complete",
+      areas: fixture.runs.map((r) => ({ name: r.name, points: r.points })),
+    });
+    await h.runtime.recover();
+    expect(h.recorded).toHaveLength(1);
+    for (const part of h.recorded[0])
+      await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+    await h.runtime.recover();
+    expect(h.recorded).toHaveLength(2 + intervening);
+    for (const batch of h.recorded.slice(1))
+      for (const part of batch)
+        await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+    const [decision] = await db
+      .select()
+      .from(schema.regulationCaseValidations)
+      .where(eq(schema.regulationCaseValidations.id, payload.validationId));
+    expect(decision).toMatchObject({
+      validated: true,
+      revisionId: target,
+      commandSequence: 2,
+    });
+    // Later ready decisions retain causal order after the exact source and A.
+    for (let i = 0; i < followers.length; i++) {
+      const [later] = await db
+        .select()
+        .from(schema.regulationCaseValidations)
+        .where(eq(schema.regulationCaseValidations.id, followers[i]));
+      expect(later).toMatchObject({
+        validated: false,
+        revisionId: h.revisionId,
+        commandSequence: 3 + i,
+      });
+    }
+  }, 5000);
+
+test("unchanged run array reorder preserves modeled full shape while point edits block copying", async () => {
   const h = await harness();
-  const { revisionIdFor } = await import("../../src/regulations/ids");
-  const { RegulationCaseProjector } = await import(
-    "../../src/regulations/case-projector"
+  const { REGULATION_REVISION_PROPOSED_EVENT_TYPE } = await import(
+    "../../src/events/contracts"
   );
-  const signature = randomUUID();
-  const target = revisionIdFor(signature);
-  const payload = {
+  const [base] = await db
+    .select()
+    .from(schema.regulationCaseRevisions)
+    .where(eq(schema.regulationCaseRevisions.id, h.revisionId));
+  const revisionId = randomUUID();
+  await h.process(REGULATION_REVISION_PROPOSED_EVENT_TYPE, {
     caseId: h.caseId,
     caseKey: `fiskeridir-jmelding:${h.sourceRef}`,
-    revisionId: target,
-    validationId: randomUUID(),
-    scope: "legal" as const,
-    geometryId: null,
-    validated: true,
-    note: null,
+    baseRevisionId: h.revisionId,
+    revisionId,
+    fields: base.fields,
+    geometries: [...fixture.runs].reverse(),
+    changes: [
+      {
+        field: "geometries",
+        justification: "Exact global identity array reorder",
+      },
+    ],
     actor: "admin:fixture",
-    recordedAt: "2026-10-06T12:00:00.000Z",
-  };
-  await h.process("regulation.case.validation.recorded.0", payload);
-  await h.runtime.recover();
-  expect(h.recorded).toHaveLength(0);
-  await new RegulationCaseProjector(db).project({
-    signature,
-    jmNumber: h.sourceRef,
-    title: "Exact delayed source dependency",
-    url: "https://example.test/dependency",
-    status: "current",
-    region: "NO",
-    checkedAt: new Date().toISOString(),
-    bodyMarkdown: fixture.text,
-    sourceBodyCompleteness: "complete",
-    areas: fixture.runs.map((r) => ({ name: r.name, points: r.points })),
+    recordedAt: new Date().toISOString(),
   });
   await h.runtime.recover();
-  expect(h.recorded).toHaveLength(1);
-  for (const part of h.recorded[0])
-    await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
-  await h.runtime.recover();
-  expect(h.recorded).toHaveLength(2);
-  for (const part of h.recorded[1])
-    await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
-  const [decision] = await db
+  for (const p of h.recorded.at(-1) ?? [])
+    await h.process(CASE_COMMAND_PART_EVENT_TYPE, p);
+  const [revision] = await db
     .select()
-    .from(schema.regulationCaseValidations)
-    .where(eq(schema.regulationCaseValidations.id, payload.validationId));
-  expect(decision).toMatchObject({
-    validated: true,
-    revisionId: target,
-    commandSequence: 2,
+    .from(schema.regulationCaseRevisions)
+    .where(eq(schema.regulationCaseRevisions.id, revisionId));
+  expect(revision?.shapeState).toEqual(fixture.state);
+  const actual = await db
+    .select()
+    .from(schema.regulationCaseGeometries)
+    .where(eq(schema.regulationCaseGeometries.revisionId, revisionId));
+  expect(
+    sourceRunManifestHashOf(
+      actual.map((r) => ({
+        ...r,
+        points: r.points as Array<{ lat: number; lon: number }>,
+      })),
+    ),
+  ).toBe(sourceRunManifestHashOf(fixture.runs));
+  const changed = structuredClone(fixture.runs);
+  changed[0].points[0].lon += 0.001;
+  const changedRevisionId = randomUUID();
+  await h.process(REGULATION_REVISION_PROPOSED_EVENT_TYPE, {
+    caseId: h.caseId,
+    caseKey: `fiskeridir-jmelding:${h.sourceRef}`,
+    baseRevisionId: revisionId,
+    revisionId: changedRevisionId,
+    fields: base.fields,
+    geometries: changed,
+    changes: [
+      {
+        field: "geometries",
+        justification: "Explicit changed point remains blocked",
+      },
+    ],
+    actor: "admin:fixture",
+    recordedAt: new Date().toISOString(),
   });
+  await h.runtime.recover();
+  for (const p of h.recorded.at(-1) ?? [])
+    await h.process(CASE_COMMAND_PART_EVENT_TYPE, p);
+  const [changedRevision] = await db
+    .select()
+    .from(schema.regulationCaseRevisions)
+    .where(eq(schema.regulationCaseRevisions.id, changedRevisionId));
+  const changedState = changedRevision.shapeState as RevisionShapeState;
+  expect(
+    changedState.shapes.every(
+      (s) => s.geojson === null && s.status === "blocked",
+    ),
+  ).toBe(true);
+  expect(sourceRunManifestHashOf(changed)).not.toBe(
+    sourceRunManifestHashOf(
+      actual.map((r) => ({
+        ...r,
+        points: r.points as Array<{ lat: number; lon: number }>,
+      })),
+    ),
+  );
 }, 5000);
