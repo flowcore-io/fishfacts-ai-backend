@@ -1,6 +1,6 @@
 import * as schema from "@/db/schema";
 import { canonicalDigest } from "@/events/json-digest";
-import { eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { revisionIdFor } from "./ids";
 import { quarantineConflict } from "./immutable-conflict";
 import type { SnapshotTx } from "./snapshot-assembler";
@@ -16,6 +16,11 @@ export async function stageOrderedInput(
 ) {
   const id = revisionIdFor(`ordered-input:${kind}:${identity}`);
   const hash = canonicalDigest(payload);
+  // Intake order is the original serial handler observation, never the
+  // producer clock or a content-derived UUID. Retain it across retries.
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-intake:${caseId}`},0))`,
+  );
   const [known] = await tx
     .select()
     .from(schema.regulationOrderedInputs)
@@ -34,7 +39,13 @@ export async function stageOrderedInput(
     });
     return id;
   }
-  if (!known)
+  if (!known) {
+    const [predecessor] = await tx
+      .select({ id: schema.regulationOrderedInputs.id })
+      .from(schema.regulationOrderedInputs)
+      .where(eq(schema.regulationOrderedInputs.caseId, caseId))
+      .orderBy(desc(schema.regulationOrderedInputs.observationOrder))
+      .limit(1);
     await tx.insert(schema.regulationOrderedInputs).values({
       id,
       caseId,
@@ -42,6 +53,8 @@ export async function stageOrderedInput(
       payload,
       inputHash: hash,
       recordedAt: new Date(recordedAt),
+      predecessorInputId: predecessor?.id ?? null,
     });
+  }
   return id;
 }

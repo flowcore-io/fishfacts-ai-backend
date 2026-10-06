@@ -143,7 +143,7 @@ export class RegulationShapeCommandProjector {
           ? schema.regulationCaseValidations
           : command.operation === "approval"
             ? schema.regulationCaseApprovals
-            : command.operation === "revoke"
+            : command.operation === "revoke" || command.operation === "pointer"
               ? schema.regulationCaseActions
               : null;
     const identity =
@@ -153,7 +153,9 @@ export class RegulationShapeCommandProjector {
           ? dataIds?.approvalId
           : command.operation === "revoke"
             ? dataIds?.actionId
-            : dataIds?.validationId;
+            : command.operation === "pointer"
+              ? dataIds?.pointerMoveId
+              : dataIds?.validationId;
     if (identityTable && typeof identity === "string") {
       const [existing] = await tx
         .select({ id: identityTable.id })

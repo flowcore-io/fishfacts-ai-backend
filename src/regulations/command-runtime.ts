@@ -25,7 +25,7 @@ import {
   SOURCE_OBSERVATION_BARRIER_EVENT_TYPE,
   commandBarrierSchema,
 } from "@/events/regulation-command-barrier";
-import { and, asc, eq, gt, or } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { RegulationCaseActionProjector } from "./action-projector";
 import { blockedShapeState } from "./blocked-shape-state";
 import { RegulationCaseProjector } from "./case-projector";
@@ -257,6 +257,35 @@ export class RegulationCaseCommandRuntime {
       .where(eq(schema.regulationCommandReceipts.commandId, commandId));
     return receipt ?? null;
   }
+  async approvalReceipt(caseId: string, commandId: string) {
+    const receipt = await this.receipt(commandId);
+    if (!receipt) return null;
+    const command = receipt.command as CaseCommand;
+    if (
+      receipt.caseId !== caseId ||
+      command.caseId !== caseId ||
+      command.commandId !== commandId ||
+      command.operation !== "approval" ||
+      (command.data as { approvalId?: string }).approvalId !== commandId
+    )
+      return undefined;
+    return {
+      approvalId: commandId,
+      commandId,
+      caseId,
+      revisionId: command.revisionId,
+      shapeManifestHash: (command.data as { shapeManifestHash: string })
+        .shapeManifestHash,
+      metadataOnly: (command.data as { metadataOnly: boolean }).metadataOnly,
+      status:
+        receipt.status === "applied"
+          ? ("applied" as const)
+          : receipt.status === "refused"
+            ? ("refused" as const)
+            : ("pending" as const),
+      reason: receipt.reason ?? null,
+    };
+  }
   async adaptLegacy(
     kind: string,
     eventId: string,
@@ -387,7 +416,7 @@ export class RegulationCaseCommandRuntime {
             error instanceof Error ? error.message : "unconfirmed delivery",
         });
       }
-      let cursor: { recordedAt: Date; id: string } | undefined;
+      let cursor: number | undefined;
       for (;;) {
         const inputs = await this.db
           .select()
@@ -395,27 +424,12 @@ export class RegulationCaseCommandRuntime {
           .where(
             and(
               eq(schema.regulationOrderedInputs.status, "pending"),
-              cursor
-                ? or(
-                    gt(
-                      schema.regulationOrderedInputs.recordedAt,
-                      cursor.recordedAt,
-                    ),
-                    and(
-                      eq(
-                        schema.regulationOrderedInputs.recordedAt,
-                        cursor.recordedAt,
-                      ),
-                      gt(schema.regulationOrderedInputs.id, cursor.id),
-                    ),
-                  )
+              cursor !== undefined
+                ? gt(schema.regulationOrderedInputs.observationOrder, cursor)
                 : undefined,
             ),
           )
-          .orderBy(
-            asc(schema.regulationOrderedInputs.recordedAt),
-            asc(schema.regulationOrderedInputs.id),
-          )
+          .orderBy(asc(schema.regulationOrderedInputs.observationOrder))
           .limit(8);
         if (!inputs.length) break;
         for (const input of inputs) {
@@ -430,7 +444,7 @@ export class RegulationCaseCommandRuntime {
           }
         }
         const last = inputs[inputs.length - 1];
-        cursor = { recordedAt: last.recordedAt, id: last.id };
+        cursor = last.observationOrder;
       }
     } finally {
       this.recovering = false;
@@ -468,6 +482,61 @@ export class RegulationCaseCommandRuntime {
       .from(schema.regulationCommandEnvelopes)
       .where(eq(schema.regulationCommandEnvelopes.commandId, input.id));
     if (header) return; // Partial known event: exact replay must supply original bytes.
+    // A later observed intent cannot obtain the first command position while
+    // an earlier dependency has not produced any confirmed immutable bytes.
+    // Acknowledged predecessor deliveries may proceed; the byte projector
+    // stages their successors until the exact predecessor applies/refuses.
+    if (input.predecessorInputId) {
+      const [previous] = await this.db
+        .select()
+        .from(schema.regulationOrderedInputs)
+        .where(eq(schema.regulationOrderedInputs.id, input.predecessorInputId));
+      if (!previous) throw Error("original intake predecessor missing");
+      if (previous.status !== "consumed") {
+        const [delivery] = await this.db
+          .select()
+          .from(schema.regulationCommandDeliveries)
+          .where(eq(schema.regulationCommandDeliveries.commandId, previous.id));
+        if (!delivery || delivery.status !== "acknowledged") {
+          // Event-only replay may observe an old decision before the source
+          // that creates its named revision. Only that exact dependency may
+          // precede the decision; never reorder two ready decisions by clocks.
+          let suppliesDependency = false;
+          if (
+            input.kind === "source" &&
+            !(await this.legacyDependencies(
+              previous.kind,
+              previous.caseId,
+              previous.payload,
+            ))
+          ) {
+            const parsed = modeledSourceSchema.parse({
+              inputId: input.id,
+              item: input.payload,
+            });
+            const data = previous.payload as Record<string, unknown>;
+            const needed =
+              previous.kind === "proposal"
+                ? data.baseRevisionId
+                : previous.kind === "pointer"
+                  ? data.toRevisionId
+                  : data.revisionId;
+            const [exists] = await this.db
+              .select({ id: schema.regulationCases.id })
+              .from(schema.regulationCases)
+              .where(eq(schema.regulationCases.id, input.caseId));
+            suppliesDependency =
+              !exists || needed === revisionIdFor(parsed.item.signature);
+          }
+          if (!suppliesDependency) return;
+        }
+      }
+    }
+    if (
+      input.kind !== "source" &&
+      !(await this.legacyDependencies(input.kind, input.caseId, input.payload))
+    )
+      return;
     const [caseRow] = await this.db
       .select()
       .from(schema.regulationCases)
@@ -568,6 +637,7 @@ export class RegulationCaseCommandRuntime {
         ).map((g, position) => ({
           ...g,
           position:
+            g.position ??
             baseRuns[position]?.position ??
             Math.max(-1, ...baseRuns.map((r) => r.position)) + 1 + position,
         }));

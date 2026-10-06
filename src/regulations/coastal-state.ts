@@ -323,6 +323,7 @@ export function verifyShapeState(
       }
       const required = new Set(shape.requiredEndpoints.map(endpointKey));
       if (
+        openEnds.size === 0 ||
         openEnds.size !== required.size ||
         [...openEnds].some((key) => !required.has(key))
       )

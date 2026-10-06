@@ -17,6 +17,8 @@ CREATE TABLE "regulation_command_barriers" (
 );
 --> statement-breakpoint
 CREATE TABLE "regulation_ordered_inputs" (
+	"observation_order" bigserial NOT NULL,
+	"predecessor_input_id" text,
 	"id" text PRIMARY KEY NOT NULL,
 	"case_id" text NOT NULL,
 	"kind" text NOT NULL,
@@ -32,4 +34,7 @@ CREATE INDEX "regulation_ordered_inputs_pending_idx" ON "regulation_ordered_inpu
 ALTER TABLE "regulation_cases" ADD COLUMN "published_approval_id" text;--> statement-breakpoint
 CREATE INDEX "jmelding_chunk_queue_source_ref_idx" ON "jmelding_chunk_queue" USING btree (("payload"->>'jmNumber'),coalesce("payload"->>'region','NO'));
 --> statement-breakpoint
-CREATE INDEX "regulation_ordered_inputs_ordered_pending_idx" ON "regulation_ordered_inputs" USING btree ("status","recorded_at","id");
+CREATE INDEX "regulation_ordered_inputs_ordered_pending_idx" ON "regulation_ordered_inputs" USING btree ("status","observation_order");
+
+--> statement-breakpoint
+CREATE INDEX "regulation_ordered_inputs_case_order_idx" ON "regulation_ordered_inputs" USING btree ("case_id","observation_order");

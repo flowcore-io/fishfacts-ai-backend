@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   bigint,
+  bigserial,
   boolean,
   customType,
   doublePrecision,
@@ -650,6 +651,10 @@ export const regulationOrderedInputs = pgTable(
   "regulation_ordered_inputs",
   {
     id: text("id").primaryKey(),
+    observationOrder: bigserial("observation_order", {
+      mode: "number",
+    }).notNull(),
+    predecessorInputId: text("predecessor_input_id"),
     caseId: text("case_id").notNull(),
     kind: text("kind").notNull(),
     inputHash: text("input_hash").notNull(),
@@ -660,7 +665,11 @@ export const regulationOrderedInputs = pgTable(
   (table) => ({
     orderedPendingIdx: index(
       "regulation_ordered_inputs_ordered_pending_idx",
-    ).on(table.status, table.recordedAt, table.id),
+    ).on(table.status, table.observationOrder),
+    observationCaseIdx: index("regulation_ordered_inputs_case_order_idx").on(
+      table.caseId,
+      table.observationOrder,
+    ),
     pendingIdx: index("regulation_ordered_inputs_pending_idx").on(
       table.caseId,
       table.status,

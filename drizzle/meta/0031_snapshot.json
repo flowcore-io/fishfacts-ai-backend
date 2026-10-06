@@ -3071,6 +3071,18 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "observation_order": {
+          "name": "observation_order",
+          "type": "bigserial",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "predecessor_input_id": {
+          "name": "predecessor_input_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -3084,13 +3096,7 @@
               "nulls": "last"
             },
             {
-              "expression": "recorded_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "id",
+              "expression": "observation_order",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3112,6 +3118,27 @@
             },
             {
               "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "regulation_ordered_inputs_case_order_idx": {
+          "name": "regulation_ordered_inputs_case_order_idx",
+          "columns": [
+            {
+              "expression": "case_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "observation_order",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

@@ -7,7 +7,7 @@ import {
   PathwayRouter,
   PathwaysBuilder,
 } from "@flowcore/pathways";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { createDb } from "../../src/db/client";
 import { runMigrations } from "../../src/db/migrate";
 import * as schema from "../../src/db/schema";
@@ -24,6 +24,7 @@ import {
   registerOrderedCommandPathways,
 } from "../../src/pathways";
 import { RegulationCaseActionProjector } from "../../src/regulations/action-projector";
+import type { RevisionShapeState } from "../../src/regulations/coastal-state";
 import { RegulationCaseCommandRuntime } from "../../src/regulations/command-runtime";
 import { caseIdFor, geometryIdFor } from "../../src/regulations/ids";
 import { RegulationPublishedReadRepository } from "../../src/regulations/published-repository";
@@ -904,5 +905,884 @@ test("registered legacy metadata/applicability proposal expands an exact shape c
     currentRevisionId: revisionId,
     regulatoryValidated: false,
     geometryValidated: false,
+  });
+}, 5000);
+
+for (const [name, requested] of [
+  [
+    "noncontiguous reorder",
+    [
+      { ...fixture.runs[1], position: 42 },
+      { ...fixture.runs[0], position: 7 },
+    ],
+  ],
+  ["removal", [{ ...fixture.runs[1], position: 42 }]],
+] as const)
+  test(`regression: admin route preserves explicit global positions and manifest (${name})`, async () => {
+    const h = await harness();
+    const { Hono } = await import("hono");
+    const { createRegulationsRouter } = await import(
+      "../../src/regulations/routes"
+    );
+    const { RegulationQueueReadRepository } = await import(
+      "../../src/regulations/read-repository"
+    );
+    const {
+      regulationRevisionProposedSchema,
+      REGULATION_REVISION_PROPOSED_EVENT_TYPE,
+    } = await import("../../src/events/contracts");
+    const { sourceRunManifestHashOf } = await import(
+      "../../src/regulations/coastal-state"
+    );
+    const [base] = await db
+      .select()
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, h.revisionId));
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.set("auth", {
+        user: { username: "fixture", authorities: ["ADMIN"] },
+      } as never);
+      await next();
+    });
+    let emitted: unknown;
+    app.route(
+      "/api/regulations",
+      createRegulationsRouter({
+        queue: new RegulationQueueReadRepository(db),
+        commands: h.runtime,
+        writer: {
+          writeRegulationRevisionProposed: async (payload: unknown) => {
+            emitted = regulationRevisionProposedSchema.parse(payload); // exact installed writer registration schema
+            await h.process(REGULATION_REVISION_PROPOSED_EVENT_TYPE, emitted);
+            return randomUUID();
+          },
+        } as never,
+        groups: {} as never,
+        poi: {} as never,
+        jobRunner: {} as never,
+      }),
+    );
+    const response = await app.request(
+      `/api/regulations/cases/${h.caseId}/revisions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          baseRevisionId: h.revisionId,
+          fields: base.fields,
+          geometries: requested,
+          justifications: {
+            geometries: "Synthetic explicit run identity review",
+          },
+        }),
+      },
+    );
+    expect(response.status).toBe(202);
+    const { revisionId } = await response.json();
+    expect((emitted as { geometries: unknown }).geometries).toMatchObject(
+      requested.map((r) => ({ position: r.position, points: r.points })),
+    );
+    await h.runtime.recover();
+    for (const p of h.recorded.at(-1) ?? [])
+      await h.process(CASE_COMMAND_PART_EVENT_TYPE, p);
+    const actual = await db
+      .select()
+      .from(schema.regulationCaseGeometries)
+      .where(eq(schema.regulationCaseGeometries.revisionId, revisionId));
+    const [revision] = await db
+      .select()
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, revisionId));
+    const expectedHash = sourceRunManifestHashOf([...requested]);
+    const actualHash = (revision.shapeState as typeof fixture.state).shapes[0]
+      .provenance.parameters.sourceRunManifestHash;
+    console.log(
+      "ROUTE_POSITION_REPRO",
+      JSON.stringify({
+        name,
+        requested: requested.map((r) => r.position),
+        persisted: actual.map((r) => r.position),
+        expectedHash,
+        actualHash,
+      }),
+    );
+    expect({
+      runs: actual
+        .map((r) => ({ position: r.position, points: r.points }))
+        .sort((a, b) => a.position - b.position),
+      manifest: actualHash,
+    }).toEqual({
+      runs: [...requested]
+        .map((r) => ({ position: r.position, points: r.points }))
+        .sort((a, b) => a.position - b.position),
+      manifest: expectedHash,
+    });
+  }, 5000);
+
+test("regression: legacy published pin stays v1 compatible while current draft is model1", async () => {
+  const h = await harness();
+  const legacyId = randomUUID();
+  const [base] = await db
+    .select()
+    .from(schema.regulationCaseRevisions)
+    .where(eq(schema.regulationCaseRevisions.id, h.revisionId));
+  await db.insert(schema.regulationCaseRevisions).values({
+    ...base,
+    id: legacyId,
+    position: 1,
+    geometryModelVersion: 0,
+    shapeState: null,
+    sourceEventSignature: randomUUID(),
+  });
+  for (const r of fixture.runs)
+    await db.insert(schema.regulationCaseGeometries).values({
+      ...r,
+      id: geometryIdFor(legacyId, r.position),
+      revisionId: legacyId,
+      caseId: h.caseId,
+    });
+  await db
+    .update(schema.regulationCases)
+    .set({ publishedRevisionId: legacyId, publishedMetadataOnly: false })
+    .where(eq(schema.regulationCases.id, h.caseId));
+  const reader = new RegulationPublishedReadRepository(db);
+  expect(
+    (await reader.getPublished(h.caseId, 1))?.geometries.map((r) => r.points),
+  ).toEqual(fixture.runs.map((r) => r.points));
+  expect(
+    (
+      await reader.listPublished({
+        status: "all",
+        limit: 200,
+        offset: 0,
+        geometryVersion: 1,
+      })
+    ).regulations.some((r) => r.id === h.caseId),
+  ).toBe(true);
+  expect((await reader.getPublished(h.caseId, 2))?.geometryModelVersion).toBe(
+    0,
+  );
+}, 5000);
+test("regression: equal-clock later legal withdrawal retains causal order", async () => {
+  const h = await harness();
+  const { revisionIdFor } = await import("../../src/regulations/ids");
+  const ids = [randomUUID(), randomUUID()].sort((a, b) =>
+    revisionIdFor(`ordered-input:validation:${a}`).localeCompare(
+      revisionIdFor(`ordered-input:validation:${b}`),
+    ),
+  );
+  for (const [eventId, validated] of [
+    [ids[1], true],
+    [ids[0], false],
+  ] as const) {
+    const payload = {
+      caseId: h.caseId,
+      caseKey: `fiskeridir-jmelding:${h.sourceRef}`,
+      revisionId: h.revisionId,
+      validationId: randomUUID(),
+      scope: "legal" as const,
+      geometryId: null,
+      validated,
+      note: null,
+      actor: "admin:fixture",
+      recordedAt: "2026-10-06T12:00:00.000Z",
+    };
+    await h.runtime.adaptLegacy("validation", eventId, payload, () =>
+      new RegulationRevisionProjector(db).handleValidationRecorded(payload),
+    );
+  }
+  await h.runtime.recover();
+  for (const batch of h.recorded)
+    for (const p of batch) await h.process(CASE_COMMAND_PART_EVENT_TYPE, p);
+  const [row] = await db
+    .select()
+    .from(schema.regulationCases)
+    .where(eq(schema.regulationCases.id, h.caseId));
+  const applied = await db
+    .select()
+    .from(schema.regulationCaseValidations)
+    .where(eq(schema.regulationCaseValidations.caseId, h.caseId));
+  expect(
+    applied
+      .sort((a, b) => (a.commandSequence ?? 0) - (b.commandSequence ?? 0))
+      .map((v) => ({ sequence: v.commandSequence, validated: v.validated })),
+  ).toEqual([
+    { sequence: 1, validated: true },
+    { sequence: 2, validated: false },
+  ]);
+  console.log("EQUAL_CLOCK_REPRO", row.regulatoryValidated);
+  expect(row.regulatoryValidated).toBe(false);
+}, 5000);
+
+test("regression: metadata-only published pin is excluded from vector tiles", async () => {
+  const h = await harness();
+  await h.apply(
+    h.input("validation", {
+      validationId: randomUUID(),
+      scope: "legal",
+      validated: true,
+      note: null,
+    }),
+  );
+  await h.apply(
+    h.input("approval", {
+      approvalId: randomUUID(),
+      shapeManifestHash: fixture.state.shapeManifestHash,
+      metadataOnly: true,
+      acknowledgeUnresolvedGeometry: true,
+      note: null,
+    }),
+  );
+  const { JMeldingGeoProjector } = await import(
+    "../../src/jmelding/geo-projector"
+  );
+  const { JMeldingGeoRepository } = await import(
+    "../../src/jmelding/geo-repository"
+  );
+  const { TilesRepository } = await import("../../src/tiles/repository");
+  await new JMeldingGeoProjector(db).project(
+    {
+      signature: randomUUID(),
+      title: "Review tile source",
+      url: "https://example.test/tile",
+      status: "current",
+      region: "NO",
+      jmNumber: h.sourceRef,
+      checkedAt: new Date().toISOString(),
+      bodyMarkdown: fixture.text,
+      areas: fixture.runs.map((r) => ({
+        name: null,
+        points: r.points,
+        kind: "closure" as const,
+      })),
+    },
+    null,
+  );
+  const detail = await new JMeldingGeoRepository(db).findByJmNumber(
+    h.sourceRef,
+  );
+  expect(detail?.hasGeo).toBe(false);
+  const bytes = await new TilesRepository(db).getTile(
+    "jmelding-closures",
+    0,
+    0,
+    0,
+  );
+  const leaked = Buffer.from(bytes).includes(Buffer.from(h.sourceRef));
+  console.log(
+    "TILE_REPRO",
+    JSON.stringify({
+      sourceRef: h.sourceRef,
+      detailSuppressed: detail?.hasGeo === false,
+      tileBytes: bytes.length,
+      tileIncludesSourceRef: leaked,
+    }),
+  );
+  await db
+    .delete(schema.jmeldingGeo)
+    .where(eq(schema.jmeldingGeo.jmNumber, h.sourceRef));
+  expect(leaked).toBe(false);
+}, 5000);
+test("regression: repeated pointer domain identity refuses instead of permanent SQL retry", async () => {
+  const h = await harness();
+  const data = { pointerMoveId: randomUUID(), toRevisionId: h.revisionId };
+  expect((await h.apply(h.input("pointer", data)))?.status).toBe("applied");
+  const second = h.input("pointer", data);
+  await h.runtime.submit(second);
+  let result: unknown;
+  try {
+    for (const p of h.recorded.at(-1) ?? [])
+      result = await h.runtime.projector.handle(p);
+  } catch (error) {
+    result = { status: "threw", code: (error as { code: string }).code };
+  }
+  console.log("POINTER_REPRO", JSON.stringify(result));
+  expect(result).toMatchObject({ status: "refused" });
+}, 5000);
+
+test("regression: modeled v1 detail supplies the required upgrade version", async () => {
+  const h = await harness();
+  await h.apply(
+    h.input("validation", {
+      validationId: randomUUID(),
+      scope: "legal",
+      validated: true,
+      note: null,
+    }),
+  );
+  await h.apply(
+    h.input("approval", {
+      approvalId: randomUUID(),
+      shapeManifestHash: fixture.state.shapeManifestHash,
+      metadataOnly: true,
+      acknowledgeUnresolvedGeometry: true,
+      note: null,
+    }),
+  );
+  const { createPublishedRegulationsRouter } = await import(
+    "../../src/regulations/published-routes"
+  );
+  const app = createPublishedRegulationsRouter({
+    published: new RegulationPublishedReadRepository(db),
+  });
+  const response = await app.request(`/${h.caseId}`);
+  expect(response.status).toBe(409);
+  const body = await response.json();
+  console.log("UPGRADE_REPRO", body);
+  expect(body).toEqual({
+    error: "geometry_client_upgrade_required",
+    requiredGeometryVersion: 2,
+  });
+}, 5000);
+test("regression: empty coastal endpoint inventory cannot authorize proposed output", async () => {
+  const h = await harness();
+  const state = structuredClone(fixture.state) as unknown as RevisionShapeState;
+  const { shapeDigest, manifestDigest, joinConfigurationDigest } = await import(
+    "../../src/regulations/coastal-state"
+  );
+  const shape = state.shapes[0];
+  shape.boundary.mode = "lines-plus-coast";
+  shape.boundary.straightRuns = [];
+  shape.requiredEndpoints = [];
+  shape.joinCandidates = [];
+  shape.selectedJoinCandidateIds = [];
+  shape.candidateEnumerationComplete = true;
+  const faceId = randomUUID();
+  shape.faceCandidates = [
+    {
+      id: faceId,
+      geojson: shape.geojson as NonNullable<typeof shape.geojson>,
+      areaM2: 1,
+      coordinateCount: 20,
+      holeCount: 2,
+    },
+  ];
+  shape.faceEnumerationComplete = true;
+  shape.selectedFaceIds = [faceId];
+  shape.joinConfigurationHash = joinConfigurationDigest(shape as never);
+  shape.shapeHash = shapeDigest(shape as never);
+  state.shapeManifestHash = manifestDigest(state as never);
+  const [base] = await db
+    .select()
+    .from(schema.regulationCaseRevisions)
+    .where(eq(schema.regulationCaseRevisions.id, h.revisionId));
+  const command = {
+    ...h.input("proposal", {
+      fields: base.fields,
+      geometries: fixture.runs,
+      changes: [
+        {
+          field: "geometries",
+          justification: "Synthetic endpoint integrity test",
+        },
+      ],
+      shapeState: state,
+      snapshot: {
+        text: base.snapshotText,
+        url: base.snapshotUrl,
+        fetchedAt: null,
+        fragmentId: null,
+      },
+    }),
+    revisionId: randomUUID(),
+  };
+  const result = await h.apply(command);
+  console.log("EMPTY_ENDPOINT_REPRO", result?.status);
+  expect(result?.status).toBe("refused");
+}, 5000);
+
+async function adminApp(h: Awaited<ReturnType<typeof harness>>) {
+  const { Hono } = await import("hono");
+  const { createRegulationsRouter } = await import(
+    "../../src/regulations/routes"
+  );
+  const { RegulationQueueReadRepository } = await import(
+    "../../src/regulations/read-repository"
+  );
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.set("auth", {
+      user: { username: "fixture", authorities: ["ADMIN"] },
+    } as never);
+    await next();
+  });
+  app.route(
+    "/api/regulations",
+    createRegulationsRouter({
+      queue: new RegulationQueueReadRepository(db),
+      commands: h.runtime,
+      writer: {} as never,
+      groups: {} as never,
+      poi: {} as never,
+      jobRunner: {} as never,
+    }),
+  );
+  return app;
+}
+test("approval status distinguishes exact applied/refused receipts from absent or foreign commands", async () => {
+  const h = await harness();
+  const app = await adminApp(h);
+  const approvalId = randomUUID();
+  const url = `/api/regulations/cases/${h.caseId}/approval-requests/${approvalId}`;
+  expect(await (await app.request(url)).json()).toEqual({
+    approvalId,
+    commandId: approvalId,
+    caseId: h.caseId,
+    revisionId: null,
+    shapeManifestHash: null,
+    metadataOnly: null,
+    status: "pending",
+    reason: null,
+  });
+  const approval = {
+    ...h.input("approval", {
+      approvalId,
+      shapeManifestHash: fixture.state.shapeManifestHash,
+      metadataOnly: false,
+      note: null,
+    }),
+    commandId: approvalId,
+  };
+  await h.runtime.submit(approval);
+  expect((await (await app.request(url)).json()).status).toBe("pending");
+  for (const part of h.recorded.at(-1) ?? [])
+    await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+  expect(await (await app.request(url)).json()).toMatchObject({
+    approvalId,
+    caseId: h.caseId,
+    commandId: approvalId,
+    revisionId: h.revisionId,
+    shapeManifestHash: fixture.state.shapeManifestHash,
+    metadataOnly: false,
+    status: "refused",
+  });
+  const legal = h.input("validation", {
+    validationId: randomUUID(),
+    scope: "legal",
+    validated: true,
+    note: null,
+  });
+  await h.apply(legal);
+  expect(
+    (
+      await app.request(
+        `/api/regulations/cases/${h.caseId}/approval-requests/${legal.commandId}`,
+      )
+    ).status,
+  ).toBe(404);
+  const successId = randomUUID();
+  await h.apply({
+    ...h.input("approval", {
+      approvalId: successId,
+      shapeManifestHash: fixture.state.shapeManifestHash,
+      metadataOnly: true,
+      acknowledgeUnresolvedGeometry: true,
+      note: null,
+    }),
+    commandId: successId,
+  });
+  expect(
+    await (
+      await app.request(
+        `/api/regulations/cases/${h.caseId}/approval-requests/${successId}`,
+      )
+    ).json(),
+  ).toMatchObject({
+    approvalId: successId,
+    revisionId: h.revisionId,
+    status: "applied",
+    metadataOnly: true,
+  });
+  const other = await harness();
+  expect(
+    (
+      await (
+        await adminApp(other)
+      ).request(
+        `/api/regulations/cases/${other.caseId}/approval-requests/${successId}`,
+      )
+    ).status,
+  ).toBe(404);
+  const lookup = spyOn(h.runtime, "approvalReceipt").mockRejectedValueOnce(
+    Error("fixture SQL failure"),
+  );
+  expect((await app.request(url)).status).toBe(503);
+  lookup.mockRestore();
+}, 5000);
+
+test("pointer domain conflict advances ordered tail and real common handler/barrier stays live", async () => {
+  const h = await harness();
+  const data = { pointerMoveId: randomUUID(), toRevisionId: h.revisionId };
+  await h.apply(h.input("pointer", data));
+  const collision = h.input("pointer", data);
+  await h.runtime.submit(collision);
+  const parts = h.recorded.at(-1) ?? [];
+  const other = await harness();
+  const next = other.input("validation", {
+    validationId: randomUUID(),
+    scope: "legal",
+    validated: true,
+    note: null,
+  });
+  await other.runtime.submit(next);
+  const barrierId = randomUUID();
+  const pump = (async () => {
+    for (const part of parts)
+      await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+    for (const part of other.recorded.at(-1) ?? [])
+      await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+    await h.process(CASE_COMMAND_BARRIER_EVENT_TYPE, {
+      barrierId,
+      recordedAt: new Date().toISOString(),
+    });
+  })();
+  await Promise.race([
+    pump,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(Error("common pump liveness exceeded 2s")), 2000),
+    ),
+  ]);
+  expect((await h.runtime.receipt(collision.commandId))?.status).toBe(
+    "refused",
+  );
+  expect((await other.runtime.receipt(next.commandId))?.status).toBe("applied");
+  expect(
+    await db
+      .select()
+      .from(schema.regulationCommandBarriers)
+      .where(eq(schema.regulationCommandBarriers.id, barrierId)),
+  ).toHaveLength(1);
+  expect(
+    (
+      await h.apply(
+        h.input("validation", {
+          validationId: randomUUID(),
+          scope: "legal",
+          validated: false,
+          note: null,
+        }),
+      )
+    )?.status,
+  ).toBe("applied");
+}, 5000);
+
+for (const clock of ["2026-10-06T11:59:00.000Z", "2026-10-06T12:00:00.000Z"])
+  test(`intake observed order survives cache loss/event-only replay under clock ${clock}`, async () => {
+    const h = await harness();
+    for (const [recordedAt, validated] of [
+      ["2026-10-06T12:00:00.000Z", true],
+      [clock, false],
+    ] as const) {
+      const payload = {
+        caseId: h.caseId,
+        caseKey: `fiskeridir-jmelding:${h.sourceRef}`,
+        revisionId: h.revisionId,
+        validationId: randomUUID(),
+        scope: "legal" as const,
+        geometryId: null,
+        validated,
+        note: null,
+        actor: "admin:fixture",
+        recordedAt,
+      };
+      await h.process("regulation.case.validation.recorded.0", payload);
+    }
+    const intake = await db
+      .select()
+      .from(schema.regulationOrderedInputs)
+      .where(eq(schema.regulationOrderedInputs.caseId, h.caseId))
+      .orderBy(asc(schema.regulationOrderedInputs.observationOrder));
+    expect(intake).toHaveLength(2);
+    expect(intake[1].predecessorInputId).toBe(intake[0].id);
+    await h.runtime.recover();
+    for (const parts of h.recorded)
+      for (const part of parts)
+        await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.regulationCases)
+          .where(eq(schema.regulationCases.id, h.caseId))
+      )[0].regulatoryValidated,
+    ).toBe(false);
+    const events = h.recorded.flat();
+    for (const table of [
+      schema.regulationCaseValidations,
+      schema.regulationCommandReceipts,
+      schema.regulationCommandDeliveries,
+      schema.regulationCommandEnvelopes,
+      schema.regulationCommandTails,
+      schema.regulationSnapshotAssemblies,
+      schema.regulationOrderedInputs,
+    ])
+      await db.delete(table).where(eq(table.caseId, h.caseId));
+    const replay = new RegulationCaseCommandRuntime(db);
+    for (const part of events.toReversed()) await replay.handlePart(part);
+    expect(
+      (
+        await db
+          .select()
+          .from(schema.regulationCases)
+          .where(eq(schema.regulationCases.id, h.caseId))
+      )[0].regulatoryValidated,
+    ).toBe(false);
+    expect(
+      (
+        await h.apply(
+          h.input("approval", {
+            approvalId: randomUUID(),
+            shapeManifestHash: fixture.state.shapeManifestHash,
+            metadataOnly: false,
+            note: null,
+          }),
+        )
+      )?.status,
+    ).toBe("refused");
+  }, 5000);
+
+// Decode the actual MVT protobuf fields, without a new runtime dependency.
+function protobufFields(
+  bytes: Uint8Array,
+): Array<{ field: number; value: number | Uint8Array }> {
+  let offset = 0;
+  const result: Array<{ field: number; value: number | Uint8Array }> = [];
+  const integer = () => {
+    let value = 0;
+    let scale = 1;
+    for (;;) {
+      if (offset >= bytes.length) throw Error("truncated protobuf");
+      const byte = bytes[offset++];
+      value += (byte & 127) * scale;
+      if (!(byte & 128)) return value;
+      scale *= 128;
+    }
+  };
+  while (offset < bytes.length) {
+    const tag = integer();
+    const wire = tag & 7;
+    const field = Math.floor(tag / 8);
+    if (wire === 0) result.push({ field, value: integer() });
+    else if (wire === 2) {
+      const size = integer();
+      const end = offset + size;
+      if (end > bytes.length) throw Error("truncated protobuf field");
+      result.push({ field, value: bytes.slice(offset, end) });
+      offset = end;
+    } else if (wire === 1) offset += 8;
+    else if (wire === 5) offset += 4;
+    else throw Error("unsupported protobuf wire");
+  }
+  return result;
+}
+function decodedTile(bytes: Uint8Array) {
+  const result: Array<{
+    strings: string[];
+    types: number[];
+    geometryLengths: number[];
+  }> = [];
+  for (const layer of protobufFields(bytes).filter((f) => f.field === 3)) {
+    if (!(layer.value instanceof Uint8Array)) throw Error("invalid tile layer");
+    const fields = protobufFields(layer.value);
+    const strings = fields
+      .filter((f) => f.field === 4)
+      .flatMap((f) =>
+        f.value instanceof Uint8Array
+          ? protobufFields(f.value)
+              .filter((v) => v.field === 1 && v.value instanceof Uint8Array)
+              .map((v) => new TextDecoder().decode(v.value as Uint8Array))
+          : [],
+      );
+    const features = fields
+      .filter((f) => f.field === 2)
+      .map((f) => protobufFields(f.value as Uint8Array));
+    result.push({
+      strings,
+      types: features.flatMap((f) =>
+        f.filter((v) => v.field === 3).map((v) => v.value as number),
+      ),
+      geometryLengths: features.flatMap((f) =>
+        f
+          .filter((v) => v.field === 4)
+          .map((v) => (v.value as Uint8Array).length),
+      ),
+    });
+  }
+  return result;
+}
+
+test("mounted vector tiles gate published modeled/metadata-only pins and retain unreviewed, FO/IS and legacy pins with modeled drafts", async () => {
+  const h = await harness();
+  const { Hono } = await import("hono");
+  const { JMeldingGeoProjector } = await import(
+    "../../src/jmelding/geo-projector"
+  );
+  const { TilesRepository } = await import("../../src/tiles/repository");
+  const { createTilesRouter } = await import("../../src/tiles/routes");
+  const app = new Hono().route(
+    "/api/tiles",
+    createTilesRouter({
+      tilesRepository: new TilesRepository(db),
+      rasterTilesRepository: {} as never,
+    }),
+  );
+  const item = {
+    signature: randomUUID(),
+    title: "Synthetic tile case",
+    url: "https://example.test/tile",
+    status: "current" as const,
+    region: "NO" as const,
+    jmNumber: h.sourceRef,
+    checkedAt: new Date().toISOString(),
+    bodyMarkdown: fixture.text,
+    areas: fixture.runs.map((r) => ({
+      name: null,
+      points: r.points,
+      kind: "closure" as const,
+    })),
+  };
+  const geo = new JMeldingGeoProjector(db);
+  await geo.project(item, null);
+  const read = async () => {
+    const response = await app.request(
+      "/api/tiles/jmelding-closures/0/0/0.pbf",
+    );
+    expect([200, 204]).toContain(response.status);
+    return decodedTile(new Uint8Array(await response.arrayBuffer()));
+  };
+  const visible = (tile: ReturnType<typeof decodedTile>) =>
+    tile.some((l) => l.strings.includes(h.sourceRef));
+  try {
+    const unreviewed = await read();
+    expect(visible(unreviewed)).toBe(true);
+    expect(unreviewed.flatMap((l) => l.types)).toContain(3);
+    expect(
+      unreviewed.flatMap((l) => l.geometryLengths).every((n) => n > 0),
+    ).toBe(true);
+    await db
+      .update(schema.regulationCases)
+      .set({ publishedRevisionId: h.revisionId, publishedMetadataOnly: false })
+      .where(eq(schema.regulationCases.id, h.caseId));
+    expect(visible(await read())).toBe(false);
+    for (const region of ["FO", "IS"] as const) {
+      await geo.project({ ...item, signature: randomUUID(), region }, null);
+      expect(visible(await read())).toBe(true);
+    }
+    await geo.project({ ...item, signature: randomUUID() }, null);
+    const [base] = await db
+      .select()
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, h.revisionId));
+    const legacyId = randomUUID();
+    await db.insert(schema.regulationCaseRevisions).values({
+      ...base,
+      id: legacyId,
+      position: 1,
+      geometryModelVersion: 0,
+      shapeState: null,
+      sourceEventSignature: randomUUID(),
+    });
+    await db
+      .update(schema.regulationCases)
+      .set({ publishedRevisionId: legacyId })
+      .where(eq(schema.regulationCases.id, h.caseId));
+    expect(visible(await read())).toBe(true); // current draft remains model1
+    await db
+      .update(schema.regulationCases)
+      .set({ publishedMetadataOnly: true })
+      .where(eq(schema.regulationCases.id, h.caseId));
+    expect(visible(await read())).toBe(false);
+  } finally {
+    await db
+      .delete(schema.jmeldingGeo)
+      .where(eq(schema.jmeldingGeo.jmNumber, h.sourceRef));
+  }
+}, 5000);
+
+test("manual route rejects duplicate and invalid explicit global run identities before recording an intent", async () => {
+  const h = await harness();
+  const app = await adminApp(h);
+  const [base] = await db
+    .select()
+    .from(schema.regulationCaseRevisions)
+    .where(eq(schema.regulationCaseRevisions.id, h.revisionId));
+  for (const positions of [
+    [42, 42],
+    [-1, 7],
+    [1.5, 7],
+  ]) {
+    const response = await app.request(
+      `/api/regulations/cases/${h.caseId}/revisions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          baseRevisionId: h.revisionId,
+          fields: base.fields,
+          geometries: fixture.runs.map((r, i) => ({
+            ...r,
+            position: positions[i],
+          })),
+          justifications: { geometries: "Synthetic invalid identity" },
+        }),
+      },
+    );
+    expect(response.status).toBe(400);
+  }
+  expect(h.recorded).toHaveLength(0);
+}, 5000);
+
+test("same-case delayed original decision waits for its exact source revision without deadlocking causal intake", async () => {
+  const h = await harness();
+  const { revisionIdFor } = await import("../../src/regulations/ids");
+  const { RegulationCaseProjector } = await import(
+    "../../src/regulations/case-projector"
+  );
+  const signature = randomUUID();
+  const target = revisionIdFor(signature);
+  const payload = {
+    caseId: h.caseId,
+    caseKey: `fiskeridir-jmelding:${h.sourceRef}`,
+    revisionId: target,
+    validationId: randomUUID(),
+    scope: "legal" as const,
+    geometryId: null,
+    validated: true,
+    note: null,
+    actor: "admin:fixture",
+    recordedAt: "2026-10-06T12:00:00.000Z",
+  };
+  await h.process("regulation.case.validation.recorded.0", payload);
+  await h.runtime.recover();
+  expect(h.recorded).toHaveLength(0);
+  await new RegulationCaseProjector(db).project({
+    signature,
+    jmNumber: h.sourceRef,
+    title: "Exact delayed source dependency",
+    url: "https://example.test/dependency",
+    status: "current",
+    region: "NO",
+    checkedAt: new Date().toISOString(),
+    bodyMarkdown: fixture.text,
+    sourceBodyCompleteness: "complete",
+    areas: fixture.runs.map((r) => ({ name: r.name, points: r.points })),
+  });
+  await h.runtime.recover();
+  expect(h.recorded).toHaveLength(1);
+  for (const part of h.recorded[0])
+    await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+  await h.runtime.recover();
+  expect(h.recorded).toHaveLength(2);
+  for (const part of h.recorded[1])
+    await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+  const [decision] = await db
+    .select()
+    .from(schema.regulationCaseValidations)
+    .where(eq(schema.regulationCaseValidations.id, payload.validationId));
+  expect(decision).toMatchObject({
+    validated: true,
+    revisionId: target,
+    commandSequence: 2,
   });
 }, 5000);

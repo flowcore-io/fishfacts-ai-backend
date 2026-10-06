@@ -154,6 +154,33 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     }
   });
 
+  app.get("/cases/:id/approval-requests/:approvalId", async (c) => {
+    const id = c.req.param("id").toLowerCase();
+    const approvalId = c.req.param("approvalId").toLowerCase();
+    if (!CASE_ID.test(id) || !CASE_ID.test(approvalId)) return notFound(c);
+    if (!deps.commands)
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    try {
+      if (!(await deps.queue.getCaseRef(id))) return notFound(c);
+      const receipt = await deps.commands.approvalReceipt(id, approvalId);
+      if (receipt === undefined) return notFound(c);
+      return c.json(
+        receipt ?? {
+          approvalId,
+          commandId: approvalId,
+          caseId: id,
+          revisionId: null,
+          shapeManifestHash: null,
+          metadataOnly: null,
+          status: "pending",
+          reason: null,
+        },
+      );
+    } catch {
+      return serviceUnavailable(c, API_ERROR.queueUnavailable);
+    }
+  });
+
   app.post("/cases/:id/actions", async (c) => {
     const auth = c.get("auth");
     // Service-layer re-check (belt & braces, per IDOR fragment).
@@ -337,6 +364,13 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         regulationRevisionGeometrySchema.extend({
           position: z.number().int().nonnegative().optional(),
         }),
+      )
+      .refine(
+        (runs) =>
+          new Set(
+            runs.filter((r) => r.position !== undefined).map((r) => r.position),
+          ).size === runs.filter((r) => r.position !== undefined).length,
+        { message: "duplicate source run position" },
       )
       .nullable()
       .default(null),

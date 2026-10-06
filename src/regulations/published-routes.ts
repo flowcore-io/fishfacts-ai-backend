@@ -84,7 +84,9 @@ export function createPublishedRegulationsRouter(
       return result ? c.json(result) : notFound(c);
     } catch (error) {
       if (error instanceof GeometryClientUpgradeError)
-        return errorResponse(c, 409, API_ERROR.geometryClientUpgradeRequired);
+        return errorResponse(c, 409, API_ERROR.geometryClientUpgradeRequired, {
+          requiredGeometryVersion: 2,
+        });
       return serviceUnavailable(c, API_ERROR.publishedUnavailable);
     }
   });
@@ -108,7 +110,9 @@ export function createPublishedRegulationsRouter(
       return c.json(regulation);
     } catch (error) {
       if (error instanceof GeometryClientUpgradeError)
-        return errorResponse(c, 409, API_ERROR.geometryClientUpgradeRequired);
+        return errorResponse(c, 409, API_ERROR.geometryClientUpgradeRequired, {
+          requiredGeometryVersion: 2,
+        });
       console.error("[Regulations] published detail failed", {
         caseId: id,
         message: error instanceof Error ? error.message : String(error),
