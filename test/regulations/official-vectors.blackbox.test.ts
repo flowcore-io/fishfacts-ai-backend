@@ -293,7 +293,7 @@ beforeAll(async () => {
   await fishfacts.start();
   await webhook.start();
   await app.start();
-}, 30000);
+});
 afterAll(async () => {
   await app.stop();
   await webhook.stop();
@@ -305,7 +305,7 @@ afterAll(async () => {
     await client`delete from jmelding_geo where jm_number=${ref}`;
   }
   await client.end();
-}, 30000);
+});
 
 test("mounted SDK path publishes exact official rings and parts, groups two printed §1 runs, and preserves a legacy pin through redraft", async () => {
   const { caseId, ref, revisionId } = await seed();
