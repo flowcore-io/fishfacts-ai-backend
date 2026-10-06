@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.16.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.15.0...v2.16.0) (2026-10-06)
+
+
+### Features
+
+* **regulations:** add lossless immutable revision snapshot transport ([e65bff4](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e65bff42144fdb5a607ef77ca6b43cfdb0233ae7))
+* **regulations:** add lossless immutable revision snapshot transport ([4c4af73](https://github.com/flowcore-io/fishfacts-ai-backend/commit/4c4af73935a550edb99be556ff92707f11911997))
+* **regulations:** pin immutable reviewed revision shapes ([e437495](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e437495a28e8c33506ec03f09ccc745a9ab073b6))
+* **regulations:** pin immutable reviewed revision shapes ([15b229f](https://github.com/flowcore-io/fishfacts-ai-backend/commit/15b229f3b22f92a73fa895e37bd9f17b8fce9ce3))
+* **regulations:** reconstruct bounded coastal shapes through durable review requests ([5e722a0](https://github.com/flowcore-io/fishfacts-ai-backend/commit/5e722a0758c068cc51340bede9103e83d27eef39))
+* **regulations:** reconstruct bounded coastal shapes through durable review requests ([206eed9](https://github.com/flowcore-io/fishfacts-ai-backend/commit/206eed9fb5339892b6785031ba62bf58926f798e))
+* **regulations:** serialize replayable case command delivery ([84b556c](https://github.com/flowcore-io/fishfacts-ai-backend/commit/84b556c6f2138677793ba265a665f54f4fa694ac))
+* **regulations:** serialize replayable case command delivery ([21b68c2](https://github.com/flowcore-io/fishfacts-ai-backend/commit/21b68c2ff42765b608cdac31eb49a39e19c70379))
+
+
+### Bug Fixes
+
+* **regulations:** durably quarantine conflicting immutable parts ([0d21a2a](https://github.com/flowcore-io/fishfacts-ai-backend/commit/0d21a2aa8cb569c11cfbd5250684ec0072ddeafa))
+* **regulations:** fence unreconciled delivery prefixes ([913eab1](https://github.com/flowcore-io/fishfacts-ai-backend/commit/913eab17be38a93f0341d8f83a30c7bd602a6006))
+* **regulations:** preserve causal identities and gate published tile bypasses ([5137802](https://github.com/flowcore-io/fishfacts-ai-backend/commit/51378020faf04c9816f8e3da75fea27cb3c0aa27))
+* **regulations:** preserve durable command identity and drain replay backlogs ([026df75](https://github.com/flowcore-io/fishfacts-ai-backend/commit/026df75091a05794a1013cc29a200d1b04dc87db))
+* **regulations:** preserve reconstruction UUID identity across request status and retries ([e693ab6](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e693ab6a5540036e91c7619d52de203107f1353f))
+* **regulations:** prevent predecessor starvation during snapshot replay ([09cb83d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/09cb83d4492354d0551f1be5ed86b44efa425f0b))
+* **regulations:** quarantine immutable command header conflicts ([443e2f5](https://github.com/flowcore-io/fishfacts-ai-backend/commit/443e2f580c54c9d6cf6d7b00e99e68a027b9cb38))
+* **regulations:** recover ancestor dependencies and canonical run identity ([d19197d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/d19197d4cbde4085d0b1dd8db326a7de312d1a6a))
+* **regulations:** resolve reconstruction retries after replay catchup ([31ae51d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/31ae51d80cbb84c94a7c058c2edced64a7139301))
+* **regulations:** serialize resumed snapshot work per case ([f007704](https://github.com/flowcore-io/fishfacts-ai-backend/commit/f007704433f803c0a160e2be27ae45aa2851f1bc))
+* **tests:** use configurable snapshot assembly database in CI ([6b716d7](https://github.com/flowcore-io/fishfacts-ai-backend/commit/6b716d7236ec4874fd2e23e80f383cd2553d77a3))
+
 ## [2.15.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.14.0...v2.15.0) (2026-09-30)
 
 
