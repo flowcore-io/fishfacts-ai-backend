@@ -12,7 +12,7 @@ export class AppProcess {
 
   async start() {
     await this.stop();
-    this.proc = Bun.spawn(["bun", "src/index.ts"], {
+    this.proc = Bun.spawn(["bun", "--no-env-file", "src/index.ts"], {
       cwd: process.cwd(),
       stdout: "pipe",
       stderr: "pipe",

@@ -15,6 +15,7 @@ import { WebhookTestFixture } from "./fixtures/webhook.fixture";
 
 const APP_PORT = 4410;
 const DB_URL =
+  process.env.TEST_DATABASE_URL ??
   "postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test";
 const WEBHOOK_PORT = 4411;
 const USABLE_PORT = 4412;

@@ -994,3 +994,51 @@ export const regulationGroups = pgTable(
     ),
   }),
 );
+
+/** Durable, lossless revision transport. Staging does not make a revision
+ * visible. Parts remain replayable in Flowcore; no age-based deletion here. */
+export const regulationSnapshotAssemblies = pgTable(
+  "regulation_snapshot_assemblies",
+  {
+    assemblyId: text("assembly_id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    manifest: jsonb("manifest").notNull(),
+    status: text("status").notNull().default("staging"),
+    snapshot: jsonb("snapshot"),
+    reason: text("reason"),
+  },
+  (table) => ({
+    caseIdx: index("regulation_snapshot_assemblies_case_idx").on(
+      table.caseId,
+      table.status,
+    ),
+  }),
+);
+export const regulationSnapshotParts = pgTable(
+  "regulation_snapshot_parts",
+  {
+    assemblyId: text("assembly_id").notNull(),
+    partNumber: integer("part_number").notNull(),
+    payload: jsonb("payload").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.assemblyId, table.partNumber] }),
+  }),
+);
+
+/** Terminal dispositions isolate alien events without modifying the original assembly. */
+export const regulationImmutableConflicts = pgTable(
+  "regulation_immutable_conflicts",
+  {
+    id: text("id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    assemblyId: text("assembly_id").notNull(),
+    kind: text("kind").notNull(),
+    reason: text("reason").notNull(),
+    expected: jsonb("expected").notNull(),
+    received: jsonb("received").notNull(),
+  },
+  (table) => ({
+    caseIdx: index("regulation_immutable_conflicts_case_idx").on(table.caseId),
+  }),
+);
