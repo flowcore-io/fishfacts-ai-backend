@@ -101,6 +101,11 @@ export class RegulationReconstructionRequests {
     const caseId = rawCaseId.toLowerCase();
     const intent = canonicalIntent(rawIntent);
     const input = this.input(caseId, actor, intent);
+    // Historic casing may only become visible while replay catches up after
+    // operational cache loss. Resolve its immutable identity after the durable
+    // source/command barriers, before choosing any bytes to reserve. The outbox
+    // retains its own reservation barrier and prefix reconciliation.
+    await this.commands.catchup();
     const storedId = await this.storedRequestId(intent.requestId);
     if (storedId && storedId !== intent.requestId) {
       // A pre-fix accepted spelling keeps its original immutable command bytes.

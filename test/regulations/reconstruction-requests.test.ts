@@ -861,6 +861,86 @@ test("pre-fix accepted request spelling retains exact bytes and identity after c
   expect(deliveries[0].sequence).toBe(1);
 }, 30000);
 
+test("mounted retry resolves historic UUID identity first revealed during authoritative catchup", async () => {
+  const h = await harness();
+  const requestId = randomUUID();
+  const originalId = requestId.toUpperCase();
+  const intent = {
+    kind: "start" as const,
+    requestId: originalId,
+    baseRevisionId: h.revisionId,
+    landDatasetId: datasetId,
+  };
+  await h.runtime.submit({
+    commandId: originalId,
+    caseId: h.caseId,
+    baseRevisionId: h.revisionId,
+    revisionId: reconstructionIds(originalId).revisionId,
+    operation: "request",
+    actor: "admin:fixture",
+    data: intent,
+  });
+  const originalParts = structuredClone(h.recorded.at(-1));
+  if (!originalParts) throw Error("original request was not emitted");
+  await db
+    .delete(schema.regulationCommandDeliveries)
+    .where(eq(schema.regulationCommandDeliveries.caseId, h.caseId));
+  expect(await h.runtime.receipt(originalId)).toBeNull();
+  let replayed = false;
+  h.runtime.attach({
+    emit: async (parts) => {
+      h.recorded.push([...parts]);
+      return { eventIds: parts.map(() => randomUUID()) };
+    },
+    ingest: async (type, payloads, flow) => {
+      if (!replayed) {
+        replayed = true;
+        for (const part of originalParts)
+          await h.process(CASE_COMMAND_PART_EVENT_TYPE, part);
+      }
+      for (const payload of payloads) await h.process(type, payload, flow);
+      return payloads.map(() => randomUUID());
+    },
+  });
+  const response = await h.post("reconstruction", {
+    ...intent,
+    kind: undefined,
+    requestId,
+  });
+  expect(response.status).toBe(202);
+  expect(replayed).toBe(true);
+  expect(h.recorded.at(-1)).toEqual(originalParts);
+  const ack = await response.json();
+  expect((await h.app.request(ack.statusUrl)).status).toBe(200);
+  await h.project();
+  const rows = await db
+    .select()
+    .from(schema.regulationReconstructionRequests)
+    .where(eq(schema.regulationReconstructionRequests.caseId, h.caseId));
+  expect(rows.map((r) => r.id)).toEqual([originalId]);
+  const deliveries = await db
+    .select()
+    .from(schema.regulationCommandDeliveries)
+    .where(eq(schema.regulationCommandDeliveries.caseId, h.caseId));
+  expect(deliveries).toHaveLength(1);
+  expect(deliveries[0]).toMatchObject({ commandId: originalId, sequence: 1 });
+  const count = h.recorded.length;
+  await expect(
+    h.requests.register(h.caseId, "admin:other", { ...intent, requestId }),
+  ).rejects.toMatchObject({ code: "request_id_conflict" });
+  expect(
+    (
+      await h.post("reconstruction", {
+        ...intent,
+        kind: undefined,
+        requestId,
+        landDatasetId: "changed",
+      })
+    ).status,
+  ).toBe(409);
+  expect(h.recorded.length).toBe(count);
+}, 30000);
+
 test("producer crash after immutable result reservation retries exact bytes without land recomputation", async () => {
   const h = await harness();
   const requestId = randomUUID();
