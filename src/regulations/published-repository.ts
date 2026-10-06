@@ -1,6 +1,8 @@
 import type { Database } from "@/db/client";
 import * as schema from "@/db/schema";
 import type { RegulationRevisionFields } from "@/events/contracts";
+import { canonicalDigest } from "@/events/json-digest";
+import type { EvidenceRun, OfficialVector } from "@/events/official-vector";
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { verifyApprovalEvidence } from "./approval-evidence";
 import {
@@ -10,6 +12,11 @@ import {
 } from "./coastal-state";
 import { RegulationGroupRepository } from "./group-repository";
 import { caseIdFor } from "./ids";
+import {
+  hydrateOfficialGeometries,
+  snapshotManifestHash,
+  verifyOfficialVector,
+} from "./official-vector";
 
 /**
  * Read side of the PUBLISHED lane (stage ③) — what the user-facing 1st mate
@@ -104,6 +111,13 @@ export type PublishedRegulationGeometry = {
   geometrySource: string;
   coordinateSystem: string;
   precision: string | null;
+  paragraph?: number | null;
+  geojson?: OfficialVector["geojson"] | null;
+  snapshotId?: string | null;
+  geometryHash?: string | null;
+  provenance?: OfficialVector["provenance"] | null;
+  evidenceRuns?: EvidenceRun[];
+  resolutionStatus?: "resolved" | "unresolved";
 };
 
 export class GeometryClientUpgradeError extends Error {}
@@ -125,6 +139,7 @@ export type PublishedRegulation = {
   sourceRef?: string;
   sourceSignature?: ReturnType<typeof sourceSignatureOf>;
   shapeManifestHash?: string | null;
+  snapshotManifestHash?: string | null;
   shapes?: PublishedShape[];
   id: string;
   caseKey: string;
@@ -295,7 +310,22 @@ export class RegulationPublishedReadRepository {
           eq(schema.regulationCaseRevisions.geometryModelVersion, 0),
         ),
       );
-    const ids = new Set(revisions.map((r) => r.id));
+    const official = await this.db
+      .select({ revisionId: schema.regulationCaseGeometries.revisionId })
+      .from(schema.regulationCaseGeometries)
+      .where(
+        and(
+          inArray(
+            schema.regulationCaseGeometries.revisionId,
+            revisions.map((r) => r.id),
+          ),
+          eq(schema.regulationCaseGeometries.geometrySource, "official-vector"),
+        ),
+      );
+    const exactIds = new Set(official.map((r) => r.revisionId));
+    const ids = new Set(
+      revisions.filter((r) => !exactIds.has(r.id)).map((r) => r.id),
+    );
     return cases.filter((c) => ids.has(c.publishedRevisionId as string));
   }
 
@@ -317,6 +347,7 @@ export class RegulationPublishedReadRepository {
           .select({
             id: schema.regulationCaseRevisions.id,
             fields: schema.regulationCaseRevisions.fields,
+            contentHash: schema.regulationCaseRevisions.contentHash,
             caseId: schema.regulationCaseRevisions.caseId,
             snapshotText: schema.regulationCaseRevisions.snapshotText,
             snapshotUrl: schema.regulationCaseRevisions.snapshotUrl,
@@ -329,6 +360,11 @@ export class RegulationPublishedReadRepository {
         this.db
           .select({
             id: schema.regulationCaseGeometries.id,
+            caseId: schema.regulationCaseGeometries.caseId,
+            officialSnapshotId:
+              schema.regulationCaseGeometries.officialSnapshotId,
+            paragraph: schema.regulationCaseGeometries.paragraph,
+            evidenceRuns: schema.regulationCaseGeometries.evidenceRuns,
             revisionId: schema.regulationCaseGeometries.revisionId,
             position: schema.regulationCaseGeometries.position,
             name: schema.regulationCaseGeometries.name,
@@ -376,12 +412,34 @@ export class RegulationPublishedReadRepository {
       string,
       PublishedRegulationGeometry[]
     >();
-    for (const geometry of geometries) {
+    for (const geometry of await hydrateOfficialGeometries(
+      this.db,
+      geometries,
+    )) {
       const { revisionId, ...area } = geometry;
+      const {
+        officialVector: _payload,
+        officialSnapshotId: _reference,
+        ...dto
+      } = area as typeof area & {
+        officialVector?: unknown;
+        officialSnapshotId?: string | null;
+      };
       const list = geometriesByRevision.get(revisionId) ?? [];
       list.push({
-        ...area,
+        id: dto.id,
+        position: dto.position,
+        name: dto.name,
+        section: dto.section,
+        kind: dto.kind,
+        season: dto.season,
+        geometrySource: dto.geometrySource,
+        coordinateSystem: dto.coordinateSystem,
+        precision: dto.precision,
         points: area.points as Array<{ lat: number; lon: number }>,
+        ...(dto.geometrySource === "official-vector"
+          ? (dto as PublishedRegulationGeometry)
+          : {}),
       });
       geometriesByRevision.set(revisionId, list);
     }
@@ -414,6 +472,88 @@ export class RegulationPublishedReadRepository {
       if (!revision) throw new Error("published revision missing or foreign");
       const raw = geometriesByRevision.get(revisionId) ?? [];
       const modeled = revision.geometryModelVersion === 1;
+      const official = raw.filter(
+        (g) => g.geometrySource === "official-vector",
+      );
+      if (official.length) {
+        const approval = approvals.find(
+          (a) =>
+            a.id === caseRow.publishedApprovalId &&
+            a.caseId === caseRow.id &&
+            a.revisionId === revisionId &&
+            a.metadataOnly === caseRow.publishedMetadataOnly,
+        );
+        if (!approval || approval.commandSequence === null)
+          throw new Error("published official approval missing");
+        const approvedSequence = approval.commandSequence;
+        const evidence = approval.approvalEvidence as {
+          kind?: string;
+          snapshotManifestHash?: string;
+          legalValidationId?: string;
+          geometries?: Array<{
+            geometryId: string;
+            snapshotId: string;
+            geometryHash: string;
+            validationId: string;
+          }>;
+        } | null;
+        const causal = (id: string | undefined, scope: string) =>
+          validations.find(
+            (v) =>
+              v.id === id &&
+              v.caseId === caseRow.id &&
+              v.revisionId === revisionId &&
+              v.scope === scope &&
+              v.validated &&
+              v.commandSequence !== null &&
+              v.commandSequence < approvedSequence,
+          );
+        if (
+          evidence?.kind !== "official-vector" ||
+          evidence.snapshotManifestHash !== snapshotManifestHash(raw) ||
+          !causal(evidence.legalValidationId, "legal")
+        )
+          throw new Error("published official legal evidence missing");
+        for (const area of official) {
+          if (
+            !area.snapshotId ||
+            !area.geojson ||
+            !area.geometryHash ||
+            !area.provenance
+          ) {
+            if (!caseRow.publishedMetadataOnly)
+              throw new Error("published official geometry unresolved");
+            continue;
+          }
+          if (
+            area.provenance.sourceRef.toLowerCase() !==
+              caseRow.sourceRef.toLowerCase() ||
+            area.provenance.paragraph !== area.paragraph ||
+            area.provenance.sourceContentHash !==
+              canonicalDigest(revision.snapshotText)
+          )
+            throw new Error("published official binding mismatch");
+          const receipt = evidence.geometries?.find(
+            (g) =>
+              g.geometryId === area.id &&
+              g.snapshotId === area.snapshotId &&
+              g.geometryHash === area.geometryHash,
+          );
+          const validated = receipt
+            ? causal(receipt.validationId, "geometry")
+            : undefined;
+          if (
+            !caseRow.publishedMetadataOnly &&
+            (!validated ||
+              validated.geometryId !== area.id ||
+              validated.officialSnapshotId !== area.snapshotId ||
+              validated.geometryHash !== area.geometryHash)
+          )
+            throw new Error(
+              "published exact official validation evidence missing",
+            );
+        }
+      }
       let shapeState: RevisionShapeState | null = null;
       if (modeled) {
         shapeState = verifyShapeState(
@@ -523,6 +663,9 @@ export class RegulationPublishedReadRepository {
         ...(geometryVersion === 2
           ? {
               geometryVersion: 2 as const,
+              ...(official.length
+                ? { snapshotManifestHash: snapshotManifestHash(raw) }
+                : {}),
               geometryModelVersion: modeled ? (1 as const) : (0 as const),
               sourceRef: caseRow.sourceRef,
               sourceSignature: modeled

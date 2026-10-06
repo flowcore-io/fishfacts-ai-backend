@@ -4,7 +4,8 @@ import { REGULATION_FLOW_TYPE } from "./contracts";
 
 // Flowcore's cap is 64,000 bytes, not 64 KiB. Budget includes JSON/base64.
 export const SNAPSHOT_PART_EVENT_TYPE = "regulation.case.snapshot.part.1";
-export const SNAPSHOT_PART_PATHWAY = `${REGULATION_FLOW_TYPE}/${SNAPSHOT_PART_EVENT_TYPE}`;
+export const SNAPSHOT_PART_PATHWAY =
+  `${REGULATION_FLOW_TYPE}/${SNAPSHOT_PART_EVENT_TYPE}` as const;
 export const SNAPSHOT_PART_BYTES = 32_000;
 export const SNAPSHOT_EVENT_BUDGET_BYTES = 60_000;
 export const MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024;

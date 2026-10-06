@@ -9,12 +9,6 @@ import {
 } from "@/events/contracts";
 import type { RegulationRevisionGeometry } from "@/events/contracts";
 import {
-  type ReconstructionIntent,
-  reconstructionFacesSchema,
-  reconstructionJoinsSchema,
-  reconstructionStartSchema,
-} from "@/events/reconstruction-request";
-import {
   API_ERROR,
   API_REASON,
   errorResponse,
@@ -35,16 +29,18 @@ import { z } from "zod";
 import { type SourceRun, verifyShapeState } from "./coastal-state";
 import type { RegulationCaseCommandRuntime } from "./command-runtime";
 import { type RegulationGroupRepository, groupDto } from "./group-repository";
-import type { RegulationQueueReadRepository } from "./read-repository";
+import { proposalGeometry } from "./official-vector";
 import {
-  ReconstructionRequestError,
-  type RegulationReconstructionRequests,
-} from "./reconstruction-requests";
+  OfficialPreparationError,
+  type OfficialVectorPreparation,
+} from "./official-vector-preparation";
+import type { RegulationQueueReadRepository } from "./read-repository";
 import {
   editableFieldsOfCase,
   fieldValueEquals,
   snapshotOnlyFieldsOf,
 } from "./revision-fields";
+import type { RegulationRevisionSnapshotRuntime } from "./revision-snapshot-runtime";
 import { ShapeCommandRejectedError } from "./shape-rejection";
 import { shapeReview } from "./shape-review";
 import { ADMIN_STATUSES } from "./status";
@@ -93,7 +89,8 @@ export type RegulationsRouterDeps = {
   groups: RegulationGroupRepository;
   writer: PathwayWriter;
   commands?: RegulationCaseCommandRuntime;
-  reconstruction?: RegulationReconstructionRequests;
+  officialPreparation?: OfficialVectorPreparation;
+  revisionSnapshots?: RegulationRevisionSnapshotRuntime;
   /** B4 agent-tool deps: the POI gazetteer behind resolve_landmark and the
    * job runner behind verdict recompute. */
   poi: PoiRepository;
@@ -192,57 +189,14 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     }
   });
 
-  for (const [suffix, kind, payloadSchema] of [
-    ["reconstruction", "start", reconstructionStartSchema],
-    ["reconstruction/joins", "joins", reconstructionJoinsSchema],
-    ["reconstruction/faces", "faces", reconstructionFacesSchema],
-  ] as const)
-    app.post(`/cases/:id/${suffix}`, async (c) => {
-      const id = c.req.param("id").toLowerCase();
-      if (!CASE_ID.test(id)) return notFound(c);
-      if (!deps.reconstruction)
-        return serviceUnavailable(c, API_ERROR.queueUnavailable);
-      const parsed = payloadSchema.safeParse(
-        await c.req.json().catch(() => null),
-      );
-      if (!parsed.success)
-        return invalidPayload(c, { issues: parsed.error.issues });
-      try {
-        const result = await deps.reconstruction.register(
-          id,
-          `admin:${c.get("auth").user.username}`,
-          { ...parsed.data, kind } as ReconstructionIntent,
-        );
-        return c.json(result, 202);
-      } catch (error) {
-        if (error instanceof ReconstructionRequestError) {
-          if (error.code === "stale_revision")
-            return c.json(
-              await staleRevisionBody(
-                id,
-                String(error.details.currentRevisionId),
-                String(error.details.namedRevisionId),
-              ),
-              409,
-            );
-          return c.json({ error: error.code, ...error.details }, error.status);
-        }
-        return serviceUnavailable(c, API_ERROR.queueUnavailable);
-      }
-    });
-  app.get("/cases/:id/reconstruction-requests/:requestId", async (c) => {
+  app.get("/cases/:id/revision-deliveries/:operationId", async (c) => {
     const id = c.req.param("id").toLowerCase();
-    const requestId = c.req.param("requestId").toLowerCase();
-    if (!CASE_ID.test(id) || !CASE_ID.test(requestId)) return notFound(c);
-    if (!deps.reconstruction)
+    const operationId = c.req.param("operationId").toLowerCase();
+    if (!CASE_ID.test(id) || !CASE_ID.test(operationId)) return notFound(c);
+    if (!deps.revisionSnapshots)
       return serviceUnavailable(c, API_ERROR.queueUnavailable);
-    try {
-      if (!(await deps.queue.getCaseRef(id))) return notFound(c);
-      const result = await deps.reconstruction.status(id, requestId);
-      return result ? c.json(result) : notFound(c);
-    } catch {
-      return serviceUnavailable(c, API_ERROR.queueUnavailable);
-    }
+    const status = await deps.revisionSnapshots.status(id, operationId);
+    return status ? c.json(status) : notFound(c);
   });
 
   app.post("/cases/:id/actions", async (c) => {
@@ -448,6 +402,14 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     .object({
       revisionId: z.string().uuid(),
       scope: z.enum(["legal", "geometry", "shape"]),
+      snapshotId: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+      geometryHash: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
       shapeId: z.string().uuid().optional(),
       shapeHash: z
         .string()
@@ -601,20 +563,17 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       const geometries =
         parsed.data.geometries ??
         (await deps.queue.getRevisionGeometries(caseRow.currentRevisionId)).map(
-          (row) => ({
-            name: row.name,
-            section: row.section,
-            kind: row.kind as "closure" | "exemption" | "other",
-            season: row.season,
-            verticesQuoted: row.verticesQuoted as string[] | null,
-            points: row.points as Array<{ lat: number; lon: number }>,
-            geometrySource: row.geometrySource as
-              | "enumerated"
-              | "preparsed"
-              | "described",
-            coordinateSystem: row.coordinateSystem,
-            precision: row.precision,
-          }),
+          (row) => proposalGeometry(row as RegulationRevisionGeometry),
+        );
+      if (
+        parsed.data.geometries !== null &&
+        (
+          await deps.queue.getRevisionGeometries(caseRow.currentRevisionId)
+        ).some((g) => g.geometrySource === "official-vector")
+      )
+        return c.json(
+          { error: "official_geometry_requires_source_refresh" },
+          422,
         );
       const changes: RegulationRevisionChange[] = changeKeys.map((field) => ({
         field: field as RegulationRevisionChange["field"],
@@ -692,86 +651,6 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     }
   });
 
-  app.post("/cases/:id/coverage-validations", async (c) => {
-    const id = c.req.param("id");
-    if (!CASE_ID.test(id)) return notFound(c);
-    const parsed = z
-      .object({
-        revisionId: z.string().uuid(),
-        coverageHash: z.string().regex(/^[a-f0-9]{64}$/),
-        validated: z.boolean(),
-        note: z.string().max(2000).nullable().default(null),
-      })
-      .strict()
-      .safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success)
-      return invalidPayload(c, { issues: parsed.error.issues });
-    try {
-      const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
-      if (!caseRow) return notFound(c);
-      if (caseRow.currentRevisionId !== parsed.data.revisionId)
-        return c.json(
-          await staleRevisionBody(
-            caseRow.id,
-            caseRow.currentRevisionId,
-            parsed.data.revisionId,
-          ),
-          409,
-        );
-      const revision = await deps.queue.getRevision(parsed.data.revisionId);
-      if (!revision || revision.geometryModelVersion !== 1)
-        return invalidPayload(c, { reason: "modeled_revision_required" });
-      const runs = await deps.queue.getRevisionGeometries(revision.id);
-      const state = verifyShapeState(
-        revision.shapeState,
-        revision.snapshotText,
-        runs as unknown as SourceRun[],
-      );
-      if (parsed.data.coverageHash !== state.coverage.coverageHash)
-        return c.json(
-          {
-            error: "coverage_hash_mismatch",
-            expectedHash: state.coverage.coverageHash,
-            receivedHash: parsed.data.coverageHash,
-          },
-          409,
-        );
-      if (
-        parsed.data.validated &&
-        state.coverage.sourceAvailability !== "complete_snapshot"
-      )
-        return c.json({ error: "source_incomplete" }, 422);
-      if (!deps.commands)
-        return serviceUnavailable(c, API_ERROR.queueUnavailable);
-      const validationId = randomUUID();
-      const recordedAt = new Date().toISOString();
-      const receipt = await deps.commands.submit({
-        commandId: validationId,
-        caseId: caseRow.id,
-        baseRevisionId: revision.id,
-        revisionId: revision.id,
-        operation: "coverage-validation",
-        actor: `admin:${c.get("auth").user.username}`,
-        data: {
-          validationId,
-          scope: "coverage",
-          coverageHash: parsed.data.coverageHash,
-          validated: parsed.data.validated,
-          note: parsed.data.note,
-        },
-      });
-      return c.json(
-        { validationId, eventId: receipt.eventIds.at(-1), recordedAt },
-        202,
-      );
-    } catch (error) {
-      return flowcoreWriteFailed(
-        c,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-  });
-
   app.post("/cases/:id/validations", async (c) => {
     const auth = c.get("auth");
     if (!isAdmin(auth.user.authorities)) {
@@ -803,6 +682,24 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         const geometries = await deps.queue.getRevisionGeometries(
           parsed.data.revisionId,
         );
+        const namedGeometry = geometries.find(
+          (g) => g.id === parsed.data.geometryId,
+        );
+        if (
+          namedGeometry?.geometrySource === "official-vector" &&
+          parsed.data.validated
+        ) {
+          const exact = namedGeometry as typeof namedGeometry & {
+            snapshotId?: string | null;
+            geometryHash?: string | null;
+          };
+          if (
+            !exact.snapshotId ||
+            parsed.data.snapshotId !== exact.snapshotId ||
+            parsed.data.geometryHash !== exact.geometryHash
+          )
+            return c.json({ error: "official_snapshot_mismatch" }, 409);
+        }
         if (!geometries.some((g) => g.id === parsed.data.geometryId)) {
           return invalidPayload(c, {
             reason: API_REASON.geometryNotOfRevision,
@@ -912,6 +809,12 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
         revisionId: parsed.data.revisionId,
         scope: parsed.data.scope as "legal" | "geometry",
         geometryId: parsed.data.geometryId,
+        ...(parsed.data.snapshotId
+          ? { snapshotId: parsed.data.snapshotId }
+          : {}),
+        ...(parsed.data.geometryHash
+          ? { geometryHash: parsed.data.geometryHash }
+          : {}),
         validated: parsed.data.validated,
         note: parsed.data.note,
         actor: `admin:${auth.user.username}`,
@@ -1204,6 +1107,30 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
     try {
       const caseRow = await deps.queue.getCaseRow(id.toLowerCase());
       if (!caseRow) return notFound(c);
+      if (
+        caseRow.jurisdiction === "NO" &&
+        caseRow.sourceType === "fiskeridir-jmelding" &&
+        caseRow.geometryModelVersion === 0
+      ) {
+        if (!deps.officialPreparation)
+          return serviceUnavailable(c, API_ERROR.queueUnavailable);
+        const parsed = z
+          .object({
+            baseRevisionId: z.string().uuid().optional(),
+            requestId: z.string().uuid().toLowerCase().optional(),
+          })
+          .strict()
+          .safeParse(await c.req.json().catch(() => ({})));
+        if (!parsed.success)
+          return invalidPayload(c, { issues: parsed.error.issues });
+        const result = await deps.officialPreparation.prepare(
+          caseRow.id,
+          `admin:${auth.user.username}`,
+          parsed.data,
+        );
+        if (!result) return notFound(c);
+        return c.json(result, result.outcome === "no_change" ? 200 : 202);
+      }
       const revision = await deps.queue.getRevision(caseRow.currentRevisionId);
       if (!revision?.snapshotText) {
         // Decision 6 stores the snapshot precisely so this can work; a case
@@ -1299,6 +1226,8 @@ export function createRegulationsRouter(deps: RegulationsRouterDeps): Hono {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof OfficialPreparationError)
+        return c.json({ error: error.code, ...error.details }, error.status);
       console.error("[Regulations] reparse failed", { caseId: id, message });
       return flowcoreWriteFailed(c, message);
     }

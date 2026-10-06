@@ -6,6 +6,7 @@ import type {
 } from "@/events/contracts";
 import type { RawSyncCase } from "@/regulations/raw-fragment";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { hydrateOfficialGeometries, proposalGeometry } from "./official-vector";
 import { editableFieldsOfCase, snapshotOnlyFieldsOf } from "./revision-fields";
 
 /** A case whose current revision still awaits its verdict, with everything
@@ -135,6 +136,9 @@ export class RegulationQueueRepository {
     const rows = await this.db
       .select({
         name: schema.regulationCaseGeometries.name,
+        paragraph: schema.regulationCaseGeometries.paragraph,
+        officialSnapshotId: schema.regulationCaseGeometries.officialSnapshotId,
+        evidenceRuns: schema.regulationCaseGeometries.evidenceRuns,
         section: schema.regulationCaseGeometries.section,
         kind: schema.regulationCaseGeometries.kind,
         season: schema.regulationCaseGeometries.season,
@@ -147,14 +151,16 @@ export class RegulationQueueRepository {
       .from(schema.regulationCaseGeometries)
       .where(eq(schema.regulationCaseGeometries.revisionId, revisionId))
       .orderBy(asc(schema.regulationCaseGeometries.position));
-    return rows.map((row) => ({
-      ...row,
-      kind: row.kind as RegulationRevisionGeometry["kind"],
-      verticesQuoted: row.verticesQuoted as string[] | null,
-      points: row.points as RegulationRevisionGeometry["points"],
-      geometrySource:
-        row.geometrySource as RegulationRevisionGeometry["geometrySource"],
-    }));
+    return (await hydrateOfficialGeometries(this.db, rows)).map((row) =>
+      proposalGeometry({
+        ...row,
+        kind: row.kind as RegulationRevisionGeometry["kind"],
+        verticesQuoted: row.verticesQuoted as string[] | null,
+        points: row.points as RegulationRevisionGeometry["points"],
+        geometrySource:
+          row.geometrySource as RegulationRevisionGeometry["geometrySource"],
+      } as RegulationRevisionGeometry),
+    );
   }
 
   /** The case's current-revision pointer as it stands NOW — how a writer

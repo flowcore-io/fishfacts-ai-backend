@@ -246,6 +246,13 @@
       "when": 1791250455950,
       "tag": "0034_coastal_request_uuid_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1791280346527,
+      "tag": "0035_official_vector_snapshots",
+      "breakpoints": true
     }
   ]
 }

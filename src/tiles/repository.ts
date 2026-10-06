@@ -53,13 +53,19 @@ export class TilesRepository {
           AND j.geom && ST_Transform(env.bbox_3857, 4326)
           AND NOT EXISTS (
             SELECT 1 FROM regulation_cases rc
-            JOIN regulation_case_revisions rr ON rr.id = rc.published_revision_id
+            LEFT JOIN regulation_case_revisions rr ON rr.id = rc.published_revision_id
               AND rr.case_id = rc.id
             WHERE rc.source_type = 'fiskeridir-jmelding'
               AND rc.source_ref = j.jm_number
               AND rc.case_key = 'fiskeridir-jmelding:' || j.jm_number
               AND coalesce(j.region, 'NO') = 'NO'
-              AND (rr.geometry_model_version = 1 OR rc.published_metadata_only = true)
+              AND ((rc.published_revision_id IS NULL AND EXISTS (
+                SELECT 1 FROM regulation_case_geometries current_g WHERE current_g.revision_id = rc.current_revision_id
+                  AND current_g.case_id = rc.id AND current_g.geometry_source = 'official-vector'
+              )) OR (rr.id IS NOT NULL AND (rr.geometry_model_version = 1 OR rc.published_metadata_only = true OR EXISTS (
+                SELECT 1 FROM regulation_case_geometries rg WHERE rg.revision_id = rr.id
+                  AND rg.case_id = rc.id AND rg.geometry_source = 'official-vector'
+              ))))
           )
       ),
       hulls AS (

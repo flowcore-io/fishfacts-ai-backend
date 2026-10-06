@@ -8,7 +8,7 @@ import { ZodError } from "zod";
 import { requireAdmin } from "./auth/admin";
 import type { TokenCache } from "./auth/cache";
 import { createAuthMiddleware } from "./auth/middleware";
-import type { RegulationReconstructionRequests } from "./regulations/reconstruction-requests";
+import type { OfficialVectorPreparation } from "./regulations/official-vector-preparation";
 import "./auth/types";
 import type { AisClickhouseRepository } from "./ais/clickhouse-repository";
 import { isoToTimeBucket } from "./ais/flowcore-bucket-reader";
@@ -71,7 +71,7 @@ export type AppDependencies = {
   regulationPublishedReadRepository: RegulationPublishedReadRepository;
   regulationGroupRepository: RegulationGroupRepository;
   db: Database;
-  regulationReconstructionRequests?: RegulationReconstructionRequests;
+  officialVectorPreparation?: OfficialVectorPreparation;
 };
 
 export function createApp({
@@ -97,7 +97,7 @@ export function createApp({
   regulationQueueReadRepository,
   regulationPublishedReadRepository,
   regulationGroupRepository,
-  regulationReconstructionRequests,
+  officialVectorPreparation,
   db,
 }: AppDependencies) {
   const app = new Hono();
@@ -185,7 +185,8 @@ export function createApp({
       groups: regulationGroupRepository,
       writer: pathways.writer,
       commands: pathways.commands,
-      reconstruction: regulationReconstructionRequests,
+      officialPreparation: officialVectorPreparation,
+      revisionSnapshots: pathways.revisionSnapshots,
       poi: poiRepository,
       jobRunner,
     }),

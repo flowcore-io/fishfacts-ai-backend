@@ -30,8 +30,8 @@ export async function quarantineConflict(
  * as terminal rather than retrying it like a SQL/network failure. */
 export class SnapshotPartRejectedError extends Error {
   readonly terminal = true;
-  constructor(cause: unknown) {
-    super("invalid snapshot part", { cause });
+  constructor(cause: unknown, message = "invalid snapshot part") {
+    super(message, { cause });
     this.name = "SnapshotPartRejectedError";
   }
 }

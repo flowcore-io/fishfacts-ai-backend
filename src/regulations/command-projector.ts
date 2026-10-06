@@ -155,14 +155,20 @@ export class RegulationCommandProjector {
     input: unknown,
     manifest: SnapshotManifest,
   ): Promise<SnapshotApplication> {
-    const command = caseCommandSchema.parse(input);
+    const parsed = caseCommandSchema.safeParse(input);
+    if (!parsed.success)
+      return { status: "refused", reason: "invalid complete command" };
+    const command = parsed.data;
     if (
       command.commandId !== manifest.assemblyId ||
       command.caseId !== manifest.caseId ||
       command.baseRevisionId !== manifest.baseRevisionId ||
       command.revisionId !== manifest.revisionId
     )
-      throw new Error("command snapshot identity mismatch");
+      return {
+        status: "refused",
+        reason: "command snapshot identity mismatch",
+      };
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended(${`regulation-command:${command.caseId}`},0))`,
     );
@@ -177,15 +183,24 @@ export class RegulationCommandProjector {
       header.sequence !== command.sequence ||
       header.predecessorCommandId !== command.predecessorCommandId ||
       header.payloadHash !== manifest.payloadSha256
-    )
-      throw new Error("command header/body mismatch");
+    ) {
+      await quarantineConflict(tx, {
+        caseId: command.caseId,
+        assemblyId: manifest.assemblyId,
+        kind: "command-header-body",
+        reason: "command header/body mismatch",
+        expected: header,
+        received: command,
+      });
+      return { status: "refused", reason: "command header/body mismatch" };
+    }
     const payloadHash = canonicalDigest(command);
     const [known] = await tx
       .select()
       .from(schema.regulationCommandReceipts)
       .where(eq(schema.regulationCommandReceipts.commandId, command.commandId));
     if (known && known.payloadHash !== payloadHash)
-      throw new Error("conflicting command payload");
+      return { status: "refused", reason: "conflicting command payload" };
     if (!known)
       await tx.insert(schema.regulationCommandReceipts).values({
         commandId: command.commandId,

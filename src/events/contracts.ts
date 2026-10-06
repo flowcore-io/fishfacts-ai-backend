@@ -1,5 +1,6 @@
 import { regulationApplicabilitySchema } from "@/regulations/applicability";
 import { z } from "zod";
+import { evidenceRunSchema, officialVectorSchema } from "./official-vector";
 
 export const GENERIC_FLOW_TYPE = "fishfacts-generic.0" as const;
 export const GENERIC_EVENT_TYPE = "generic.received.0" as const;
@@ -619,8 +620,47 @@ export const regulationRevisionGeometrySchema = z.object({
   coordinateSystem: z.string().max(50).default("WGS84"),
   precision: z.string().max(100).nullable().default(null),
 });
+export const regulationSnapshotGeometrySchema = regulationRevisionGeometrySchema
+  .extend({
+    points: regulationRevisionGeometrySchema.shape.points.min(0),
+    geometrySource: z.enum([
+      "enumerated",
+      "preparsed",
+      "described",
+      "official-vector",
+    ]),
+    paragraph: z.number().int().positive().nullable().optional(),
+    officialVector: officialVectorSchema.nullable().optional(),
+    evidenceRuns: z.array(evidenceRunSchema).optional(),
+  })
+  .superRefine((geometry, ctx) => {
+    if (geometry.geometrySource === "official-vector") {
+      if (geometry.points.length || !geometry.evidenceRuns)
+        ctx.addIssue({
+          code: "custom",
+          message: "official geometry needs separate printed evidence",
+        });
+      if (
+        geometry.officialVector &&
+        geometry.paragraph !== geometry.officialVector.provenance.paragraph
+      )
+        ctx.addIssue({
+          code: "custom",
+          message: "official paragraph identity mismatch",
+        });
+    } else if (
+      !geometry.points.length ||
+      geometry.officialVector ||
+      geometry.evidenceRuns
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "legacy geometry needs points and no official binding",
+      });
+    }
+  });
 export type RegulationRevisionGeometry = z.infer<
-  typeof regulationRevisionGeometrySchema
+  typeof regulationSnapshotGeometrySchema
 >;
 
 export const REGULATION_REVISION_CHANGE_FIELDS = [
@@ -657,7 +697,37 @@ export const regulationRevisionProposedSchema = z.object({
   fields: regulationRevisionFieldsSchema,
   /** The complete resulting area set (copied from the base when untouched);
    * empty = the case has no drawable areas. */
-  geometries: z.array(regulationRevisionGeometrySchema),
+  geometries: z
+    .array(regulationSnapshotGeometrySchema)
+    .refine(
+      (areas) =>
+        !areas.some((g) => g.geometrySource === "official-vector") ||
+        areas.every((g) => g.geometrySource === "official-vector"),
+      { message: "mixed official and legacy drawing geometry" },
+    )
+    .superRefine((areas, ctx) => {
+      const sections = new Set<number>();
+      const runs = new Set<string>();
+      for (const area of areas) {
+        if (area.geometrySource !== "official-vector") continue;
+        if (area.paragraph != null) {
+          if (sections.has(area.paragraph))
+            ctx.addIssue({
+              code: "custom",
+              message: "duplicate official closure section",
+            });
+          sections.add(area.paragraph);
+        }
+        for (const run of area.evidenceRuns ?? []) {
+          if (runs.has(run.id))
+            ctx.addIssue({
+              code: "custom",
+              message: "duplicate printed evidence run",
+            });
+          runs.add(run.id);
+        }
+      }
+    }),
   /** `admin:<username>` — stamped by the route from the auth token — or
    * `job:<job id>` when a job proposed the redraft (the applicability
    * extraction is the first). Either way a human approves it. */
@@ -694,6 +764,14 @@ export const regulationValidationRecordedSchema = z
     caseKey: z.string().min(1),
     revisionId: z.string().uuid(),
     scope: z.enum(["legal", "geometry"]),
+    snapshotId: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    geometryHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     geometryId: z.string().uuid().nullable().default(null),
     validated: z.boolean(),
     note: z.string().max(2000).nullable().default(null),

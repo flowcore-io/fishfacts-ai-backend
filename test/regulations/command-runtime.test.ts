@@ -451,7 +451,7 @@ test("observed source changes fence admin allocation, then actual source adapter
     pin?.sourceSignature,
   );
 }, 5000);
-test("admin DTO and routes bind separate coverage/shape decisions and expose no optimistic validation before projection", async () => {
+test("historic shape DTO and durable coverage replay remain compatible while discarded coverage UI route is retired", async () => {
   const h = await harness();
   const { Hono } = await import("hono");
   const { createRegulationsRouter } = await import(
@@ -492,7 +492,7 @@ test("admin DTO and routes bind separate coverage/shape decisions and expose no 
         validated: true,
       })
     ).status,
-  ).toBe(409);
+  ).toBe(404);
   expect(
     (
       await post("approval", {
@@ -501,12 +501,15 @@ test("admin DTO and routes bind separate coverage/shape decisions and expose no 
       })
     ).status,
   ).toBe(409);
-  const coverage = await post("coverage-validations", {
-    revisionId: h.revisionId,
-    coverageHash: fixture.state.coverage.coverageHash,
-    validated: true,
-  });
-  expect(coverage.status).toBe(202);
+  await h.runtime.submit(
+    h.input("coverage-validation", {
+      scope: "coverage",
+      validationId: randomUUID(),
+      coverageHash: fixture.state.coverage.coverageHash,
+      validated: true,
+      note: null,
+    }),
+  );
   const before = await (
     await app.request(`/api/regulations/cases/${h.caseId}`)
   ).json();

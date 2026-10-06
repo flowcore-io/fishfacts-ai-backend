@@ -37,7 +37,7 @@ import type { PublishedRegulation } from "./published-repository";
  * 2 — the `## Applicability` section.
  * 3 — immutable modeled shape summaries/v2 drawing reference; metadata-only suppression.
  */
-export const PUBLISHED_FRAGMENT_RENDER_VERSION = 3;
+export const PUBLISHED_FRAGMENT_RENDER_VERSION = 4;
 
 /** `fiskeridir-jmelding:J-39-2026` → `regulation-published-fiskeridir-jmelding-J-39-2026`. */
 export function publishedFragmentKeyFor(caseKey: string): string {
@@ -211,6 +211,16 @@ export function buildPublishedCaseFragment(
   const geometrySections = (
     item.metadataOnly || item.geometryModelVersion === 1 ? [] : item.geometries
   ).map((geometry) => {
+    if (geometry.geometrySource === "official-vector") {
+      const polygons =
+        geometry.geojson?.type === "Polygon"
+          ? [geometry.geojson.coordinates]
+          : (geometry.geojson?.coordinates ?? []);
+      const holes = polygons.reduce((n, p) => n + p.length - 1, 0);
+      return `### ${oneLine(geometry.name ?? geometry.section ?? "Reviewed closure")}
+
+Official immutable polygon: ${polygons.length} pieces, ${holes} holes; snapshot ${geometry.snapshotId}; geometry hash ${geometry.geometryHash}. Attribution: Fiskeridirektoratet · NLOD. Printed coordinate runs are separate evidence, not substitute drawable rings.`;
+    }
     const heading = `### ${geometry.name ?? `Area ${geometry.position + 1}`} (${geometry.kind}${geometry.season ? `, ${geometry.season}` : ""})`;
     const points = geometry.points
       .map((point) => `  - ${point.lat}, ${point.lon}`)
@@ -237,7 +247,7 @@ export function buildPublishedCaseFragment(
       : geometrySections.join("\n\n") || "No areas on the approved revision.";
   const drawing = item.metadataOnly
     ? "No drawing is authorized for this metadata-only record."
-    : `Exact approved geometry for drawing: GET /api/regulations/published/${item.id}?geometryVersion=2 (published revision ${item.publishedRevisionId}).`;
+    : `Exact approved geometry for drawing: GET /api/regulations/published/${item.id}?geometryVersion=2&expectedPublishedRevisionId=${item.publishedRevisionId}${item.snapshotManifestHash ? `&expectedSnapshotManifestHash=${item.snapshotManifestHash}` : ""} (published revision ${item.publishedRevisionId}).`;
 
   const content = `---
 caseKey: ${item.caseKey}

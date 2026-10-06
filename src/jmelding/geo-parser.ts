@@ -388,10 +388,18 @@ function findSegmentStarts(text: string, headings: Heading[]): number[] {
  * than a place name picked out of Norwegian prose, so it can be wrong only in
  * the way the source is.
  */
-function groupBySegment(matches: MatchedPoint[], text: string): NamedArea[] {
+function groupBySegment(
+  matches: MatchedPoint[],
+  text: string,
+  evidence = false,
+): NamedArea[] {
   const headings = findHeadings(text);
   const starts = findSegmentStarts(text, headings);
-  const segments: { name: string | null; matches: MatchedPoint[] }[] = [];
+  const segments: {
+    name: string | null;
+    matches: MatchedPoint[];
+    paragraph: number | null;
+  }[] = [];
   let currentStart = Number.NaN;
   for (const m of matches) {
     let start = -1;
@@ -402,6 +410,7 @@ function groupBySegment(matches: MatchedPoint[], text: string): NamedArea[] {
     if (segments.length === 0 || start !== currentStart) {
       segments.push({
         name: segmentName(text, headings, m.start, start),
+        paragraph: sectionAt(text, m.start),
         matches: [],
       });
       currentStart = start;
@@ -415,6 +424,7 @@ function groupBySegment(matches: MatchedPoint[], text: string): NamedArea[] {
     .map((s) => ({
       name: s.name,
       points: dedupByProximity(s.matches).map((m) => m.point),
+      ...(evidence ? { paragraph: s.paragraph } : {}),
     }))
     .filter((a) => a.points.length > 0);
 }
@@ -469,6 +479,7 @@ export function isInNorway(point: GeoPoint): boolean {
 
 export function parseJmeldingGeo(
   bodyMarkdown: string | undefined | null,
+  evidence = false,
 ): ParsedGeo {
   if (!bodyMarkdown) {
     return { areas: [], bbox: null, hasGeo: false };
@@ -483,7 +494,7 @@ export function parseJmeldingGeo(
   if (rawMatches.length === 0) {
     return { areas: [], bbox: null, hasGeo: false };
   }
-  const areas = groupBySegment(rawMatches, text);
+  const areas = groupBySegment(rawMatches, text, evidence);
   if (areas.length === 0) {
     return { areas: [], bbox: null, hasGeo: false };
   }
@@ -548,4 +559,38 @@ export function pointsToMultipointWkt(points: GeoPoint[]): string | null {
 
 export function areasToWkt(areas: NamedArea[]): string | null {
   return pointsToMultipointWkt(areas.flatMap((area) => area.points));
+}
+
+/** Read section identity from an actual structural statute heading, rather
+ * than from a display name or an in-prose cross-reference. Unknown stays null. */
+function sectionAt(text: string, offset: number): number | null {
+  let section: number | null = null;
+  const toc = kartTocRange(text);
+  for (const match of text.matchAll(
+    /^(?:[ \t]*#{1,6}[ \t]+)?[ \t]*§[ \t]*(\d+)\b[^\n]*$/gm,
+  )) {
+    if (match.index > offset) break;
+    if (toc && match.index >= toc[0] && match.index < toc[1]) continue;
+    section = Number(match[1]);
+  }
+  return section;
+}
+
+export function parseJmeldingEvidence(
+  bodyMarkdown: string,
+): Array<NamedArea & { paragraph: number | null }> {
+  return parseJmeldingGeo(bodyMarkdown, true).areas as Array<
+    NamedArea & { paragraph: number | null }
+  >;
+}
+
+/** Same consolidated law and table-of-contents exclusions as printed evidence. */
+export function jmeldingSections(bodyMarkdown: string): Set<number> {
+  const text = consolidatedText(normalize(bodyMarkdown));
+  const toc = kartTocRange(text);
+  return new Set(
+    [...text.matchAll(/^(?:[ \t]*#{1,6}[ \t]+)?[ \t]*§[ \t]*(\d+)\b[^\n]*$/gm)]
+      .filter((m) => !toc || m.index < toc[0] || m.index >= toc[1])
+      .map((m) => Number(m[1])),
+  );
 }

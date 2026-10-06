@@ -10,6 +10,7 @@ import type { VesselDirectory } from "@/fishfacts/vessel-directory";
 import { createEmbedChatReader } from "@/logasavn/reader";
 import type { PathwayWriter } from "@/pathways";
 import type { OfficialAreaRepository } from "@/regulations/official-area-repository";
+import type { OfficialVectorPreparation } from "@/regulations/official-vector-preparation";
 import type { RegulationPublishedReadRepository } from "@/regulations/published-repository";
 import type {
   RegulationQueueRepository,
@@ -53,6 +54,7 @@ export function createJobDefinitions(
   regulationRawSyncRepository: RegulationRawSyncRepository,
   regulationPublishedReadRepository: RegulationPublishedReadRepository,
   officialAreaRepository: OfficialAreaRepository,
+  officialPreparation?: OfficialVectorPreparation,
 ): JobDefinition[] {
   return [
     {
@@ -109,7 +111,10 @@ export function createJobDefinitions(
       // J-melding does.
       schedule: "20 5 * * *",
       inputSchema: z.object({}),
-      execute: createFiskeridirOfficialAreasSyncJob(officialAreaRepository),
+      execute: createFiskeridirOfficialAreasSyncJob(
+        officialAreaRepository,
+        officialPreparation,
+      ),
     },
     {
       id: "fiskeridir-wfs-crosscheck",

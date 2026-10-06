@@ -8,6 +8,11 @@ import type {
   CaseCommandInput,
   CommandPart,
 } from "../../src/events/regulation-case-command";
+import {
+  manifestOf,
+  reconstructSnapshot,
+  splitSnapshot,
+} from "../../src/events/regulation-snapshot-parts";
 import { RegulationCommandOutbox } from "../../src/regulations/command-outbox";
 import {
   type OrderedCommandApplication,
@@ -529,3 +534,79 @@ describe("case command delivery and deterministic projection", () => {
     5000,
   );
 });
+
+test("failed oldest delivery cannot starve a healthy case beyond the recovery window", async () => {
+  const bad = {
+    ...input(caseId()),
+    commandId: "00000000-0000-4000-8000-000000000001",
+  };
+  const good = {
+    ...input(caseId()),
+    commandId: "00000000-0000-4000-8000-000000000002",
+  };
+  const delivered: string[] = [];
+  const isolated = new RegulationCommandOutbox(
+    connection.db,
+    async (parts) => {
+      const id = parts[0].part.assemblyId;
+      if (id === bad.commandId) throw new Error("one case network outage");
+      delivered.push(id);
+      return { eventIds: parts.map(() => randomUUID()) };
+    },
+    caughtup,
+  );
+  await isolated.reserve(bad);
+  await isolated.reserve(good);
+  await expect(isolated.recover(1)).rejects.toThrow(
+    "deliveries remain unconfirmed",
+  );
+  await isolated.recover(1);
+  expect(delivered).toEqual([good.commandId]);
+  expect(await effects(good.caseId)).toHaveLength(0);
+  // Keep subsequent recovery tests isolated while retaining the failed receipt.
+  await connection.client`update regulation_command_deliveries set status='acknowledged' where command_id=${bad.commandId}`;
+}, 30000);
+
+test("header/body sequence conflict is terminal and quarantined; a different case still projects", async () => {
+  emissionMode = "success";
+  const bad = input(caseId());
+  await outbox().reserve(bad);
+  await outbox().deliver(bad.commandId);
+  const original = partsOf(bad.commandId);
+  const body = reconstructSnapshot(
+    manifestOf(original[0].part),
+    original.map((p) => p.part),
+  ) as Record<string, unknown>;
+  const wrongBody = { ...body, sequence: 2 };
+  const bytes = splitSnapshot(
+    {
+      assemblyId: bad.commandId,
+      caseId: bad.caseId,
+      baseRevisionId: bad.baseRevisionId,
+      revisionId: bad.revisionId,
+    },
+    wrongBody,
+  );
+  const handler = projector();
+  let result: unknown;
+  for (const part of bytes)
+    result = await handler.handle({
+      schemaVersion: 1,
+      sequence: 1,
+      predecessorCommandId: null,
+      part,
+    });
+  expect(result).toMatchObject({
+    status: "refused",
+    reason: "command header/body mismatch",
+  });
+  expect(await effects(bad.caseId)).toHaveLength(0);
+  const [quarantine] =
+    await connection.client`select reason from regulation_immutable_conflicts where case_id=${bad.caseId}`;
+  expect(quarantine.reason).toBe("command header/body mismatch");
+  const good = input(caseId());
+  await outbox().reserve(good);
+  await outbox().deliver(good.commandId);
+  for (const part of partsOf(good.commandId)) await handler.handle(part);
+  expect(await effects(good.caseId)).toHaveLength(1);
+}, 30000);
