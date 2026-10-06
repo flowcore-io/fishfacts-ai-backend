@@ -1026,6 +1026,72 @@ export const regulationSnapshotParts = pgTable(
   }),
 );
 
+// Operational delivery cache only. Never read by a domain/public repository.
+// Acknowledgement means ingestion receipt, not projected domain application.
+export const regulationCommandDeliveries = pgTable(
+  "regulation_command_deliveries",
+  {
+    commandId: text("command_id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
+    predecessorCommandId: text("predecessor_command_id"),
+    inputHash: text("input_hash").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    parts: jsonb("parts").notNull(),
+    status: text("status").notNull().default("reserved"),
+    eventIds: jsonb("event_ids"),
+  },
+  (t) => ({
+    caseSequence: uniqueIndex("regulation_command_deliveries_sequence_idx").on(
+      t.caseId,
+      t.sequence,
+    ),
+  }),
+);
+
+// Flowcore-derived ordering headers exist even for incomplete byte snapshots.
+export const regulationCommandEnvelopes = pgTable(
+  "regulation_command_envelopes",
+  {
+    commandId: text("command_id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
+    predecessorCommandId: text("predecessor_command_id"),
+    payloadHash: text("payload_hash").notNull(),
+  },
+  (t) => ({
+    caseSequence: uniqueIndex("regulation_command_envelopes_sequence_idx").on(
+      t.caseId,
+      t.sequence,
+    ),
+  }),
+);
+
+// Domain command order is a projection of durable events; replay needs no outbox.
+export const regulationCommandTails = pgTable("regulation_command_tails", {
+  caseId: text("case_id").primaryKey(),
+  sequence: bigint("sequence", { mode: "number" }).notNull(),
+  commandId: text("command_id").notNull(),
+});
+export const regulationCommandReceipts = pgTable(
+  "regulation_command_receipts",
+  {
+    commandId: text("command_id").primaryKey(),
+    caseId: text("case_id").notNull(),
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    command: jsonb("command").notNull(),
+    status: text("status").notNull().default("pending"),
+    reason: text("reason"),
+  },
+  (t) => ({
+    caseSequence: uniqueIndex("regulation_command_receipts_sequence_idx").on(
+      t.caseId,
+      t.sequence,
+    ),
+  }),
+);
+
 /** Terminal dispositions isolate alien events without modifying the original assembly. */
 export const regulationImmutableConflicts = pgTable(
   "regulation_immutable_conflicts",
