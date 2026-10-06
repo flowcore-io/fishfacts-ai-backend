@@ -1110,6 +1110,9 @@ export const regulationCommandDeliveries = pgTable(
     eventIds: jsonb("event_ids"),
   },
   (t) => ({
+    uuidSpelling: index("regulation_command_deliveries_uuid_spelling_idx").on(
+      sql`lower(${t.commandId})`,
+    ),
     caseSequence: uniqueIndex("regulation_command_deliveries_sequence_idx").on(
       t.caseId,
       t.sequence,
@@ -1128,6 +1131,9 @@ export const regulationCommandEnvelopes = pgTable(
     payloadHash: text("payload_hash").notNull(),
   },
   (t) => ({
+    uuidSpelling: index("regulation_command_envelopes_uuid_spelling_idx").on(
+      sql`lower(${t.commandId})`,
+    ),
     caseSequence: uniqueIndex("regulation_command_envelopes_sequence_idx").on(
       t.caseId,
       t.sequence,

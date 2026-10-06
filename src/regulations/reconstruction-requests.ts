@@ -4,7 +4,10 @@ import * as schema from "@/db/schema";
 import { modeledProposalSchema } from "@/events/coastal-commands";
 import { regulationRevisionGeometrySchema } from "@/events/contracts";
 import { canonicalDigest, canonicalJson } from "@/events/json-digest";
-import type { ReconstructionIntent } from "@/events/reconstruction-request";
+import {
+  type ReconstructionIntent,
+  reconstructionIntentSchema,
+} from "@/events/reconstruction-request";
 import {
   type CaseCommandInput,
   caseCommandSchema,
@@ -12,6 +15,8 @@ import {
 } from "@/events/regulation-case-command";
 import {
   MAX_SNAPSHOT_BYTES,
+  type SnapshotManifest,
+  type SnapshotPart,
   manifestOf,
   reconstructSnapshot,
 } from "@/events/regulation-snapshot-parts";
@@ -27,6 +32,29 @@ import {
 import { type RevisionShapeState, verifyShapeState } from "./coastal-state";
 import type { RegulationCaseCommandRuntime } from "./command-runtime";
 import { reconstructionIds } from "./reconstruction-request-projector";
+
+function canonicalIntent(
+  rawIntent: ReconstructionIntent,
+): ReconstructionIntent {
+  return {
+    ...rawIntent,
+    requestId: rawIntent.requestId.toLowerCase(),
+    baseRevisionId: rawIntent.baseRevisionId.toLowerCase(),
+    ...(rawIntent.kind === "joins"
+      ? {
+          shapeId: rawIntent.shapeId.toLowerCase(),
+          joinCandidateIds: rawIntent.joinCandidateIds.map((id) =>
+            id.toLowerCase(),
+          ),
+        }
+      : rawIntent.kind === "faces"
+        ? {
+            shapeId: rawIntent.shapeId.toLowerCase(),
+            faceIds: rawIntent.faceIds.map((id) => id.toLowerCase()),
+          }
+        : {}),
+  };
+}
 
 export class ReconstructionRequestError extends Error {
   constructor(
@@ -62,8 +90,48 @@ export class RegulationReconstructionRequests {
       data: intent,
     };
   }
-  async register(caseId: string, actor: string, intent: ReconstructionIntent) {
+  async register(
+    rawCaseId: string,
+    actor: string,
+    rawIntent: ReconstructionIntent,
+  ) {
+    // UUID spelling is not identity. Canonicalize before hashing/reserving
+    // immutable bytes, matching the mounted status route's lowercase lookup.
+    // Replay parses original event bytes without applying this write transform.
+    const caseId = rawCaseId.toLowerCase();
+    const intent = canonicalIntent(rawIntent);
     const input = this.input(caseId, actor, intent);
+    const storedId = await this.storedRequestId(intent.requestId);
+    if (storedId && storedId !== intent.requestId) {
+      // A pre-fix accepted spelling keeps its original immutable command bytes.
+      // UUID-equivalent retries must restore that command, not allocate a twin.
+      const original = await this.originalRequest(storedId);
+      if (
+        !original ||
+        original.commandId !== storedId ||
+        original.revisionId !== reconstructionIds(storedId).revisionId ||
+        original.caseId !== caseId ||
+        original.actor !== actor ||
+        original.operation !== "request" ||
+        canonicalDigest(
+          canonicalIntent(reconstructionIntentSchema.parse(original.data)),
+        ) !== canonicalDigest(intent)
+      )
+        throw new ReconstructionRequestError("request_id_conflict", 409);
+      const {
+        schemaVersion: _v,
+        sequence: _s,
+        predecessorCommandId: _p,
+        recordedAt: _t,
+        ...originalInput
+      } = original;
+      await this.commands.submit(originalInput);
+      return {
+        requestId: intent.requestId,
+        status: "pending" as const,
+        statusUrl: `/api/regulations/cases/${caseId}/reconstruction-requests/${intent.requestId}`,
+      };
+    }
     const [known] = await this.db
       .select()
       .from(schema.regulationReconstructionRequests)
@@ -184,13 +252,62 @@ export class RegulationReconstructionRequests {
         invalid("foreign_candidate");
     }
   }
-  async status(caseId: string, requestId: string) {
+  private async storedRequestId(requestId: string) {
+    const rows = await this.db.execute<{ id: string }>(sql`
+      select command_id as id from regulation_command_deliveries
+      where lower(command_id) = ${requestId}
+      union
+      select command_id as id from regulation_command_envelopes
+      where lower(command_id) = ${requestId}
+      limit 2`);
+    if (rows.length > 1)
+      throw new ReconstructionRequestError("request_id_conflict", 409);
+    return rows[0]?.id ?? null;
+  }
+  private async originalRequest(requestId: string) {
+    const receipt = await this.commands.receipt(requestId);
+    if (receipt) return caseCommandSchema.parse(receipt.command);
+    const [delivery] = await this.db
+      .select()
+      .from(schema.regulationCommandDeliveries)
+      .where(eq(schema.regulationCommandDeliveries.commandId, requestId));
+    if (!delivery) {
+      const [assembly] = await this.db
+        .select()
+        .from(schema.regulationSnapshotAssemblies)
+        .where(eq(schema.regulationSnapshotAssemblies.assemblyId, requestId));
+      const parts = await this.db
+        .select()
+        .from(schema.regulationSnapshotParts)
+        .where(eq(schema.regulationSnapshotParts.assemblyId, requestId))
+        .orderBy(asc(schema.regulationSnapshotParts.partNumber));
+      const manifest = assembly?.manifest as SnapshotManifest | undefined;
+      if (!manifest || parts.length !== manifest.totalParts)
+        throw Error("known request incomplete; await exact durable replay");
+      return caseCommandSchema.parse(
+        reconstructSnapshot(
+          manifest,
+          parts.map((p) => p.payload as SnapshotPart),
+        ),
+      );
+    }
+    const parts = commandPartSchema.array().min(1).parse(delivery.parts);
+    return caseCommandSchema.parse(
+      reconstructSnapshot(
+        manifestOf(parts[0].part),
+        parts.map((p) => p.part),
+      ),
+    );
+  }
+  async status(caseId: string, rawRequestId: string) {
+    const requestId = rawRequestId.toLowerCase();
+    const storedId = (await this.storedRequestId(requestId)) ?? requestId;
     const [request] = await this.db
       .select()
       .from(schema.regulationReconstructionRequests)
       .where(
         and(
-          eq(schema.regulationReconstructionRequests.id, requestId),
+          eq(schema.regulationReconstructionRequests.id, storedId),
           eq(schema.regulationReconstructionRequests.caseId, caseId),
         ),
       );
@@ -202,7 +319,7 @@ export class RegulationReconstructionRequests {
         error: request.error,
         recordedAt: timestampToIso(request.recordedAt),
       };
-    const receipt = await this.commands.receipt(requestId);
+    const receipt = await this.commands.receipt(storedId);
     if (receipt && receipt.caseId === caseId) {
       const command = receipt.command as CaseCommandInput & {
         recordedAt: string;
@@ -224,7 +341,7 @@ export class RegulationReconstructionRequests {
       .from(schema.regulationCommandDeliveries)
       .where(
         and(
-          eq(schema.regulationCommandDeliveries.commandId, requestId),
+          eq(schema.regulationCommandDeliveries.commandId, storedId),
           eq(schema.regulationCommandDeliveries.caseId, caseId),
         ),
       );
@@ -238,7 +355,7 @@ export class RegulationReconstructionRequests {
         ),
       );
       if (
-        command.commandId !== requestId ||
+        command.commandId !== storedId ||
         command.caseId !== caseId ||
         command.operation !== "request"
       )

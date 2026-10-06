@@ -39,6 +39,7 @@ import { caseIdFor, geometryIdFor } from "../../src/regulations/ids";
 import { importLandDataset } from "../../src/regulations/land-dataset";
 import { RegulationPublishedReadRepository } from "../../src/regulations/published-repository";
 import { RegulationQueueReadRepository } from "../../src/regulations/read-repository";
+import { reconstructionIds } from "../../src/regulations/reconstruction-request-projector";
 import { RegulationReconstructionRequests } from "../../src/regulations/reconstruction-requests";
 import { RegulationRevisionProjector } from "../../src/regulations/revision-projector";
 import { createRegulationsRouter } from "../../src/regulations/routes";
@@ -681,6 +682,183 @@ test("mounted pending delivery identity, immutable UUID retries and stale-result
   });
   expect(failed?.revisionId).toBeNull();
   expect((await h.post("reconstruction", input)).status).toBe(202); // exact old request survives new current draft
+}, 30000);
+
+test("mounted reconstruction UUID spelling has one immutable request and readable status across stages", async () => {
+  const h = await harness();
+  const requestId = randomUUID();
+  const body = {
+    requestId: requestId.toUpperCase(),
+    baseRevisionId: h.revisionId,
+    landDatasetId: datasetId,
+  };
+  const response = await h.post("reconstruction", body);
+  expect(response.status).toBe(202);
+  const accepted = await response.json();
+  const pending = await h.app.request(accepted.statusUrl);
+  expect(pending.status).toBe(200);
+  expect(accepted.requestId).toBe(requestId);
+  expect(await pending.json()).toMatchObject({ requestId, status: "pending" });
+  const originalParts = structuredClone(h.recorded.at(-1));
+  for (const spelling of [
+    requestId,
+    requestId.slice(0, 8).toUpperCase() + requestId.slice(8),
+  ]) {
+    expect(
+      (
+        await h.post("reconstruction", {
+          ...body,
+          requestId: spelling,
+          baseRevisionId: h.revisionId.toUpperCase(),
+        })
+      ).status,
+    ).toBe(202);
+    expect(h.recorded.at(-1)).toEqual(originalParts);
+  }
+  expect(
+    (await h.post("reconstruction", { ...body, landDatasetId: "alien" }))
+      .status,
+  ).toBe(409);
+  await expect(
+    h.requests.register(h.caseId.toUpperCase(), "admin:other", {
+      ...body,
+      kind: "start",
+    }),
+  ).rejects.toMatchObject({ code: "request_id_conflict" });
+  await h.project();
+  await h.requests.recover();
+  await h.project();
+  const completed = await (
+    await h.app.request(
+      `/api/regulations/cases/${h.caseId.toUpperCase()}/reconstruction-requests/${requestId.toUpperCase()}`,
+    )
+  ).json();
+  expect(completed).toMatchObject({ requestId, status: "completed" });
+  expect((await h.post("reconstruction", body)).status).toBe(202);
+  const row = async (id: string) => {
+    const [revision] = await db
+      .select()
+      .from(schema.regulationCaseRevisions)
+      .where(eq(schema.regulationCaseRevisions.id, id));
+    return {
+      ...revision,
+      shapeState: revision.shapeState as RevisionShapeState,
+    };
+  };
+  const generated = await row(completed.revisionId);
+  const shape = generated.shapeState.shapes[0];
+  const joinsId = randomUUID();
+  const choices = shape.requiredEndpoints.map(
+    (e) =>
+      shape.joinCandidates.find(
+        (c) =>
+          c.endpoint.runPosition === e.runPosition &&
+          c.endpoint.pointIndex === e.pointIndex,
+      )?.id as string,
+  );
+  const joins = await h.post("reconstruction/joins", {
+    requestId: joinsId.toUpperCase(),
+    baseRevisionId: generated.id.toUpperCase(),
+    shapeId: shape.id.toUpperCase(),
+    shapeHash: shape.shapeHash,
+    joinCandidateIds: choices.map((id) => id.toUpperCase()),
+    justification: "Explicit synthetic choices; UUID spelling is not identity",
+  });
+  expect(joins.status).toBe(202);
+  const joinedAck = await joins.json();
+  expect((await h.app.request(joinedAck.statusUrl)).status).toBe(200);
+  await h.project();
+  await h.requests.recover();
+  await h.project();
+  const joinedStatus = await h.requests.status(h.caseId, joinsId);
+  expect(joinedStatus?.status).toBe("completed");
+  if (!joinedStatus?.revisionId) throw Error("joined revision missing");
+  const joined = await row(joinedStatus.revisionId);
+  const joinedShape = joined.shapeState.shapes[0];
+  expect(joinedShape.selectedJoinCandidateIds).toEqual(choices);
+  const facesId = randomUUID();
+  const faces = await h.post("reconstruction/faces", {
+    requestId: facesId.toUpperCase(),
+    baseRevisionId: joined.id.toUpperCase(),
+    shapeId: joinedShape.id.toUpperCase(),
+    shapeHash: joinedShape.shapeHash,
+    joinConfigurationHash: joinedShape.joinConfigurationHash,
+    faceIds: joinedShape.faceCandidates.map((f) => f.id.toUpperCase()),
+    justification: "Explicit synthetic face selection; no implicit choice",
+  });
+  expect(faces.status).toBe(202);
+  const facesAck = await faces.json();
+  expect((await h.app.request(facesAck.statusUrl)).status).toBe(200);
+  await h.project();
+  await h.requests.recover();
+  await h.project();
+  expect(await h.requests.status(h.caseId, facesId)).toMatchObject({
+    status: "completed",
+  });
+}, 30000);
+
+test("pre-fix accepted request spelling retains exact bytes and identity after cache loss", async () => {
+  const h = await harness();
+  const requestId = randomUUID();
+  const oldSpelling = requestId.toUpperCase();
+  const intent = {
+    kind: "start" as const,
+    requestId: oldSpelling,
+    baseRevisionId: h.revisionId,
+    landDatasetId: datasetId,
+  };
+  await h.runtime.submit({
+    commandId: oldSpelling,
+    caseId: h.caseId,
+    baseRevisionId: h.revisionId,
+    revisionId: reconstructionIds(oldSpelling).revisionId,
+    operation: "request",
+    actor: "admin:fixture",
+    data: intent,
+  });
+  const originalParts = structuredClone(h.recorded.at(-1));
+  const accepted = await h.post("reconstruction", {
+    ...intent,
+    kind: undefined,
+    requestId,
+  });
+  expect(accepted.status).toBe(202);
+  const ack = await accepted.json();
+  expect((await h.app.request(ack.statusUrl)).status).toBe(200);
+  expect(h.recorded.at(-1)).toEqual(originalParts);
+  await h.project();
+  await h.requests.recover();
+  await h.project();
+  expect(await h.requests.status(h.caseId, requestId)).toMatchObject({
+    status: "completed",
+  });
+  await db
+    .delete(schema.regulationCommandDeliveries)
+    .where(eq(schema.regulationCommandDeliveries.caseId, h.caseId));
+  expect(
+    (await h.post("reconstruction", { ...intent, kind: undefined, requestId }))
+      .status,
+  ).toBe(202);
+  expect(h.recorded.at(-1)).toEqual(originalParts);
+  await expect(
+    h.requests.register(h.caseId, "admin:other", { ...intent, requestId }),
+  ).rejects.toMatchObject({ code: "request_id_conflict" });
+  expect(
+    (
+      await h.post("reconstruction", {
+        ...intent,
+        kind: undefined,
+        requestId,
+        landDatasetId: "changed",
+      })
+    ).status,
+  ).toBe(409);
+  const deliveries = await db
+    .select()
+    .from(schema.regulationCommandDeliveries)
+    .where(eq(schema.regulationCommandDeliveries.caseId, h.caseId));
+  expect(deliveries.map((d) => d.commandId)).toEqual([oldSpelling]);
+  expect(deliveries[0].sequence).toBe(1);
 }, 30000);
 
 test("producer crash after immutable result reservation retries exact bytes without land recomputation", async () => {

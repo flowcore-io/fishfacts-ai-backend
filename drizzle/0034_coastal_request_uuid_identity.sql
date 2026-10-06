@@ -1,0 +1,2 @@
+CREATE INDEX "regulation_command_deliveries_uuid_spelling_idx" ON "regulation_command_deliveries" USING btree (lower("command_id"));--> statement-breakpoint
+CREATE INDEX "regulation_command_envelopes_uuid_spelling_idx" ON "regulation_command_envelopes" USING btree (lower("command_id"));
