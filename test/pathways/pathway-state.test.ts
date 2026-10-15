@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { InternalPathwayState, PostgresPathwayState } from "@flowcore/pathways";
+import { PostgresPathwayState } from "@flowcore/pathways";
 import {
+  ExpiringLocalPathwayState,
   INTERACTIVE_WRITE_WAIT_MS,
+  LOCAL_PROCESSED_TTL_MS,
   MAX_LOCAL_ONLY_EVENT_IDS,
   SharedPathwayState,
   awaitInteractiveWrite,
@@ -151,10 +153,7 @@ describe("SharedPathwayState", () => {
 
   test("an unmarked event is recorded in the shared store", async () => {
     const shared = recordingState();
-    const state = new SharedPathwayState(
-      shared.state,
-      new InternalPathwayState(),
-    );
+    const state = new SharedPathwayState(shared.state);
     await state.setProcessed(EVENT_ID);
     expect(shared.processed).toEqual([EVENT_ID]);
     expect(await state.isProcessed(EVENT_ID)).toBe(true);
@@ -162,10 +161,7 @@ describe("SharedPathwayState", () => {
 
   test("a local-only event never touches the shared store", async () => {
     const shared = recordingState();
-    const state = new SharedPathwayState(
-      shared.state,
-      new InternalPathwayState(),
-    );
+    const state = new SharedPathwayState(shared.state);
     state.markLocalOnly(EVENT_ID);
     await state.setProcessed(EVENT_ID);
     expect(shared.processed).toEqual([]);
@@ -174,10 +170,7 @@ describe("SharedPathwayState", () => {
 
   test("stranded local-only ids are bounded, oldest evicted first", async () => {
     const shared = recordingState();
-    const state = new SharedPathwayState(
-      shared.state,
-      new InternalPathwayState(),
-    );
+    const state = new SharedPathwayState(shared.state);
     for (let i = 0; i <= MAX_LOCAL_ONLY_EVENT_IDS; i++) {
       state.markLocalOnly(`evt-${i}`);
     }
@@ -193,11 +186,75 @@ describe("SharedPathwayState", () => {
   test("a marker written by ANOTHER replica is visible here", async () => {
     const shared = recordingState();
     shared.processed.push(EVENT_ID);
-    const state = new SharedPathwayState(
-      shared.state,
-      new InternalPathwayState(),
-    );
+    const state = new SharedPathwayState(shared.state);
     expect(await state.isProcessed(EVENT_ID)).toBe(true);
+  });
+});
+
+describe("ExpiringLocalPathwayState", () => {
+  function clocked() {
+    let now = 1_000_000;
+    return {
+      state: new ExpiringLocalPathwayState(LOCAL_PROCESSED_TTL_MS, () => now),
+      advance: (ms: number) => {
+        now += ms;
+      },
+    };
+  }
+
+  test("is the local store SharedPathwayState uses by default", async () => {
+    // The SDK's InternalPathwayState never evicts a marker nobody reads back,
+    // which leaked every AIS fix on the pump pod until it was OOMKilled.
+    const source = await Bun.file("src/pathway-state.ts").text();
+    expect(source).not.toContain("InternalPathwayState(");
+    expect(source).toContain(
+      "private readonly local: PathwayState = new ExpiringLocalPathwayState()",
+    );
+  });
+
+  test("answers processed until its TTL runs out", () => {
+    const { state, advance } = clocked();
+    state.setProcessed(EVENT_ID);
+    advance(LOCAL_PROCESSED_TTL_MS - 1);
+    expect(state.isProcessed(EVENT_ID)).toBe(true);
+    advance(1);
+    expect(state.isProcessed(EVENT_ID)).toBe(false);
+  });
+
+  test("drops expired markers on the next write even though none is read", () => {
+    const { state, advance } = clocked();
+    state.setProcessed("evt-1");
+    state.setProcessed("evt-2");
+    advance(LOCAL_PROCESSED_TTL_MS);
+    state.setProcessed("evt-3");
+    expect(state.size).toBe(1);
+    expect(state.isProcessed("evt-3")).toBe(true);
+  });
+
+  test("a repeated id keeps its newest expiry and still sweeps in order", () => {
+    const { state, advance } = clocked();
+    state.setProcessed("evt-1");
+    state.setProcessed("evt-2");
+    advance(1_000);
+    state.setProcessed("evt-1");
+    advance(LOCAL_PROCESSED_TTL_MS - 500);
+    state.setProcessed("evt-3");
+    // evt-2 (older) has expired; evt-1's refreshed marker has not.
+    expect(state.isProcessed("evt-2")).toBe(false);
+    expect(state.isProcessed("evt-1")).toBe(true);
+    expect(state.size).toBe(2);
+  });
+
+  test("stays bounded by one TTL window at pump volume", () => {
+    const { state, advance } = clocked();
+    const fixesPerMinute = 1_400;
+    const msPerFix = 60_000 / fixesPerMinute;
+    const window = Math.ceil(LOCAL_PROCESSED_TTL_MS / msPerFix);
+    for (let i = 0; i < window * 10; i++) {
+      state.setProcessed(`fix-${i}`);
+      advance(msPerFix);
+    }
+    expect(state.size).toBeLessThanOrEqual(window + 1);
   });
 });
 
