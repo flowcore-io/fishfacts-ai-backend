@@ -1,5 +1,4 @@
 import {
-  InternalPathwayState,
   type PathwayState,
   createPostgresPathwayState,
 } from "@flowcore/pathways";
@@ -25,6 +24,49 @@ const PROCESSED_POLL_INTERVAL_MS = 100;
  */
 export const MAX_LOCAL_ONLY_EVENT_IDS = 20_000;
 
+/** How long a local processed marker answers `isProcessed` — the SDK's own TTL. */
+export const LOCAL_PROCESSED_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * In-process processed markers whose TTL is actually enforced.
+ *
+ * The SDK's `InternalPathwayState` keeps its markers in an in-memory SQLite
+ * store (`bun-sqlite-key-value`) that drops an expired row only when that same
+ * key is read again. Nobody reads a fire-and-forget marker, so at AIS volume
+ * (~1 400 fixes a minute, ~300 B a row) every marker stayed for the life of the
+ * process: the pump pod grew ~30 MB an hour and was OOMKilled at its 2 GiB
+ * limit every ~4 days. Every entry shares one TTL, so insertion order is
+ * expiry order and each write sweeps the expired ones off the front.
+ */
+export class ExpiringLocalPathwayState implements PathwayState {
+  private readonly expiresAt = new Map<string, number>();
+
+  constructor(
+    private readonly ttlMs = LOCAL_PROCESSED_TTL_MS,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  get size(): number {
+    return this.expiresAt.size;
+  }
+
+  isProcessed(eventId: string): boolean {
+    const expiresAt = this.expiresAt.get(eventId);
+    return expiresAt !== undefined && expiresAt > this.now();
+  }
+
+  setProcessed(eventId: string): void {
+    const now = this.now();
+    for (const [id, expiresAt] of this.expiresAt) {
+      if (expiresAt > now) break;
+      this.expiresAt.delete(id);
+    }
+    // Re-inserting moves a repeated id to the back, keeping the order sorted.
+    this.expiresAt.delete(eventId);
+    this.expiresAt.set(eventId, now + this.ttlMs);
+  }
+}
+
 /**
  * The pathway state a `pathways.write()` is awaited against, shared across
  * replicas.
@@ -39,15 +81,16 @@ export const MAX_LOCAL_ONLY_EVENT_IDS = 20_000;
  * the AIS pump projects thousands of events per cycle, and a Postgres upsert
  * per event would tax exactly the throughput `AIS_PUMP_CONCURRENCY` is tuned
  * for. Those events are marked `markLocalOnly` just before their handler runs
- * and keep the in-process map. The default is the shared store, so a pathway
- * missing from the local-only list costs one upsert, never a stuck wait.
+ * and keep an in-process store (`ExpiringLocalPathwayState`). The default is
+ * the shared store, so a pathway missing from the local-only list costs one
+ * upsert, never a stuck wait.
  */
 export class SharedPathwayState implements PathwayState {
   private readonly localOnlyEventIds = new Set<string>();
 
   constructor(
     readonly shared: PathwayState,
-    private readonly local: PathwayState = new InternalPathwayState(),
+    private readonly local: PathwayState = new ExpiringLocalPathwayState(),
   ) {}
 
   markLocalOnly(eventId: string): void {
