@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.16.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.16.1...v2.16.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **pathways:** expire local processed markers so the pump pod stops leaking memory ([8e5b57d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/8e5b57d8419fab01c033a68314ffbc89cda5fcb5))
+* **pathways:** expire local processed markers so the pump pod stops leaking memory ([da2d4ad](https://github.com/flowcore-io/fishfacts-ai-backend/commit/da2d4ad79c6862994bd5568884e411acab9877d7))
+
 ## [2.16.1](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.16.0...v2.16.1) (2026-10-06)
 
 
