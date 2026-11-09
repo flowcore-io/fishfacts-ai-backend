@@ -142,21 +142,46 @@ function lagGapSeconds(partitionBy: string): string {
         event_time)`;
 }
 
-/** The heatmap query for one window. Exported so tests can guard what reaches prod. */
+/**
+ * The heatmap query for one window. Exported so tests can guard what reaches prod.
+ *
+ * The bbox never changes a cell's minutes (contract A3). Each vessel's credit
+ * is computed over its WHOLE in-window, in-band track — the gap to its previous
+ * fix wherever that fix was — and only then are cells outside the bbox dropped.
+ * So a regional cell equals the same cell in the global answer, and the hover
+ * total over it. (Clipping fixes to the bbox before the lag credited a vessel
+ * that left and came back with the whole time it was away.)
+ *
+ * The bbox still picks the candidate vessels: one with no in-band fix inside
+ * it cannot have a minute in a returned cell, so its track is never read.
+ */
 export function buildActivityCellsQuery(req: ActivityCellsRequest): BuiltQuery {
-  const bboxFilter = req.bbox
-    ? `AND latitude >= {minLat:Float64} AND latitude <= {maxLat:Float64}
-       AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}`
-    : "";
   const band = bandFilter(speedBandGroups(req.types));
+  const window =
+    "event_time >= {from:DateTime64(3)} AND event_time < {to:DateTime64(3)}";
+  // Every cell a fix inside the bbox can fall in: [floor(min / g), floor(max / g)].
+  const regional = req.bbox
+    ? {
+        candidates: `AND vessel_id IN (
+        SELECT DISTINCT vessel_id FROM ais_position_fixes
+        WHERE ${window}
+          AND latitude >= {minLat:Float64} AND latitude <= {maxLat:Float64}
+          AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}
+          ${band.sql})`,
+        cells: `WHERE ix >= toInt32(floor({minLon:Float64} / {gridLon:Float64}))
+      AND ix <= toInt32(floor({maxLon:Float64} / {gridLon:Float64}))
+      AND iy >= toInt32(floor({minLat:Float64} / {gridLat:Float64}))
+      AND iy <= toInt32(floor({maxLat:Float64} / {gridLat:Float64}))`,
+      }
+    : { candidates: "", cells: "" };
   const query = `
   WITH
   ${REGISTRY_CTE},
   fx AS (
     SELECT vessel_id, event_time, any((latitude, longitude)) AS p
     FROM ais_position_fixes
-    WHERE event_time >= {from:DateTime64(3)} AND event_time < {to:DateTime64(3)}
-      ${bboxFilter}
+    WHERE ${window}
+      ${regional.candidates}
       ${band.sql}
     GROUP BY vessel_id, event_time
   ),
@@ -169,6 +194,7 @@ export function buildActivityCellsQuery(req: ActivityCellsRequest): BuiltQuery {
     SELECT ${CELL_IX} AS ix, ${CELL_IY} AS iy, vessel_id,
       sum(${CREDIT_SECONDS}) / 60 AS minutes
     FROM credited
+    ${regional.cells}
     GROUP BY ix, iy, vessel_id
     HAVING minutes > 0
   )
@@ -199,30 +225,51 @@ export function buildActivityCellsQuery(req: ActivityCellsRequest): BuiltQuery {
   };
 }
 
+/** The hover prefilter: a latitude band and one or two longitude intervals. */
+export type HoverPrefilter = {
+  minLat: number;
+  maxLat: number;
+  /** Inclusive `[min, max]` intervals; two when the circle crosses ±180°. */
+  lonRanges: Array<[number, number]>;
+};
+
 /**
- * A lat/lon box that holds every fix whose CELL CENTRE can be within
- * `radiusKm` of the point: the circle's extent plus half a cell each way.
- * Only a prefilter (the exact haversine runs after); generous on purpose.
+ * A lat/lon area that holds every fix whose CELL CENTRE can be within
+ * `radiusKm` of the point: the circle's extent plus a cell each way. Only a
+ * prefilter (the exact haversine runs after); generous on purpose. A circle
+ * that crosses the antimeridian wraps to the far side, so its longitudes are
+ * split into two intervals rather than clamped at ±180°.
  */
-export function hoverPrefilterBox(
+export function hoverPrefilter(
   lat: number,
   lon: number,
   radiusKm: number,
-): ActivityBbox {
+): HoverPrefilter {
   const kmPerDegLat = (Math.PI / 180) * ACTIVITY_EARTH_RADIUS_KM;
   const dLat = radiusKm / kmPerDegLat + ACTIVITY_GRID.latDeg;
   const minLat = Math.max(-90, lat - dLat);
   const maxLat = Math.min(90, lat + dLat);
   const widestLat = Math.max(Math.abs(minLat), Math.abs(maxLat));
   const cos = Math.cos((widestLat * Math.PI) / 180);
-  if (cos < 0.01) return [-180, minLat, 180, maxLat];
+  const everyLon: Array<[number, number]> = [[-180, 180]];
+  if (cos < 0.01) return { minLat, maxLat, lonRanges: everyLon };
   const dLon = radiusKm / (kmPerDegLat * cos) + ACTIVITY_GRID.lonDeg;
-  return [
-    Math.max(-180, lon - dLon),
-    minLat,
-    Math.min(180, lon + dLon),
-    maxLat,
-  ];
+  if (dLon >= 180) return { minLat, maxLat, lonRanges: everyLon };
+  const west = lon - dLon;
+  const east = lon + dLon;
+  const lonRanges: Array<[number, number]> =
+    west < -180
+      ? [
+          [-180, east],
+          [west + 360, 180],
+        ]
+      : east > 180
+        ? [
+            [west, 180],
+            [-180, east - 360],
+          ]
+        : [[west, east]];
+  return { minLat, maxLat, lonRanges };
 }
 
 /**
@@ -233,7 +280,9 @@ export function hoverPrefilterBox(
  * over. The gap credit is computed over each candidate vessel's whole in-band
  * track in the window, BEFORE the area cut, exactly as the heatmap computes it,
  * so a cell's minutes here equal its weights there. (Cutting first would let a
- * vessel that left the circle and came back be credited the time it was away.)
+ * vessel that left the circle and came back be credited the time it was away.) *
+ * Each fix belongs to one window (`multiIf`): the windows are disjoint, which
+ * parseActivityVesselsQuery enforces (contract A2).
  */
 export function buildActivityHoverQuery(req: ActivityHoverRequest): BuiltQuery {
   const windowParams: Record<string, string> = {};
@@ -247,11 +296,16 @@ export function buildActivityHoverQuery(req: ActivityHoverRequest): BuiltQuery {
     windowIndex.push(test, String(i));
   });
   const anyWindow = `(${inWindow.join(" OR ")})`;
-  const [minLon, minLat, maxLon, maxLat] = hoverPrefilterBox(
-    req.lat,
-    req.lon,
-    req.radiusKm,
-  );
+  const area = hoverPrefilter(req.lat, req.lon, req.radiusKm);
+  const areaParams: Record<string, number> = {
+    minLat: area.minLat,
+    maxLat: area.maxLat,
+  };
+  const lonTerms = area.lonRanges.map(([min, max], i) => {
+    areaParams[`lon${i}Min`] = min;
+    areaParams[`lon${i}Max`] = max;
+    return `(longitude >= {lon${i}Min:Float64} AND longitude <= {lon${i}Max:Float64})`;
+  });
   const band = bandFilter(speedBandGroups(req.types));
   const query = `
   WITH
@@ -261,7 +315,7 @@ export function buildActivityHoverQuery(req: ActivityHoverRequest): BuiltQuery {
     FROM ais_position_fixes
     WHERE ${anyWindow}
       AND latitude >= {minLat:Float64} AND latitude <= {maxLat:Float64}
-      AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}
+      AND (${lonTerms.join(" OR ")})
       ${band.sql}
   ),
   fx AS (
@@ -308,10 +362,7 @@ export function buildActivityHoverQuery(req: ActivityHoverRequest): BuiltQuery {
       maxGap: ACTIVITY_MAX_GAP_SECONDS,
       gridLon: ACTIVITY_GRID.lonDeg,
       gridLat: ACTIVITY_GRID.latDeg,
-      minLon,
-      minLat,
-      maxLon,
-      maxLat,
+      ...areaParams,
       lat: req.lat,
       lon: req.lon,
       radiusKm: req.radiusKm,

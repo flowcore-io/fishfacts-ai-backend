@@ -10,7 +10,7 @@ import {
   REGISTRY_CTE,
   buildActivityCellsQuery,
   buildActivityHoverQuery,
-  hoverPrefilterBox,
+  hoverPrefilter,
   speedBandGroups,
 } from "../../src/ais/activity-source";
 
@@ -91,8 +91,35 @@ describe("buildActivityCellsQuery", () => {
       types: TYPES,
     });
     expect(global.query).not.toContain("{minLat:Float64}");
+    expect(global.query).not.toContain(
+      "vessel_id IN (\n        SELECT DISTINCT",
+    );
     expect(global.query_params.minLat).toBeUndefined();
     expect(global.query_params.from).toBe("2025-10-01 00:00:00.000");
+  });
+});
+
+describe("buildActivityCellsQuery, regional", () => {
+  const built = buildActivityCellsQuery({
+    from: "2025-09-10T00:00:00.000Z",
+    to: "2025-10-29T00:00:00.000Z",
+    bbox: [-30, 55, 35, 80],
+    flags: FLAGS,
+    types: TYPES,
+  });
+
+  test("the bbox picks candidates and cuts cells; it never clips fixes before the lag (A3)", () => {
+    const fx = built.query.slice(
+      built.query.indexOf("fx AS ("),
+      built.query.indexOf("credited AS ("),
+    );
+    // inside fx the bbox appears only in the candidate subquery
+    expect(fx).toContain("vessel_id IN (\n        SELECT DISTINCT vessel_id");
+    const outsideCandidates = fx.replace(/vessel_id IN \([\s\S]*?\)\n/, "");
+    expect(outsideCandidates).not.toContain("{minLat:Float64}");
+    const lag = built.query.indexOf("lagInFrame");
+    const cellCut = built.query.indexOf("WHERE ix >= toInt32(floor({minLon");
+    expect(cellCut).toBeGreaterThan(lag);
   });
 });
 
@@ -152,32 +179,68 @@ describe("buildActivityHoverQuery", () => {
   });
 });
 
-describe("hoverPrefilterBox", () => {
-  test("holds every fix whose cell centre can be inside the circle", () => {
-    const [lat, lon, r] = [62.235, -4.25, 15];
-    const [minLon, minLat, maxLon, maxLat] = hoverPrefilterBox(lat, lon, r);
-    // walk a fine grid of fixes; any whose centre is within r must be in the box
+describe("hoverPrefilter", () => {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const haversineKm = (
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ) => {
+    const a =
+      Math.sin(toRad(lat2 - lat1) / 2) ** 2 +
+      Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(toRad(lon2 - lon1) / 2) ** 2;
+    return 2 * ACTIVITY_EARTH_RADIUS_KM * Math.asin(Math.sqrt(a));
+  };
+  /** Longitude wrapped into [-180, 180). */
+  const wrap = (lon: number) => ((((lon + 180) % 360) + 360) % 360) - 180;
+
+  /** Walk a fine grid of fixes; any whose cell centre is within r must pass the prefilter. */
+  function expectHoldsEveryCentreInside(lat: number, lon: number, r: number) {
+    const area = hoverPrefilter(lat, lon, r);
+    let inside = 0;
     for (let la = lat - 0.4; la <= lat + 0.4; la += 0.007) {
-      for (let lo = lon - 0.8; lo <= lon + 0.8; lo += 0.013) {
+      for (let step = -0.8; step <= 0.8; step += 0.013) {
+        const lo = wrap(lon + step);
         const [cx, cy] = activityCellCentre(...activityCellIndex(lo, la));
-        const toRad = (d: number) => (d * Math.PI) / 180;
-        const a =
-          Math.sin(toRad(cy - lat) / 2) ** 2 +
-          Math.cos(toRad(lat)) *
-            Math.cos(toRad(cy)) *
-            Math.sin(toRad(cx - lon) / 2) ** 2;
-        const km = 2 * ACTIVITY_EARTH_RADIUS_KM * Math.asin(Math.sqrt(a));
-        if (km <= r) {
-          expect(
-            lo >= minLon && lo <= maxLon && la >= minLat && la <= maxLat,
-          ).toBe(true);
-        }
+        if (haversineKm(lat, lon, cy, cx) > r) continue;
+        inside++;
+        const passes =
+          la >= area.minLat &&
+          la <= area.maxLat &&
+          area.lonRanges.some(([min, max]) => lo >= min && lo <= max);
+        expect(passes).toBe(true);
       }
     }
+    expect(inside).toBeGreaterThan(0);
+  }
+
+  test("holds every fix whose cell centre can be inside the circle", () => {
+    expectHoldsEveryCentreInside(62.235, -4.25, 15);
+    expect(hoverPrefilter(62.235, -4.25, 15).lonRanges).toHaveLength(1);
+  });
+
+  test("a circle over the antimeridian from the east side wraps to the west side", () => {
+    const area = hoverPrefilter(-40.005, 179.95, 25);
+    expect(area.lonRanges).toHaveLength(2);
+    expect(area.lonRanges[0]?.[1]).toBe(180);
+    expect(area.lonRanges[1]?.[0]).toBe(-180);
+    expectHoldsEveryCentreInside(-40.005, 179.95, 25);
+  });
+
+  test("a circle over the antimeridian from the west side wraps to the east side", () => {
+    const area = hoverPrefilter(-40.005, -179.95, 25);
+    expect(area.lonRanges).toHaveLength(2);
+    expect(area.lonRanges[0]?.[0]).toBe(-180);
+    expect(area.lonRanges[1]?.[1]).toBe(180);
+    expectHoldsEveryCentreInside(-40.005, -179.95, 25);
   });
 
   test("near a pole the longitude filter opens fully", () => {
-    const [minLon, , maxLon, maxLat] = hoverPrefilterBox(89.9, 10, 50);
-    expect([minLon, maxLon, maxLat]).toEqual([-180, 180, 90]);
+    const area = hoverPrefilter(89.9, 10, 50);
+    expect(area.lonRanges).toEqual([[-180, 180]]);
+    expect(area.maxLat).toBe(90);
   });
 });
