@@ -358,6 +358,44 @@ describe("parseActivityVesselsQuery", () => {
     });
   });
 
+  const hover = (windows: string) =>
+    parseActivityVesselsQuery(
+      params(`windows=${windows}&lat=62&lon=-6.8&radiusKm=10`),
+      NOW,
+    );
+
+  test.each([
+    [
+      "two windows sharing a day",
+      "2025-10-01T00:00:00Z/2025-10-03T00:00:00Z,2025-10-02T00:00:00Z/2025-10-04T00:00:00Z",
+    ],
+    [
+      "one window inside another, sent out of order",
+      "2025-10-05T00:00:00Z/2025-10-06T00:00:00Z,2025-10-01T00:00:00Z/2025-10-10T00:00:00Z",
+    ],
+    [
+      "the same window twice",
+      "2025-10-01T00:00:00Z/2025-10-03T00:00:00Z,2025-10-01T00:00:00Z/2025-10-03T00:00:00Z",
+    ],
+    [
+      "three windows, the last two overlapping",
+      "2024-10-01T00:00:00Z/2024-10-03T00:00:00Z,2025-10-01T00:00:00Z/2025-12-01T00:00:00Z,2025-11-01T00:00:00Z/2025-11-02T00:00:00Z",
+    ],
+  ])("overlapping windows are 400 bad_request (contract A2): %s", (_n, w) => {
+    expect(hover(w)).toMatchObject({ status: 400, code: "bad_request" });
+  });
+
+  test("windows that only touch (half-open) are disjoint", () => {
+    const q = hover(
+      "2025-10-02T00:00:00Z/2025-10-04T00:00:00Z,2025-10-01T00:00:00Z/2025-10-02T00:00:00Z",
+    );
+    if ("code" in q) throw new Error(q.error);
+    expect(q.windows).toEqual([
+      { from: "2025-10-01T00:00:00.000Z", to: "2025-10-02T00:00:00.000Z" },
+      { from: "2025-10-02T00:00:00.000Z", to: "2025-10-04T00:00:00.000Z" },
+    ]);
+  });
+
   test("6 windows are allowed; a window over 92 days is window_too_long", () => {
     const six = Array(6)
       .fill(0)

@@ -324,7 +324,7 @@ export function parseActivityVesselsQuery(
       `windows must hold 1 to ${ACTIVITY_HOVER_MAX_WINDOWS} from/to pairs`,
     );
   }
-  const byKey = new Map<string, ActivityWindow & { fromMs: number }>();
+  const parsed: Array<ActivityWindow & { fromMs: number; toMs: number }> = [];
   for (const [i, pair] of pairs.entries()) {
     const halves = pair.split("/");
     if (halves.length !== 2) {
@@ -337,13 +337,25 @@ export function parseActivityVesselsQuery(
       `windows[${i}].`,
     );
     if ("code" in window) return window;
-    const from = new Date(window.fromMs).toISOString();
-    const to = new Date(window.toMs).toISOString();
-    byKey.set(`${from}/${to}`, { from, to, fromMs: window.fromMs });
+    parsed.push({
+      from: new Date(window.fromMs).toISOString(),
+      to: new Date(window.toMs).toISOString(),
+      fromMs: window.fromMs,
+      toMs: window.toMs,
+    });
   }
-  const windows = [...byKey.values()]
-    .sort((a, b) => a.fromMs - b.fromMs || a.to.localeCompare(b.to))
-    .map(({ from, to }) => ({ from, to }));
+  parsed.sort((a, b) => a.fromMs - b.fromMs || a.toMs - b.toMs);
+  // Disjoint (contract A2): a fix is credited to one window only, so two
+  // windows that share time cannot both get it. Half-open, so touching is fine.
+  for (let i = 1; i < parsed.length; i++) {
+    const [prev, cur] = [parsed[i - 1], parsed[i]];
+    if (prev && cur && cur.fromMs < prev.toMs) {
+      return badRequest(
+        `windows must not overlap: ${prev.from}/${prev.to} and ${cur.from}/${cur.to}`,
+      );
+    }
+  }
+  const windows = parsed.map(({ from, to }) => ({ from, to }));
 
   const lat = parseNumber(params.get("lat"), "lat", -90, 90);
   if (typeof lat !== "number") return lat;
