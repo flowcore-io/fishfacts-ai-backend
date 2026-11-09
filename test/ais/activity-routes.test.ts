@@ -273,7 +273,7 @@ describe("GET /api/ais/activity", () => {
 
   test("an unrecognised failure is not dressed up as an upstream outage", async () => {
     const { source } = fakeSource({
-      fail: new Error("Syntax error near WITH"),
+      fail: new Error("synthetic test error: not an upstream failure"),
     });
     // Thrown on to the app's onError (500), never mapped to 503/504.
     const res = await makeApp(source).request(SEASON);
