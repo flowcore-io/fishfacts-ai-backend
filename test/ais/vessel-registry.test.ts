@@ -67,6 +67,27 @@ describe("vessel registry", () => {
     ]);
   });
 
+  test("a registry flag named like an Object property is not counted as an FE flag", () => {
+    const { perFlag } = feFlagCoverage([
+      { vessel_id: 1, type_id: 2, flag: "toString", name: null },
+      { vessel_id: 2, type_id: 2, flag: "constructor", name: null },
+    ]);
+    expect(Object.keys(perFlag).sort()).toEqual([
+      "CA",
+      "DK",
+      "FO",
+      "GB",
+      "GL",
+      "IE",
+      "IS",
+      "NO",
+      "NZ",
+      "RU",
+      "SE",
+    ]);
+    expect(Object.values(perFlag).every((n) => n === 0)).toBe(true);
+  });
+
   test("a sync writes one whole snapshot", async () => {
     const { writes, repository } = fakeRepo();
     const result = await syncVesselRegistry({

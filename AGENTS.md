@@ -161,8 +161,16 @@ hover's vessel list. Code: `src/ais/activity*.ts`, `src/ais/vessel-registry.ts`.
   `ACTIVITY_CACHE_STORE_BYTES`) behind a per-pod LRU bounded by
   `ACTIVITY_CACHE_MEMORY_BYTES`. Bump `ACTIVITY_RULES_VERSION` (activity.ts)
   when the band, gap rule or lattice changes, or old answers keep being served.
+- **The bbox never changes minutes.** Credit is computed over each vessel's
+  whole in-window track; the bbox only picks candidate vessels and cuts the
+  returned cells. A regional cell = the global cell = the hover over it.
 - **Limits.** > 92 days → 422 `window_too_long`; > 31 days without a bbox of
   ≤ 2 500 deg² → 422 `global_window_too_long`; ClickHouse budget 30 s → 504.
+  Hover `windows` must not overlap → 400. Auth is the `X-Auth-Token` header
+  only.
+- **Executed SQL tests.** `test/ais/activity-source.clickhouse.test.ts` runs
+  both queries on a real ClickHouse when `TEST_CLICKHOUSE_URL` is set (CI has
+  a ClickHouse service); without it the file is skipped.
 
 ## Drizzle (`drizzle.config.ts`)
 

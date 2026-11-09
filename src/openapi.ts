@@ -671,7 +671,7 @@ export const openApiDocument = {
         tags: ["AIS"],
         summary: "Fishing Activity heatmap for one past window",
         description:
-          "FishFacts' fishing-activity GeoJSON shape for any window from 2021 on: points on the 0.1° × 0.03° lattice (centres at floor()+½), `weights[flag][typeId]` = time-weighted fishing minutes (per-type speed band, gaps over 30 min credit nothing; never fix counts), plus `vessels` = distinct vessels in the cell. Flag and type come from the FishFacts vessel registry (registry `SW` served as `SE`). One request = one window; minutes add exactly across windows. Gzipped when accepted. Windows that ended over a day ago are immutable (`Cache-Control: immutable`) and cached in Postgres for every replica. Errors are `{ error, code }`.",
+          "FishFacts' fishing-activity GeoJSON shape for any window from 2021 on: points on the 0.1° × 0.03° lattice (centres at floor()+½), `weights[flag][typeId]` = time-weighted fishing minutes (per-type speed band, gaps over 30 min credit nothing; never fix counts), plus `vessels` = distinct vessels in the cell. Flag and type come from the FishFacts vessel registry (registry `SW` served as `SE`). One request = one window; minutes add exactly across windows. Gzipped when accepted. Windows that ended over a day ago are immutable (`Cache-Control: immutable`) and cached in Postgres for every replica. Auth is the `X-Auth-Token` header only. Errors are `{ error, code }`, except 401, which is the auth middleware's `{ error }`.",
         security: [{ FishfactsAuthToken: [] }],
         parameters: [
           {
@@ -696,7 +696,7 @@ export const openApiDocument = {
             in: "query",
             schema: { type: "string" },
             description:
-              "minLon,minLat,maxLon,maxLat. Absent = global. Required (at most 2 500 deg²) for windows over 31 days.",
+              "minLon,minLat,maxLon,maxLat. Absent = global. Required (at most 2 500 deg²) for windows over 31 days. Only selects which cells are returned (every cell a fix inside it can fall in); never changes a cell's minutes, which come from each vessel's whole track in the window, so a cell here equals the same cell in the global answer.",
             example: "-30,55,35,80",
           },
           {
@@ -723,7 +723,10 @@ export const openApiDocument = {
             description:
               "`bad_request`: missing/invalid parameter, unknown flag/type, from >= to, from < 2021, to > now",
           },
-          "401": { description: "Missing or invalid x-auth-token" },
+          "401": {
+            description:
+              '`X-Auth-Token` header missing or invalid (header only, no `?token=`): `{ error: "missing_auth_token" | "invalid_auth_token" }`, no `code`',
+          },
           "422": {
             description:
               "`window_too_long` (> 92 days) or `global_window_too_long` (> 31 days without a bbox of at most 2 500 deg²)",
@@ -743,7 +746,7 @@ export const openApiDocument = {
         tags: ["AIS"],
         summary: "Fishing Activity hover: vessels and minutes in a circle",
         description:
-          "Vessels with fishing minutes in the cells whose CENTRE lies within `radiusKm` (haversine) of `lat`/`lon`, distinct across all `windows` (a vessel in two seasons counts once, minutes added). Same rules as /api/ais/activity, so the minutes equal the heatmap weights summed over the same cells. Fishing types only. Sorted by minutes, at most 50 rows; `vesselCount` and `totalMinutes` cover every vessel.",
+          "Vessels with fishing minutes in the cells whose CENTRE lies within `radiusKm` (haversine) of `lat`/`lon`, distinct across all `windows` (a vessel in two seasons counts once, minutes added). Same rules as /api/ais/activity, so the minutes equal the heatmap weights summed over the same cells (the circle may cross ±180°). Fishing types only. Sorted by minutes, at most 50 rows; `vesselCount` and `totalMinutes` cover every vessel.",
         security: [{ FishfactsAuthToken: [] }],
         parameters: [
           {
@@ -752,7 +755,7 @@ export const openApiDocument = {
             required: true,
             schema: { type: "string" },
             description:
-              "CSV of from/to ISO pairs, 1 to 6, each at most 92 days",
+              "CSV of from/to ISO pairs, 1 to 6, each at most 92 days, pairwise non-overlapping (half-open, so touching is fine)",
             example:
               "2025-09-10T00:00:00Z/2025-10-29T00:00:00Z,2024-09-10T00:00:00Z/2024-10-29T00:00:00Z",
           },
@@ -800,9 +803,12 @@ export const openApiDocument = {
           },
           "400": {
             description:
-              "`bad_request`: invalid windows, lat/lon/radiusKm, flags or types",
+              "`bad_request`: invalid or overlapping windows, lat/lon/radiusKm, flags or types",
           },
-          "401": { description: "Missing or invalid x-auth-token" },
+          "401": {
+            description:
+              '`X-Auth-Token` header missing or invalid (header only, no `?token=`): `{ error: "missing_auth_token" | "invalid_auth_token" }`, no `code`',
+          },
           "422": {
             description:
               "`window_too_long` (> 92 days) or `global_window_too_long` (> 31 days without a bbox of at most 2 500 deg²)",

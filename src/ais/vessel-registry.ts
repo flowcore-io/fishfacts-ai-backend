@@ -79,7 +79,8 @@ export function feFlagCoverage(rows: RegistryRow[]): {
   const perFlag: Record<string, number> = {};
   for (const flag of ACTIVITY_DEFAULT_FLAGS) perFlag[flag] = 0;
   for (const row of rows) {
-    if (row.flag in perFlag) perFlag[row.flag] = (perFlag[row.flag] ?? 0) + 1;
+    if (Object.hasOwn(perFlag, row.flag))
+      perFlag[row.flag] = (perFlag[row.flag] ?? 0) + 1;
   }
   const missing = ACTIVITY_DEFAULT_FLAGS.filter((f) => perFlag[f] === 0);
   return { perFlag, missing };
