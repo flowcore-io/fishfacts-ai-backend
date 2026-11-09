@@ -60,6 +60,8 @@ const V = {
   antimeridianEast: 6,
   twoWindows: 7,
   nonFishingType: 8,
+  outsidePartOnly: 9,
+  insidePartPartner: 10,
 } as const;
 
 type Fix = {
@@ -143,6 +145,24 @@ const FIXES: Fix[] = [
   { vessel: V.straddlesEdge, at: day("04", "00:10"), lat: 54.995, lon: 0.05 },
   { vessel: V.straddlesEdge, at: day("04", "00:20"), lat: 54.995, lon: 0.05 },
   { vessel: V.straddlesEdge, at: day("04", "00:45"), lat: 55.01, lon: 0.05 },
+
+  // A returned edge cell [54.99, 55.02) that one vessel fishes only in the part
+  // OUTSIDE the bbox (minLat 55): no raw fix of its is inside the bbox, but
+  // its minutes belong to a cell the regional answer returns.
+  { vessel: V.outsidePartOnly, at: day("08", "00:00"), lat: 54.995, lon: 0.05 },
+  { vessel: V.outsidePartOnly, at: day("08", "00:10"), lat: 54.995, lon: 0.05 },
+  {
+    vessel: V.insidePartPartner,
+    at: day("08", "00:00"),
+    lat: 55.01,
+    lon: 0.05,
+  },
+  {
+    vessel: V.insidePartPartner,
+    at: day("08", "00:10"),
+    lat: 55.01,
+    lon: 0.05,
+  },
 
   // The antimeridian, one vessel on each side, each on its own day.
   {
@@ -270,7 +290,7 @@ describe.skipIf(!CH_URL)("activity SQL, executed on ClickHouse", () => {
       Date.parse(day("01", "00:00")),
     );
     expect(await source.isReady()).toBe(true);
-  }, 60_000);
+  });
 
   afterAll(async () => {
     await client?.close();
@@ -320,8 +340,26 @@ describe.skipIf(!CH_URL)("activity SQL, executed on ClickHouse", () => {
     expect(regional.get(edge)).toBeCloseTo(45, 9);
   });
 
+  test("a vessel only in the outside part of a returned edge cell still counts there", async () => {
+    const edge = cellKey(55.01, 0.05);
+    expect(cellKey(54.995, 0.05)).toBe(edge);
+    const global = await cells("08", null);
+    const regional = await cells("08", NA);
+    expect(global.get(edge)).toBeCloseTo(20, 9);
+    expect(regional.get(edge)).toBeCloseTo(20, 9);
+    const rows = await hover([dayWindow("08")], 55.005, 0.05, 1);
+    expect(
+      rows
+        .map((r) => [r.vesselId, r.minutes])
+        .sort((a, b) => (a[0] ?? 0) - (b[0] ?? 0)),
+    ).toEqual([
+      [V.outsidePartOnly, 10],
+      [V.insidePartPartner, 10],
+    ]);
+  });
+
   test("regional = global = hover, cell by cell, for every scenario day", async () => {
-    for (const d of ["01", "02", "03", "04", "07"]) {
+    for (const d of ["01", "02", "03", "04", "07", "08"]) {
       const global = await cells(d, null);
       const regional = await cells(d, NA);
       for (const [key, minutes] of regional) {

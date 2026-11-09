@@ -109,14 +109,13 @@ describe("buildActivityCellsQuery, regional", () => {
   });
 
   test("the bbox picks candidates and cuts cells; it never clips fixes before the lag (A3)", () => {
-    const fx = built.query.slice(
-      built.query.indexOf("fx AS ("),
-      built.query.indexOf("credited AS ("),
+    // No raw fix is ever compared with the bbox: candidates and returned cells
+    // are both whole lattice cells, so a vessel in the outside part of a cut
+    // cell is still a candidate.
+    expect(built.query).not.toMatch(/(latitude|longitude) [<>]=? \{m(in|ax)L/);
+    expect(built.query).toContain(
+      "toInt32(floor(latitude / {gridLat:Float64})) >= toInt32(floor({minLat:Float64} / {gridLat:Float64}))",
     );
-    // inside fx the bbox appears only in the candidate subquery
-    expect(fx).toContain("vessel_id IN (\n        SELECT DISTINCT vessel_id");
-    const outsideCandidates = fx.replace(/vessel_id IN \([\s\S]*?\)\n/, "");
-    expect(outsideCandidates).not.toContain("{minLat:Float64}");
     const lag = built.query.indexOf("lagInFrame");
     const cellCut = built.query.indexOf("WHERE ix >= toInt32(floor({minLon");
     expect(cellCut).toBeGreaterThan(lag);

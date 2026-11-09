@@ -152,26 +152,34 @@ function lagGapSeconds(partitionBy: string): string {
  * total over it. (Clipping fixes to the bbox before the lag credited a vessel
  * that left and came back with the whole time it was away.)
  *
- * The bbox still picks the candidate vessels: one with no in-band fix inside
- * it cannot have a minute in a returned cell, so its track is never read.
+ * The bbox still picks the candidate vessels, by the SAME lattice cells it
+ * returns: a vessel with no in-band fix in a returned cell cannot have a
+ * minute there, so its track is never read. (Picking by the exact bbox would
+ * drop a vessel that fished only in the outside part of a cell the bbox cuts,
+ * while that cell is still returned.)
  */
 export function buildActivityCellsQuery(req: ActivityCellsRequest): BuiltQuery {
   const band = bandFilter(speedBandGroups(req.types));
   const window =
     "event_time >= {from:DateTime64(3)} AND event_time < {to:DateTime64(3)}";
-  // Every cell a fix inside the bbox can fall in: [floor(min / g), floor(max / g)].
+  // The returned cells: every cell a point inside the bbox can fall in,
+  // [floor(min / g), floor(max / g)] on each axis — whole cells, not the bbox.
+  const inReturnedCells = (ix: string, iy: string) =>
+    `${ix} >= toInt32(floor({minLon:Float64} / {gridLon:Float64}))
+      AND ${ix} <= toInt32(floor({maxLon:Float64} / {gridLon:Float64}))
+      AND ${iy} >= toInt32(floor({minLat:Float64} / {gridLat:Float64}))
+      AND ${iy} <= toInt32(floor({maxLat:Float64} / {gridLat:Float64}))`;
   const regional = req.bbox
     ? {
         candidates: `AND vessel_id IN (
         SELECT DISTINCT vessel_id FROM ais_position_fixes
         WHERE ${window}
-          AND latitude >= {minLat:Float64} AND latitude <= {maxLat:Float64}
-          AND longitude >= {minLon:Float64} AND longitude <= {maxLon:Float64}
+          AND ${inReturnedCells(
+            "toInt32(floor(longitude / {gridLon:Float64}))",
+            "toInt32(floor(latitude / {gridLat:Float64}))",
+          )}
           ${band.sql})`,
-        cells: `WHERE ix >= toInt32(floor({minLon:Float64} / {gridLon:Float64}))
-      AND ix <= toInt32(floor({maxLon:Float64} / {gridLon:Float64}))
-      AND iy >= toInt32(floor({minLat:Float64} / {gridLat:Float64}))
-      AND iy <= toInt32(floor({maxLat:Float64} / {gridLat:Float64}))`,
+        cells: `WHERE ${inReturnedCells("ix", "iy")}`,
       }
     : { candidates: "", cells: "" };
   const query = `
