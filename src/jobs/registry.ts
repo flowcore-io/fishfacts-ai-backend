@@ -5,6 +5,10 @@ import { createAisBackfillJob } from "@/ais/job-backfill";
 import { createAisChRefillJob } from "@/ais/job-ch-refill";
 import { createAisTailJob } from "@/ais/job-tail";
 import type { AisSource } from "@/ais/types";
+import {
+  type RegistrySyncDeps,
+  createVesselRegistryJob,
+} from "@/ais/vessel-registry";
 import type { Env } from "@/env";
 import type { VesselDirectory } from "@/fishfacts/vessel-directory";
 import { createEmbedChatReader } from "@/logasavn/reader";
@@ -54,6 +58,7 @@ export function createJobDefinitions(
   regulationRawSyncRepository: RegulationRawSyncRepository,
   regulationPublishedReadRepository: RegulationPublishedReadRepository,
   officialAreaRepository: OfficialAreaRepository,
+  vesselRegistrySync: RegistrySyncDeps,
   officialPreparation?: OfficialVectorPreparation,
 ): JobDefinition[] {
   return [
@@ -322,6 +327,16 @@ export function createJobDefinitions(
         vessels: vesselDirectory,
         fixes: aisChRepo,
       }),
+    },
+    {
+      id: "ais-vessel-registry",
+      name: "AIS vessel registry (type + flag for the activity heatmap)",
+      // Daily. The registry moves when FishFacts adds or re-flags a hull; a
+      // day's lag only touches the newest vessels, and past windows are cached
+      // as immutable anyway.
+      schedule: "10 4 * * *",
+      inputSchema: z.object({}),
+      execute: createVesselRegistryJob(vesselRegistrySync),
     },
     {
       id: "ais-position-tail",

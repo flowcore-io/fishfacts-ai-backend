@@ -1,3 +1,8 @@
+import {
+  ActivityResponseCache,
+  PostgresActivityCacheStore,
+} from "./ais/activity-cache";
+import { ClickhouseActivitySource } from "./ais/activity-source";
 import { AisBackfillSupervisor } from "./ais/backfill-supervisor";
 import { createClickhouseClient } from "./ais/clickhouse-client";
 import { runClickhouseMigrations } from "./ais/clickhouse-migrate";
@@ -7,6 +12,10 @@ import { AisIngestStateRepository } from "./ais/ingest-state-repository";
 import { closeAisPool } from "./ais/mysql-pool";
 import { AisPositionProjector } from "./ais/projector";
 import { createAisSource } from "./ais/source";
+import {
+  ensureVesselRegistry,
+  readRegistrySourceRows,
+} from "./ais/vessel-registry";
 import { createApp } from "./app";
 import { AreasProjector } from "./areas/projector";
 import { AreasRepository } from "./areas/repository";
@@ -142,6 +151,21 @@ try {
 }
 const aisChRepo = new AisClickhouseRepository(chClient, env);
 const aisProjector = new AisPositionProjector(aisChRepo);
+// Fishing Activity history: heatmap + hover over past seasons. The registry
+// copy it joins against is filled in the background at boot when empty (it
+// is never needed before a request, and a slow replica must not hold the boot).
+const aisActivitySource = new ClickhouseActivitySource(chClient);
+const vesselRegistrySync = {
+  repository: aisActivitySource,
+  readSource: () => readRegistrySourceRows(env),
+};
+void ensureVesselRegistry(vesselRegistrySync);
+const aisActivityCache = new ActivityResponseCache({
+  store: new PostgresActivityCacheStore(db, env.ACTIVITY_CACHE_STORE_BYTES),
+  memoryMaxBytes: env.ACTIVITY_CACHE_MEMORY_BYTES,
+  mutableTtlMs: 300_000,
+});
+
 // Two sources, two MySQL pools: the live tail and the historical backfill never
 // share connections, so backfill reads can't starve the live tail.
 const aisLiveSource = createAisSource(env, "live");
@@ -192,6 +216,7 @@ const jobs = createJobDefinitions(
   regulationRawSyncRepository,
   regulationPublishedReadRepository,
   officialAreaRepository,
+  vesselRegistrySync,
   officialVectorPreparation,
 );
 const jobStateStore = new JobStateStore(db, jobs);
@@ -234,6 +259,7 @@ const app = createApp({
   sildelagetCatchRepository,
   financialsRepository,
   aisRepository: aisChRepo,
+  aisActivity: { source: aisActivitySource, cache: aisActivityCache },
   aisIngestState,
   aisSource: aisBackfillSource,
   reportsClient,

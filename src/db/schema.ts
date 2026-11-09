@@ -419,6 +419,34 @@ export const aisBackfillBuckets = pgTable(
   }),
 );
 
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+// Fishing Activity history responses (ais/activity-cache.ts), gzipped. Only
+// windows that ended more than a day ago land here — those never change — so
+// every replica serves a window the first pod computed. Bounded by total
+// bytes, least recently hit first out.
+export const aisActivityCache = pgTable(
+  "ais_activity_cache",
+  {
+    key: text("key").primaryKey(),
+    bodyGz: bytea("body_gz").notNull(),
+    bytes: integer("bytes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    lastHitAt: timestamp("last_hit_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    lastHitIdx: index("ais_activity_cache_last_hit_at_idx").on(table.lastHitAt),
+  }),
+);
+
 // Job-system state — moved off Usable memory fragments (which re-chunk + re-embed
 // the whole doc on every PATCH, hammering Usable) into Postgres. One row per job
 // in `job_state` (resume cursor + telemetry), plus a bounded `job_runs` history.

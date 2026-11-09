@@ -115,6 +115,25 @@ export async function runClickhouseMigrations(env: Env): Promise<void> {
         GROUP BY vessel_id, day
       `,
     });
+
+    // Vessel → (type, flag, name), copied daily from FishFacts' MySQL `vessel`
+    // registry (ais/vessel-registry.ts) so the activity heatmap can apply the
+    // per-type speed band BEFORE it aggregates. Each refresh inserts a whole
+    // snapshot; readers take `snapshot = max(snapshot)`, and the Replacing
+    // engine folds older versions of a vessel away. ~15 k rows.
+    await client.command({
+      query: `
+        CREATE TABLE IF NOT EXISTS ais_vessel_registry${onCluster} (
+          vessel_id Int32,
+          type_id   Int32,
+          flag      LowCardinality(String),
+          name      Nullable(String),
+          snapshot  DateTime64(3, 'UTC')
+        )
+        ENGINE = ${engine("ReplacingMergeTree", "ais_vessel_registry", "snapshot")}
+        ORDER BY vessel_id
+      `,
+    });
   } finally {
     await client.close();
   }

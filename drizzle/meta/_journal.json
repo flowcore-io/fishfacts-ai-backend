@@ -253,6 +253,13 @@
       "when": 1791280346527,
       "tag": "0035_official_vector_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794255298223,
+      "tag": "0036_ais_activity_cache",
+      "breakpoints": true
     }
   ]
 }

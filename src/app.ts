@@ -10,6 +10,9 @@ import type { TokenCache } from "./auth/cache";
 import { createAuthMiddleware } from "./auth/middleware";
 import type { OfficialVectorPreparation } from "./regulations/official-vector-preparation";
 import "./auth/types";
+import type { ActivityResponseCache } from "./ais/activity-cache";
+import { createActivityRouter } from "./ais/activity-routes";
+import type { ActivityDataSource } from "./ais/activity-source";
 import type { AisClickhouseRepository } from "./ais/clickhouse-repository";
 import { isoToTimeBucket } from "./ais/flowcore-bucket-reader";
 import type { AisIngestStateRepository } from "./ais/ingest-state-repository";
@@ -63,6 +66,10 @@ export type AppDependencies = {
   sildelagetCatchRepository: SildelagetCatchRepository;
   financialsRepository: FinancialsRepository;
   aisRepository: AisClickhouseRepository;
+  aisActivity: {
+    source: ActivityDataSource;
+    cache: ActivityResponseCache;
+  };
   aisIngestState: AisIngestStateRepository;
   aisSource: AisSource;
   /** null = reports feature unconfigured (no REPORT_FRAGMENT_TYPE_ID). */
@@ -91,6 +98,7 @@ export function createApp({
   sildelagetCatchRepository,
   financialsRepository,
   aisRepository,
+  aisActivity,
   aisIngestState,
   aisSource,
   reportsClient,
@@ -161,6 +169,8 @@ export function createApp({
     "/api/financials",
     createFinancialsRouter({ repository: financialsRepository }),
   );
+  // Fishing Activity history (past seasons, 2021→): heatmap + hover list.
+  app.route("/api/ais/activity", createActivityRouter(aisActivity));
   app.route("/api/ais", createAisRouter({ repository: aisRepository }));
   // In-chat issue reports: POST open to any authenticated user (consented
   // session capture → Usable Report fragment); list/detail are ADMIN-only

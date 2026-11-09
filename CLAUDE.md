@@ -129,6 +129,28 @@ curl -s -X POST https://fishfacts-ai.usable.dev/api/jobs/run \
   its job args. Those are operational — how far back, how far is too far, how
   much per run — not part of what counts as fishing.
 
+## Fishing Activity history (`/api/ais/activity`, `/api/ais/activity/vessels`)
+
+Past-season heatmap in FishFacts' own `fishing_roll*d` GeoJSON shape, plus the
+hover's vessel list. Code: `src/ais/activity*.ts`, `src/ais/vessel-registry.ts`.
+
+- **One data source.** Every AIS read for these two routes is in
+  `src/ais/activity-source.ts` behind `ActivityDataSource` (today: OUR
+  ClickHouse). Routes, cache and shaping use only the interface, so moving to
+  FishFacts' ClickHouse is a new implementation of it.
+- **Registry copy.** The per-type speed band needs the vessel type before
+  ClickHouse aggregates, so `ais_vessel_registry` (CH) holds
+  `vessel_id → type, flag, name` from the MySQL `vessel` table. Filled at boot
+  when empty and daily by the `ais-vessel-registry` job (04:10 UTC). Registry
+  `SW` is served as `SE`. Until a snapshot exists both routes answer 503.
+- **Cache.** Gzipped bodies; windows that ended over a day ago go to Postgres
+  `ais_activity_cache` (shared by both replicas, byte-bounded by
+  `ACTIVITY_CACHE_STORE_BYTES`) behind a per-pod LRU bounded by
+  `ACTIVITY_CACHE_MEMORY_BYTES`. Bump `ACTIVITY_RULES_VERSION` (activity.ts)
+  when the band, gap rule or lattice changes, or old answers keep being served.
+- **Limits.** > 92 days → 422 `window_too_long`; > 31 days without a bbox of
+  ≤ 2 500 deg² → 422 `global_window_too_long`; ClickHouse budget 30 s → 504.
+
 ## Drizzle (`drizzle.config.ts`)
 
 ```ts
