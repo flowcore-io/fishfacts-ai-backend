@@ -666,6 +666,163 @@ export const openApiDocument = {
         },
       },
     },
+    "/api/ais/activity": {
+      get: {
+        tags: ["AIS"],
+        summary: "Fishing Activity heatmap for one past window",
+        description:
+          "FishFacts' fishing-activity GeoJSON shape for any window from 2021 on: points on the 0.1° × 0.03° lattice (centres at floor()+½), `weights[flag][typeId]` = time-weighted fishing minutes (per-type speed band, gaps over 30 min credit nothing; never fix counts), plus `vessels` = distinct vessels in the cell. Flag and type come from the FishFacts vessel registry (registry `SW` served as `SE`). One request = one window; minutes add exactly across windows. Gzipped when accepted. Windows that ended over a day ago are immutable (`Cache-Control: immutable`) and cached in Postgres for every replica. Auth is the `X-Auth-Token` header only. Errors are `{ error, code }`, except 401, which is the auth middleware's `{ error }`.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "from",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description:
+              "Inclusive ISO-8601 UTC instant, >= 2021-01-01T00:00:00Z",
+            example: "2025-09-10T00:00:00Z",
+          },
+          {
+            name: "to",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Exclusive ISO-8601 UTC instant, <= now",
+            example: "2025-10-29T00:00:00Z",
+          },
+          {
+            name: "bbox",
+            in: "query",
+            schema: { type: "string" },
+            description:
+              "minLon,minLat,maxLon,maxLat. Absent = global. Required (at most 2 500 deg²) for windows over 31 days. Only selects which cells are returned (every cell a fix inside it can fall in); never changes a cell's minutes, which come from each vessel's whole track in the window, so a cell here equals the same cell in the global answer.",
+            example: "-30,55,35,80",
+          },
+          {
+            name: "flags",
+            in: "query",
+            schema: { type: "string" },
+            description:
+              "CSV of ISO-2 codes; default the FE 11: FO,NO,IS,GL,DK,SE,GB,IE,CA,RU,NZ",
+          },
+          {
+            name: "types",
+            in: "query",
+            schema: { type: "string" },
+            description:
+              "CSV of FishFacts vessel-type ids; default the FE 9: 2,28,4,3,5,10,29,8,6",
+          },
+        ],
+        responses: {
+          "200": {
+            description:
+              "GeoJSON FeatureCollection (application/geo+json) with `meta`",
+          },
+          "400": {
+            description:
+              "`bad_request`: missing/invalid parameter, unknown flag/type, from >= to, from < 2021, to > now",
+          },
+          "401": {
+            description:
+              '`X-Auth-Token` header missing or invalid (header only, no `?token=`): `{ error: "missing_auth_token" | "invalid_auth_token" }`, no `code`',
+          },
+          "422": {
+            description:
+              "`window_too_long` (> 92 days) or `global_window_too_long` (> 31 days without a bbox of at most 2 500 deg²)",
+          },
+          "503": {
+            description:
+              "`upstream_unavailable`: ClickHouse/MySQL unreachable, or the vessel registry not loaded yet",
+          },
+          "504": {
+            description: "`upstream_timeout`: ClickHouse over its 30 s budget",
+          },
+        },
+      },
+    },
+    "/api/ais/activity/vessels": {
+      get: {
+        tags: ["AIS"],
+        summary: "Fishing Activity hover: vessels and minutes in a circle",
+        description:
+          "Vessels with fishing minutes in the cells whose CENTRE lies within `radiusKm` (haversine) of `lat`/`lon`, distinct across all `windows` (a vessel in two seasons counts once, minutes added). Same rules as /api/ais/activity, so the minutes equal the heatmap weights summed over the same cells (the circle may cross ±180°). Fishing types only. Sorted by minutes, at most 50 rows; `vesselCount` and `totalMinutes` cover every vessel.",
+        security: [{ FishfactsAuthToken: [] }],
+        parameters: [
+          {
+            name: "windows",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description:
+              "CSV of from/to ISO pairs, 1 to 6, each at most 92 days, pairwise non-overlapping (half-open, so touching is fine)",
+            example:
+              "2025-09-10T00:00:00Z/2025-10-29T00:00:00Z,2024-09-10T00:00:00Z/2024-10-29T00:00:00Z",
+          },
+          {
+            name: "lat",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Degrees (rounded to 3 dp)",
+            example: "62.235",
+          },
+          {
+            name: "lon",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "Degrees (rounded to 3 dp)",
+            example: "-4.25",
+          },
+          {
+            name: "radiusKm",
+            in: "query",
+            required: true,
+            schema: { type: "string" },
+            description: "0 < r <= 100 (rounded to 1 dp)",
+            example: "15",
+          },
+          {
+            name: "flags",
+            in: "query",
+            schema: { type: "string" },
+            description: "As /api/ais/activity",
+          },
+          {
+            name: "types",
+            in: "query",
+            schema: { type: "string" },
+            description: "As /api/ais/activity",
+          },
+        ],
+        responses: {
+          "200": {
+            description:
+              "{ vesselCount, totalMinutes, vessels: [{ vesselId, name, flag, typeId, minutes }] }",
+          },
+          "400": {
+            description:
+              "`bad_request`: invalid or overlapping windows, lat/lon/radiusKm, flags or types",
+          },
+          "401": {
+            description:
+              '`X-Auth-Token` header missing or invalid (header only, no `?token=`): `{ error: "missing_auth_token" | "invalid_auth_token" }`, no `code`',
+          },
+          "422": {
+            description:
+              "`window_too_long` (> 92 days) or `global_window_too_long` (> 31 days without a bbox of at most 2 500 deg²)",
+          },
+          "503": {
+            description:
+              "`upstream_unavailable`: ClickHouse/MySQL unreachable, or the vessel registry not loaded yet",
+          },
+          "504": {
+            description: "`upstream_timeout`: ClickHouse over its 30 s budget",
+          },
+        },
+      },
+    },
     "/api/ais/tracks": {
       get: {
         tags: ["AIS"],

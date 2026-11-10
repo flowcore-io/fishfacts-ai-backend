@@ -30,6 +30,20 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Executes the activity heatmap/hover SQL on tiny synthetic tables
+      # (test/ais/activity-source.clickhouse.test.ts). Same major as prod.
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.10
+        env:
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: test
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - name: Setup Bun
@@ -49,4 +63,9 @@ jobs:
       - name: Format Check
         run: bun run format:check
       - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fishfacts_ai_backend_test
+          TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
+          TEST_CLICKHOUSE_USER: default
+          TEST_CLICKHOUSE_PASSWORD: test
         run: bun test

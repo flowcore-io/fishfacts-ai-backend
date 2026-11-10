@@ -254,6 +254,19 @@ const envSchema = z.object({
   // Set to the CH cluster name (Altinity CHI cluster) to enable HA: DDL runs
   // ON CLUSTER with Replicated*MergeTree engines. Empty ⇒ single-node engines.
   CLICKHOUSE_CLUSTER: z.string().default(""),
+  // Fishing Activity history (ais/activity-cache.ts). Per-pod LRU of gzipped
+  // responses — a 30-day global season is ~3 MB gzipped — and the shared
+  // Postgres tier for windows that can no longer change. Both are byte budgets.
+  ACTIVITY_CACHE_MEMORY_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(64 * 1024 * 1024),
+  ACTIVITY_CACHE_STORE_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(1024 * 1024 * 1024),
   AIS_CH_BATCH_ROWS: z.coerce.number().int().positive().default(5000),
   AIS_CH_FLUSH_MS: z.coerce.number().int().positive().default(2000),
 });
