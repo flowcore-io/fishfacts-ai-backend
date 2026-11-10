@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.17.0](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.16.2...v2.17.0) (2026-11-10)
+
+
+### Features
+
+* **ais:** fishing activity history endpoints for past seasons ([8427c4d](https://github.com/flowcore-io/fishfacts-ai-backend/commit/8427c4de3fc1daca73081784794aec8f73e17f4d))
+* **ais:** fishing activity history endpoints for past seasons ([e183a49](https://github.com/flowcore-io/fishfacts-ai-backend/commit/e183a490284d234efaf80677aa76561fbebfea3a))
+
+
+### Bug Fixes
+
+* **ais:** overlapping hover windows are a 400 ([3c8eef5](https://github.com/flowcore-io/fishfacts-ai-backend/commit/3c8eef568284d3927c1e7ca3963938c693f13e8e))
+* **ais:** pick regional candidates by the returned cells, not the bbox ([36b2fe7](https://github.com/flowcore-io/fishfacts-ai-backend/commit/36b2fe75164dd2949c5b33af7fa66e5021376a60))
+* **ais:** the activity bbox and the antimeridian no longer change minutes ([ed748f7](https://github.com/flowcore-io/fishfacts-ai-backend/commit/ed748f73f50f1c696e0a711cd5e499ca0baf36b9))
+
 ## [2.16.2](https://github.com/flowcore-io/fishfacts-ai-backend/compare/v2.16.1...v2.16.2) (2026-10-15)
 
 
