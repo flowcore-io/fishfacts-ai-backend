@@ -117,17 +117,16 @@ describe("buildActivityCellsQuery, regional", () => {
       "toInt32(floor(latitude / {gridLat:Float64})) >= toInt32(floor({minLat:Float64} / {gridLat:Float64}))",
     );
     const lag = built.query.indexOf("lagInFrame");
-    const cellCut = built.query.indexOf("WHERE ix >= toInt32(floor({minLon");
+    const cellCut = built.query.indexOf("AND ix >= toInt32(floor({minLon");
     expect(cellCut).toBeGreaterThan(lag);
   });
 });
 
 describe("speedBandGroups", () => {
-  test("the FE's 9 types fall into three bands", () => {
+  test("the FE's 9 types fall into two bands", () => {
     expect(speedBandGroups(TYPES)).toEqual([
-      { min: 0.3, max: 7.5, types: [2, 28, 29] },
+      { min: 0.3, max: 5, types: [2, 6, 28, 29] },
       { min: 1, max: 5, types: [3, 4, 5, 8, 10] },
-      { min: 0.3, max: 5, types: [6] },
     ]);
   });
   test("an unknown type is a programming error, not an empty band", () => {

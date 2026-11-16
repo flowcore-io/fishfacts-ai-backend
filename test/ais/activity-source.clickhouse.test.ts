@@ -20,6 +20,7 @@ import { type ClickHouseClient, createClient } from "@clickhouse/client";
 import {
   ACTIVITY_DEFAULT_FLAGS,
   ACTIVITY_DEFAULT_TYPES,
+  ACTIVITY_MIN_RUN_SECONDS,
   type ActivityBbox,
   type ActivityCellRow,
   activityCellIndex,
@@ -62,6 +63,8 @@ const V = {
   nonFishingType: 8,
   outsidePartOnly: 9,
   insidePartPartner: 10,
+  shortAndLongRun: 11,
+  steaming: 12,
 } as const;
 
 type Fix = {
@@ -188,6 +191,33 @@ const FIXES: Fix[] = [
     lon: -6.75,
   })),
 
+  // The minimum run: a 20-min run (00:00–00:20), a 40-min hole that ends it,
+  // then a 40-min run (01:00–01:40). Only the second is credited.
+  ...[
+    "00:00",
+    "00:10",
+    "00:20",
+    "01:00",
+    "01:10",
+    "01:20",
+    "01:30",
+    "01:40",
+  ].map((t) => ({
+    vessel: V.shortAndLongRun,
+    at: day("09", t),
+    lat: 62.01,
+    lon: -6.75,
+  })),
+
+  // 5 kn is the ceiling for every type; 5.5 kn is steaming, even if pelagic.
+  ...["00:00", "00:10", "00:20", "00:30", "00:40"].map((t) => ({
+    vessel: V.steaming,
+    at: day("10", t),
+    lat: 62.01,
+    lon: -6.75,
+    speed: 5.5,
+  })),
+
   // A registered non-fishing type at fishing speed, right on scenario 1's cell.
   { vessel: V.nonFishingType, at: day("01", "00:00"), lat: 62.01, lon: -6.75 },
   { vessel: V.nonFishingType, at: day("01", "00:10"), lat: 62.01, lon: -6.75 },
@@ -204,6 +234,9 @@ const REGISTRY = [
     })),
   { vessel_id: V.nonFishingType, type_id: 1, flag: "NZ", name: "Cargo" },
 ];
+// The steaming scenario's vessel is pelagic, whose band used to reach 7.5 kn.
+const steamer = REGISTRY.find((r) => r.vessel_id === V.steaming);
+if (steamer) steamer.type_id = 2;
 
 let admin: ClickHouseClient | null = null;
 let client: ClickHouseClient | null = null;
@@ -220,17 +253,23 @@ function chEnv(): Env {
 }
 
 /** Heatmap minutes per cell key `"ix,iy"`, summed over flags/types. */
+/**
+ * The scenarios below test the gap rule, the bbox and the windows on runs of
+ * a few fixes, so they turn the minimum run off (0); the minimum run has its
+ * own scenarios, which pass `ACTIVITY_MIN_RUN_SECONDS`.
+ */
 async function cells(
   d: string,
   bbox: ActivityBbox | null,
-  nextDay = String(Number(d) + 1).padStart(2, "0"),
+  minRunSeconds = 0,
 ): Promise<Map<string, number>> {
   const rows: ActivityCellRow[] = await source.getActivityCells({
     from: day(d, "00:00"),
-    to: day(nextDay, "00:00"),
+    to: day(String(Number(d) + 1).padStart(2, "0"), "00:00"),
     bbox,
     flags: FLAGS,
     types: TYPES,
+    minRunSeconds,
   });
   return new Map(
     rows.map(([ix, iy, , w]) => [
@@ -248,6 +287,7 @@ async function hover(
   lat: number,
   lon: number,
   radiusKm: number,
+  minRunSeconds = 0,
 ) {
   return source.getHoverRows({
     windows,
@@ -256,6 +296,7 @@ async function hover(
     radiusKm,
     flags: FLAGS,
     types: TYPES,
+    minRunSeconds,
   });
 }
 
@@ -408,5 +449,33 @@ describe.skipIf(!CH_URL)("activity SQL, executed on ClickHouse", () => {
     const merged = mergeHoverRows(rows);
     expect(merged.vessels).toHaveLength(1);
     expect(merged.vessels[0]?.minutes).toBeCloseTo(30, 9);
+  });
+
+  test("a run credited less than the minimum credits nothing; a longer one all of it", async () => {
+    expect(ACTIVITY_MIN_RUN_SECONDS).toBe(30 * 60);
+    const key = cellKey(62.01, -6.75);
+    // Off: 20 + 40 min. On: the 20-min run goes, the 40-min run stays whole.
+    expect((await cells("09", null)).get(key)).toBeCloseTo(60, 9);
+    expect(
+      (await cells("09", null, ACTIVITY_MIN_RUN_SECONDS)).get(key),
+    ).toBeCloseTo(40, 9);
+    expect(
+      (await cells("09", NA, ACTIVITY_MIN_RUN_SECONDS)).get(key),
+    ).toBeCloseTo(40, 9);
+    const rows = await hover(
+      [dayWindow("09")],
+      62.025,
+      -6.75,
+      1,
+      ACTIVITY_MIN_RUN_SECONDS,
+    );
+    expect(rows.map((r) => [r.vesselId, r.minutes])).toEqual([
+      [V.shortAndLongRun, 40],
+    ]);
+  });
+
+  test("a pelagic vessel at 5.5 kn is steaming: no cell, no hover row", async () => {
+    expect((await cells("10", null)).size).toBe(0);
+    expect(await hover([dayWindow("10")], 62.025, -6.75, 1)).toEqual([]);
   });
 });
