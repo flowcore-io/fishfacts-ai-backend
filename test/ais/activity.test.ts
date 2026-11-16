@@ -73,16 +73,16 @@ describe("activity lattice", () => {
   });
 });
 
-describe("speed bands mirror fishfacts-fe FISHING_SPEED_MAP", () => {
-  test("every default type has a band; 28/29 use the FE fallback range", () => {
+describe("speed bands", () => {
+  test("every default type has a band, and none reaches past 5 kn (Gilli and Jon, 2026-11-16)", () => {
     for (const type of ACTIVITY_DEFAULT_TYPES) {
-      expect(ACTIVITY_SPEED_BANDS[type]).toBeDefined();
+      expect(ACTIVITY_SPEED_BANDS[type]?.[1]).toBe(5);
     }
-    expect(ACTIVITY_SPEED_BANDS[2]).toEqual([0.3, 7.5]);
+    expect(ACTIVITY_SPEED_BANDS[2]).toEqual([0.3, 5]);
     expect(ACTIVITY_SPEED_BANDS[3]).toEqual([1, 5]);
     expect(ACTIVITY_SPEED_BANDS[6]).toEqual([0.3, 5]);
-    expect(ACTIVITY_SPEED_BANDS[28]).toEqual([0.3, 7.5]);
-    expect(ACTIVITY_SPEED_BANDS[29]).toEqual([0.3, 7.5]);
+    expect(ACTIVITY_SPEED_BANDS[28]).toEqual([0.3, 5]);
+    expect(ACTIVITY_SPEED_BANDS[29]).toEqual([0.3, 5]);
   });
 
   test("defaults are the FE's 11 flags and 9 types", () => {

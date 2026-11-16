@@ -20,14 +20,16 @@
  * event_time); each fix is credited the step since the previous one, unless
  * that step exceeds the 30-minute gap rule — then nothing, because time across
  * an AIS hole is not evidence of fishing. That is `/api/ais/effort`'s rule,
- * applied per lattice cell. It is time, never a fix count: the Oct 2024
- * sampling change cut fixes ~3× while the fleet held, and only a time weight
- * is blind to that.
+ * applied per lattice cell. A run of such fixes credited less than
+ * `ACTIVITY_MIN_RUN_SECONDS` in all credits nothing (`runFilter`). It is
+ * time, never a fix count: the Oct 2024 sampling change cut fixes ~3× while
+ * the fleet held, and only a time weight is blind to that.
  */
 import type { ClickHouseClient } from "@clickhouse/client";
 import {
   ACTIVITY_GRID,
   ACTIVITY_MAX_GAP_SECONDS,
+  ACTIVITY_MIN_RUN_SECONDS,
   ACTIVITY_SPEED_BANDS,
   type ActivityBbox,
   type ActivityCellRow,
@@ -50,6 +52,8 @@ export type ActivityCellsRequest = {
   bbox: ActivityBbox | null;
   flags: string[];
   types: number[];
+  /** `ACTIVITY_MIN_RUN_SECONDS` unless given; tests pass 0 to isolate other rules. */
+  minRunSeconds?: number;
 };
 
 export type ActivityHoverRequest = {
@@ -59,6 +63,8 @@ export type ActivityHoverRequest = {
   radiusKm: number;
   flags: string[];
   types: number[];
+  /** `ACTIVITY_MIN_RUN_SECONDS` unless given; tests pass 0 to isolate other rules. */
+  minRunSeconds?: number;
 };
 
 export type RegistryRow = {
@@ -94,8 +100,8 @@ const CELL_IY = "toInt32(floor(la / {gridLat:Float64}))";
 export type SpeedBandGroup = { min: number; max: number; types: number[] };
 
 /**
- * The requested types grouped by identical speed band — at most three groups
- * today ([0.3, 7.5], [1, 5], [0.3, 5]). One group is one OR-term of the scan
+ * The requested types grouped by identical speed band — at most two groups
+ * today ([0.3, 5], [1, 5]). One group is one OR-term of the scan
  * predicate, so the band is tested on the raw fixes and the registry join can
  * wait until there is one row per (cell, vessel) instead of one per fix.
  */
@@ -132,6 +138,29 @@ function bandFilter(groups: SpeedBandGroup[]): {
     sql: `AND speed IS NOT NULL AND (${terms.join("\n        OR ")})`,
     params,
   };
+}
+
+/**
+ * Two CTEs, `runs` then `kept`, over `source` (which must carry `event_time`
+ * and `gap_s`): each fix is numbered by its run, a run being consecutive fixes
+ * with no step over the gap rule, and `run_s` is that run's credited seconds.
+ * The caller keeps `run_s >= {minRun:UInt32}`. Computed over the whole
+ * in-window track before any cell or circle is cut, so the bbox and the hover
+ * see the same runs (contract A3).
+ */
+function runFilter(source: string, partitionBy: string): string {
+  return `runs AS (
+    SELECT *,
+      sum(if(gap_s > 0 AND gap_s <= {maxGap:UInt32}, 0, 1)) OVER (
+        PARTITION BY ${partitionBy} ORDER BY event_time
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS run
+    FROM ${source}
+  ),
+  kept AS (
+    SELECT *,
+      sum(${CREDIT_SECONDS}) OVER (PARTITION BY ${partitionBy}, run) AS run_s
+    FROM runs
+  )`;
 }
 
 function lagGapSeconds(partitionBy: string): string {
@@ -179,7 +208,7 @@ export function buildActivityCellsQuery(req: ActivityCellsRequest): BuiltQuery {
             "toInt32(floor(latitude / {gridLat:Float64}))",
           )}
           ${band.sql})`,
-        cells: `WHERE ${inReturnedCells("ix", "iy")}`,
+        cells: `AND ${inReturnedCells("ix", "iy")}`,
       }
     : { candidates: "", cells: "" };
   const query = `
@@ -194,14 +223,16 @@ export function buildActivityCellsQuery(req: ActivityCellsRequest): BuiltQuery {
     GROUP BY vessel_id, event_time
   ),
   credited AS (
-    SELECT vessel_id, tupleElement(p, 1) AS la, tupleElement(p, 2) AS lo,
-      ${lagGapSeconds("vessel_id")} AS gap_s
+    SELECT vessel_id, event_time, tupleElement(p, 1) AS la,
+      tupleElement(p, 2) AS lo, ${lagGapSeconds("vessel_id")} AS gap_s
     FROM fx
   ),
+  ${runFilter("credited", "vessel_id")},
   per_vessel AS (
     SELECT ${CELL_IX} AS ix, ${CELL_IY} AS iy, vessel_id,
       sum(${CREDIT_SECONDS}) / 60 AS minutes
-    FROM credited
+    FROM kept
+    WHERE run_s >= {minRun:UInt32}
     ${regional.cells}
     GROUP BY ix, iy, vessel_id
     HAVING minutes > 0
@@ -219,6 +250,7 @@ export function buildActivityCellsQuery(req: ActivityCellsRequest): BuiltQuery {
       types: req.types,
       ...band.params,
       maxGap: ACTIVITY_MAX_GAP_SECONDS,
+      minRun: req.minRunSeconds ?? ACTIVITY_MIN_RUN_SECONDS,
       gridLon: ACTIVITY_GRID.lonDeg,
       gridLat: ACTIVITY_GRID.latDeg,
       ...(req.bbox
@@ -336,15 +368,17 @@ export function buildActivityHoverQuery(req: ActivityHoverRequest): BuiltQuery {
     GROUP BY vessel_id, w, event_time
   ),
   credited AS (
-    SELECT vessel_id, w, tupleElement(p, 1) AS la, tupleElement(p, 2) AS lo,
-      ${lagGapSeconds("vessel_id, w")} AS gap_s
+    SELECT vessel_id, w, event_time, tupleElement(p, 1) AS la,
+      tupleElement(p, 2) AS lo, ${lagGapSeconds("vessel_id, w")} AS gap_s
     FROM fx
   ),
+  ${runFilter("credited", "vessel_id, w")},
   centred AS (
     SELECT vessel_id, w, gap_s,
       round((${CELL_IX} + 0.5) * {gridLon:Float64}, 3) AS clon,
       round((${CELL_IY} + 0.5) * {gridLat:Float64}, 3) AS clat
-    FROM credited
+    FROM kept
+    WHERE run_s >= {minRun:UInt32}
   ),
   per_vessel AS (
     SELECT w, vessel_id, sum(${CREDIT_SECONDS}) / 60 AS minutes
@@ -368,6 +402,7 @@ export function buildActivityHoverQuery(req: ActivityHoverRequest): BuiltQuery {
       types: req.types,
       ...band.params,
       maxGap: ACTIVITY_MAX_GAP_SECONDS,
+      minRun: req.minRunSeconds ?? ACTIVITY_MIN_RUN_SECONDS,
       gridLon: ACTIVITY_GRID.lonDeg,
       gridLat: ACTIVITY_GRID.latDeg,
       ...areaParams,

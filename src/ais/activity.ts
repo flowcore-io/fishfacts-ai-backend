@@ -49,26 +49,27 @@ export const ACTIVITY_DEFAULT_TYPES = [2, 28, 4, 3, 5, 10, 29, 8, 6] as const;
 /**
  * Speed band per vessel type, knots, inclusive at both ends.
  *
- * A mirror of fishfacts-fe `FISHING_SPEED_MAP`
- * (`src/pages/Map/components/tracks/constants.ts`), which is what FishFacts'
- * own activity files are cut with; types 28 and 29 are absent from that map
- * and take its fallback `FISHING_ACTIVITY_RANGE` [0.3, 7.5]. This is the
- * Activity layer's band and is deliberately NOT `AIS_FISHING_*_KNOTS` from
- * fishing-runs.ts: that one is the effort/Sildelaget definition (0.3–5.5) and
- * answers a different question. Changing either is a one-line edit here.
+ * Every type tops out at 5 kn (Gilli N. Lorenzen and Jon Poulsen, 2026-11-16):
+ * above that is steaming, and the 7.5 kn ceiling types 2, 28 and 29 had (the
+ * fallback `FISHING_ACTIVITY_RANGE` of fishfacts-fe's old `FISHING_SPEED_MAP`)
+ * drew transit lanes as fishing effort. The floors stay as they were.
+ *
+ * This is the Activity layer's band and is deliberately NOT
+ * `AIS_FISHING_*_KNOTS` from fishing-runs.ts: that one is the
+ * effort/Sildelaget definition (0.3–5.5) and answers a different question.
  */
 export const ACTIVITY_SPEED_BANDS: Readonly<
   Record<number, readonly [number, number]>
 > = {
-  2: [0.3, 7.5],
+  2: [0.3, 5],
   3: [1, 5],
   4: [1, 5],
   5: [1, 5],
   6: [0.3, 5],
   8: [1, 5],
   10: [1, 5],
-  28: [0.3, 7.5],
-  29: [0.3, 7.5],
+  28: [0.3, 5],
+  29: [0.3, 5],
 };
 
 /**
@@ -77,6 +78,18 @@ export const ACTIVITY_SPEED_BANDS: Readonly<
  * rule, and the same constant, as `/api/ais/effort` and the Sildelaget runs.
  */
 export const ACTIVITY_MAX_GAP_SECONDS = AIS_RUN_MAX_GAP_MINUTES * 60;
+
+/**
+ * A run of in-band fixes (consecutive, no step over the gap rule) credited
+ * less than this in total credits nothing: a short stretch at fishing speed,
+ * e.g. slowing down for a turn, is not fishing (Gilli, 2026-11-16: drop the
+ * "small outliers"). 30 min is the first guess; Jon Poulsen tunes it.
+ *
+ * A run is cut where the window cuts it, so a run straddling a window's edge
+ * is judged by its part inside. That matters most for the FE's day-by-day
+ * player, whose windows are one day long.
+ */
+export const ACTIVITY_MIN_RUN_SECONDS = 30 * 60;
 
 /** Earliest instant either endpoint answers for (contract §1). */
 export const ACTIVITY_MIN_FROM_MS = Date.parse("2021-01-01T00:00:00Z");
@@ -98,10 +111,10 @@ export const ACTIVITY_HOVER_MAX_RADIUS_KM = 100;
 
 /**
  * Bumped whenever a rule above changes what a cached answer would contain
- * (band, gap, lattice, registry mapping). Cached past windows are otherwise
+ * (band, gap, minimum run, lattice, registry mapping). Cached past windows are otherwise
  * immutable, so this is the only thing that retires them.
  */
-export const ACTIVITY_RULES_VERSION = 1;
+export const ACTIVITY_RULES_VERSION = 2; // 2: 5 kn for every type, minimum run
 
 export type ActivityErrorCode =
   | "bad_request"
